@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { useProjectStore } from '../stores/project';
+import { useGitStore } from '../stores/git';
 import ProjectListItem from '../components/ProjectListItem.vue';
 import ConsoleView from '../components/ConsoleView.vue';
+import GitView from '../components/git/GitView.vue';
 import AddProjectModal from '../components/AddProjectModal.vue';
 import type { Project } from '../types';
 import { useI18n } from 'vue-i18n';
@@ -13,9 +15,34 @@ import { pinyin } from 'pinyin-pro';
 
 const { t } = useI18n();
 const projectStore = useProjectStore();
+const gitStore = useGitStore();
 const showModal = ref(false);
 const editingProject = ref<Project | null>(null);
 const refreshing = ref(false);
+
+// Right panel tab: 'console' or 'git'
+const rightTab = ref<'console' | 'git'>('console');
+
+const activeProject = computed(() =>
+  projectStore.projects.find(p => p.id === projectStore.activeProjectId)
+);
+
+const isGitRepo = computed(() => {
+  if (!activeProject.value) return false;
+  return gitStore.isGitRepo[activeProject.value.id] || false;
+});
+
+const gitChangesCount = computed(() => {
+  if (!activeProject.value) return 0;
+  return gitStore.getTotalChanges(activeProject.value.id);
+});
+
+// Auto-check git repo when project changes
+watch(activeProject, async (newProject) => {
+  if (newProject) {
+    await gitStore.checkGitRepo(newProject.id, newProject.path);
+  }
+}, { immediate: true });
 
 //************* 搜索功能 *************
 const searchQuery = ref('');
@@ -268,9 +295,44 @@ async function batchAddProjects() {
         </div>
     </div>
 
-    <!-- Main Console Area -->
-    <div class="flex-1 overflow-hidden relative bg-slate-50 dark:bg-[#0b1120] shadow-inner transition-colors duration-300">
-        <ConsoleView />
+    <!-- Main Right Panel with Tabs -->
+    <div class="flex-1 overflow-hidden relative bg-slate-50 dark:bg-[#0b1120] shadow-inner transition-colors duration-300 flex flex-col">
+        <!-- Tab Bar -->
+        <div class="flex items-center border-b border-slate-200 dark:border-slate-700/30 bg-white/80 dark:bg-[#0f172a]/80 backdrop-blur-sm px-2 shrink-0">
+            <button
+                @click="rightTab = 'console'"
+                class="px-4 py-2 text-sm font-medium transition-all relative cursor-pointer"
+                :class="rightTab === 'console'
+                    ? 'text-blue-600 dark:text-blue-400'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'"
+            >
+                <div class="flex items-center gap-1.5">
+                    <div class="i-mdi-console text-base" />
+                    <span>{{ t('dashboard.console') }}</span>
+                </div>
+                <div v-if="rightTab === 'console'" class="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-500 rounded-t" />
+            </button>
+            <button
+                @click="rightTab = 'git'"
+                class="px-4 py-2 text-sm font-medium transition-all relative cursor-pointer"
+                :class="rightTab === 'git'
+                    ? 'text-blue-600 dark:text-blue-400'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'"
+            >
+                <div class="flex items-center gap-1.5">
+                    <div class="i-mdi-git text-base" />
+                    <span>{{ t('git.title') }}</span>
+                    <span v-if="isGitRepo && gitChangesCount > 0" class="ml-1 px-1.5 py-0 text-xs rounded-full bg-orange-500/15 text-orange-600 dark:text-orange-400 font-medium min-w-5 text-center">{{ gitChangesCount }}</span>
+                </div>
+                <div v-if="rightTab === 'git'" class="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-500 rounded-t" />
+            </button>
+        </div>
+
+        <!-- Tab Content -->
+        <div class="flex-1 overflow-hidden relative">
+            <ConsoleView v-show="rightTab === 'console'" />
+            <GitView v-show="rightTab === 'git'" />
+        </div>
     </div>
 
     <AddProjectModal 

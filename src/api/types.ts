@@ -1,4 +1,4 @@
-import type { NodeVersion } from '../types';
+import type { NodeVersion, GitStatusResult, GitBranch, GitCommit, GitRemote, GitStashEntry, GitTag } from '../types';
 
 export interface ProjectInfo {
     name: string;
@@ -80,4 +80,39 @@ export interface PlatformAPI {
     isContextMenuSupported(): Promise<boolean>;
     getPlatformInfo(): Promise<{ os: string; arch: string }>;
     detectAvailableTerminals(): Promise<TerminalInfo[]>;
+
+    // Git
+    gitCheck(path: string): Promise<boolean>;
+    gitInit(path: string): Promise<string>;
+    gitStatus(path: string): Promise<GitStatusResult>;
+    gitStage(path: string, files: string[]): Promise<string>;
+    gitUnstage(path: string, files: string[]): Promise<string>;
+    gitStageAll(path: string): Promise<string>;
+    gitUnstageAll(path: string): Promise<string>;
+    gitCommit(path: string, message: string): Promise<string>;
+    gitPull(path: string, remote?: string, branch?: string): Promise<string>;
+    gitPush(path: string, remote?: string, branch?: string, force?: boolean, setUpstream?: boolean): Promise<string>;
+    gitFetch(path: string, remote?: string): Promise<string>;
+    gitBranches(path: string): Promise<GitBranch[]>;
+    gitCheckout(path: string, branch: string): Promise<string>;
+    gitCreateBranch(path: string, name: string, startPoint?: string): Promise<string>;
+    gitDeleteBranch(path: string, name: string, force?: boolean): Promise<string>;
+    gitMerge(path: string, branch: string): Promise<string>;
+    gitRebase(path: string, branch: string): Promise<string>;
+    gitRmCached(path: string, files: string[]): Promise<string>;
+    gitApplyPatch(path: string, patch: string, cached?: boolean, reverse?: boolean): Promise<string>;
+    gitLog(path: string, maxCount?: number, all?: boolean): Promise<GitCommit[]>;
+    gitDiff(path: string, file?: string, staged?: boolean): Promise<string>;
+    gitDiffCommit(path: string, hash: string): Promise<string>;
+    gitDiscard(path: string, files: string[]): Promise<string>;
+    gitDiscardUntracked(path: string, files: string[]): Promise<string>;
+    gitStashSave(path: string, message?: string): Promise<string>;
+    gitStashPop(path: string, index?: number): Promise<string>;
+    gitStashApply(path: string, index?: number): Promise<string>;
+    gitStashDrop(path: string, index: number): Promise<string>;
+    gitStashList(path: string): Promise<GitStashEntry[]>;
+    gitRemoteList(path: string): Promise<GitRemote[]>;
+    gitCurrentBranch(path: string): Promise<string>;
+    gitTags(path: string): Promise<GitTag[]>;
+    gitDeleteTag(path: string, name: string): Promise<string>;
 }
