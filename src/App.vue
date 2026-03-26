@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, h, computed, KeepAlive } from 'vue';
+import { ref, onMounted, onUnmounted, watch, h } from 'vue';
 import { api } from './api';
 import { ElMessageBox, ElMessage, ElLoading } from 'element-plus';
 import type { UnlistenFn } from '@tauri-apps/api/event';

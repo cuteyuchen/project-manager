@@ -1,5 +1,5 @@
 import type { PlatformAPI, ProjectInfo, TerminalInfo } from '../types';
-import type { NodeVersion, GitStatusResult, GitBranch, GitCommit, GitRemote, GitStashEntry, GitTag } from '../../types';
+import type { NodeVersion, GitStatusResult, GitBranch, GitCommit, GitSummary } from '../../types';
 
 // Declare global interface for uTools services
 declare global {
@@ -143,6 +143,7 @@ export class UToolsAdapter implements PlatformAPI {
 
   async gitCheck(_path: string): Promise<boolean> { return false; }
   async gitInit(_path: string): Promise<string> { this.gitNotSupported(); }
+  async gitSummary(_path: string): Promise<GitSummary> { this.gitNotSupported(); }
   async gitStatus(_path: string): Promise<GitStatusResult> { this.gitNotSupported(); }
   async gitStage(_path: string, _files: string[]): Promise<string> { this.gitNotSupported(); }
   async gitUnstage(_path: string, _files: string[]): Promise<string> { this.gitNotSupported(); }
@@ -152,30 +153,15 @@ export class UToolsAdapter implements PlatformAPI {
   async gitPull(_path: string, _remote?: string, _branch?: string): Promise<string> { this.gitNotSupported(); }
   async gitPush(_path: string, _remote?: string, _branch?: string, _force?: boolean, _setUpstream?: boolean): Promise<string> { this.gitNotSupported(); }
   async gitFetch(_path: string, _remote?: string): Promise<string> { this.gitNotSupported(); }
-  async gitBranches(_path: string): Promise<GitBranch[]> { this.gitNotSupported(); }
-  async gitCheckout(_path: string, _branch: string): Promise<string> { this.gitNotSupported(); }
-  async gitCreateBranch(_path: string, _name: string, _startPoint?: string): Promise<string> { this.gitNotSupported(); }
-  async gitDeleteBranch(_path: string, _name: string, _force?: boolean): Promise<string> { this.gitNotSupported(); }
-  async gitRenameBranch(_path: string, _oldName: string, _newName: string): Promise<string> { this.gitNotSupported(); }
-  async gitMerge(_path: string, _branch: string): Promise<string> { this.gitNotSupported(); }
-  async gitRebase(_path: string, _branch: string): Promise<string> { this.gitNotSupported(); }
-  async gitRmCached(_path: string, _files: string[]): Promise<string> { this.gitNotSupported(); }
-  async gitDeleteTag(_path: string, _name: string): Promise<string> { this.gitNotSupported(); }
-  async gitApplyPatch(_path: string, _patch: string, _cached?: boolean, _reverse?: boolean): Promise<string> { this.gitNotSupported(); }
-  async gitLog(_path: string, _maxCount?: number, _all?: boolean): Promise<GitCommit[]> { this.gitNotSupported(); }
   async gitDiff(_path: string, _file?: string, _staged?: boolean): Promise<string> { this.gitNotSupported(); }
   async gitDiffCommit(_path: string, _hash: string): Promise<string> { this.gitNotSupported(); }
   async gitDiscard(_path: string, _files: string[]): Promise<string> { this.gitNotSupported(); }
   async gitDiscardUntracked(_path: string, _files: string[]): Promise<string> { this.gitNotSupported(); }
-  async gitStashSave(_path: string, _message?: string): Promise<string> { this.gitNotSupported(); }
-  async gitStashPop(_path: string, _index?: number): Promise<string> { this.gitNotSupported(); }
-  async gitStashApply(_path: string, _index?: number): Promise<string> { this.gitNotSupported(); }
-  async gitStashDrop(_path: string, _index: number): Promise<string> { this.gitNotSupported(); }
-  async gitStashList(_path: string): Promise<GitStashEntry[]> { this.gitNotSupported(); }
-  async gitRemoteList(_path: string): Promise<GitRemote[]> { this.gitNotSupported(); }
-    async gitRemoteAdd(_path: string, _name: string, _url: string): Promise<string> { this.gitNotSupported(); }
-    async gitRemoteSetUrl(_path: string, _name: string, _url: string): Promise<string> { this.gitNotSupported(); }
-    async gitRemoteRemove(_path: string, _name: string): Promise<string> { this.gitNotSupported(); }
   async gitCurrentBranch(_path: string): Promise<string> { this.gitNotSupported(); }
-  async gitTags(_path: string): Promise<GitTag[]> { this.gitNotSupported(); }
+  async gitListBranches(_path: string): Promise<GitBranch[]> { this.gitNotSupported(); }
+  async gitSwitchBranch(_path: string, _branch: string): Promise<string> { this.gitNotSupported(); }
+  async gitCreateAndSwitchBranch(_path: string, _name: string, _startPoint?: string): Promise<string> { this.gitNotSupported(); }
+  async gitDeleteBranch(_path: string, _name: string, _force?: boolean): Promise<string> { this.gitNotSupported(); }
+  async gitRenameBranch(_path: string, _oldName: string, _newName: string): Promise<string> { this.gitNotSupported(); }
+  async gitHistory(_path: string, _maxCount?: number): Promise<GitCommit[]> { this.gitNotSupported(); }
 }

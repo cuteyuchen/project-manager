@@ -2,11 +2,9 @@
 import { computed } from 'vue';
 import { useGitStore } from '../../stores/git';
 import { useI18n } from 'vue-i18n';
-import { ElMessage } from 'element-plus';
-import 'diff2html/bundles/css/diff2html.min.css';
 import type { Project } from '../../types';
 
-const props = defineProps<{
+defineProps<{
   project: Project;
 }>();
 
@@ -15,285 +13,128 @@ const gitStore = useGitStore();
 
 const diffContent = computed(() => gitStore.selectedDiff);
 const diffFile = computed(() => gitStore.selectedDiffFile);
-const isStaged = computed(() => gitStore.selectedDiffStaged);
 
-// ─── Parse diff into file header + hunks ──────────────────────────────────
-interface DiffHunk {
-  header: string;       // @@ -x,y +a,b @@ optional context
-  lines: string[];      // all lines including the @@ header
-  rawPatch: string;     // reconstructed patch text for this hunk (with file header)
-  additions: number;
-  deletions: number;
+interface DiffLine {
+  type: 'header' | 'add' | 'del' | 'context' | 'hunk' | 'meta';
+  content: string;
+  oldNum?: number;
+  newNum?: number;
 }
 
-interface ParsedDiff {
-  fileHeader: string;   // everything before the first hunk
-  hunks: DiffHunk[];
-  fileName: string;
-  additions: number;
-  deletions: number;
-}
-
-const parsedDiff = computed((): ParsedDiff | null => {
+const parsedLines = computed((): DiffLine[] => {
   const raw = diffContent.value;
-  if (!raw) return null;
+  if (!raw) return [];
 
-  const lines = raw.split('\n');
-  let fileHeader = '';
-  const hunks: DiffHunk[] = [];
-  let currentHunk: DiffHunk | null = null;
+  const result: DiffLine[] = [];
+  let oldNum = 0;
+  let newNum = 0;
 
-  // Collect file header lines (everything before first @@)
-  let headerDone = false;
-
-  for (const line of lines) {
-    if (!headerDone) {
-      if (line.startsWith('@@')) {
-        headerDone = true;
-      } else {
-        fileHeader += line + '\n';
-        continue;
+  for (const line of raw.split('\n')) {
+    if (line.startsWith('diff --git') || line.startsWith('index ') || line.startsWith('---') || line.startsWith('+++')) {
+      result.push({ type: 'meta', content: line });
+    } else if (line.startsWith('@@')) {
+      const match = line.match(/@@ -(\d+)/);
+      if (match) {
+        oldNum = parseInt(match[1]) - 1;
+        const newMatch = line.match(/@@ -\d+(?:,\d+)? \+(\d+)/);
+        newNum = newMatch ? parseInt(newMatch[1]) - 1 : oldNum;
       }
-    }
-
-    if (line.startsWith('@@')) {
-      // Start new hunk
-      if (currentHunk) hunks.push(currentHunk);
-      currentHunk = {
-        header: line,
-        lines: [line],
-        rawPatch: '',
-        additions: 0,
-        deletions: 0,
-      };
-    } else if (currentHunk) {
-      currentHunk.lines.push(line);
-      if (line.startsWith('+') && !line.startsWith('+++')) currentHunk.additions++;
-      else if (line.startsWith('-') && !line.startsWith('---')) currentHunk.deletions++;
+      result.push({ type: 'hunk', content: line });
+    } else if (line.startsWith('+')) {
+      newNum++;
+      result.push({ type: 'add', content: line.slice(1), newNum });
+    } else if (line.startsWith('-')) {
+      oldNum++;
+      result.push({ type: 'del', content: line.slice(1), oldNum });
+    } else {
+      oldNum++;
+      newNum++;
+      result.push({
+        type: 'context',
+        content: line.startsWith(' ') ? line.slice(1) : line,
+        oldNum,
+        newNum,
+      });
     }
   }
-  if (currentHunk) hunks.push(currentHunk);
 
-  // Build rawPatch for each hunk (file header + this hunk)
-  for (const hunk of hunks) {
-    hunk.rawPatch = fileHeader + hunk.lines.join('\n') + '\n';
-  }
-
-  // Total stats
-  let totalAdd = 0, totalDel = 0;
-  for (const h of hunks) { totalAdd += h.additions; totalDel += h.deletions; }
-
-  // Extract file name from header
-  const nameMatch = fileHeader.match(/^diff --git a\/(.+?) b\//m);
-  const fileName = nameMatch ? nameMatch[1] : diffFile.value || '';
-
-  return { fileHeader, hunks, fileName, additions: totalAdd, deletions: totalDel };
+  return result;
 });
 
-// ─── Hunk actions ─────────────────────────────────────────────────────────
-
-async function stageHunk(hunk: DiffHunk) {
-  try {
-    // Apply hunk patch to index (--cached)
-    await gitStore.applyPatch(props.project.id, props.project.path, hunk.rawPatch, true, false);
-    // Refresh the diff
-    if (diffFile.value) {
-      await gitStore.getDiff(props.project.path, diffFile.value, isStaged.value);
-    }
-  } catch (e: any) {
-    ElMessage.error(t('git.operationFailed', { error: String(e) }));
+const stats = computed(() => {
+  let adds = 0;
+  let dels = 0;
+  for (const line of parsedLines.value) {
+    if (line.type === 'add') adds++;
+    else if (line.type === 'del') dels++;
   }
-}
-
-async function unstageHunk(hunk: DiffHunk) {
-  try {
-    // Reverse apply from index
-    await gitStore.applyPatch(props.project.id, props.project.path, hunk.rawPatch, true, true);
-    if (diffFile.value) {
-      await gitStore.getDiff(props.project.path, diffFile.value, isStaged.value);
-    }
-  } catch (e: any) {
-    ElMessage.error(t('git.operationFailed', { error: String(e) }));
-  }
-}
-
-async function discardHunk(hunk: DiffHunk) {
-  try {
-    // Reverse apply to working tree (not cached)
-    await gitStore.applyPatch(props.project.id, props.project.path, hunk.rawPatch, false, true);
-    if (diffFile.value) {
-      await gitStore.getDiff(props.project.path, diffFile.value, isStaged.value);
-    }
-  } catch (e: any) {
-    ElMessage.error(t('git.operationFailed', { error: String(e) }));
-  }
-}
-
-// ─── Line rendering helpers ───────────────────────────────────────────────
-
-// Line numbers
-interface NumberedLine {
-  oldNum: number | null;
-  newNum: number | null;
-  text: string;
-  type: 'add' | 'del' | 'context' | 'header';
-}
-
-function computeLineNumbers(lines: string[]): NumberedLine[] {
-  const result: NumberedLine[] = [];
-  let oldLine = 0, newLine = 0;
-
-  for (const line of lines) {
-    if (line.startsWith('@@')) {
-      // Parse hunk header to get line numbers
-      const match = line.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
-      if (match) {
-        oldLine = parseInt(match[1]) - 1;
-        newLine = parseInt(match[2]) - 1;
-      }
-      result.push({ oldNum: null, newNum: null, text: line, type: 'header' });
-    } else if (line.startsWith('+') && !line.startsWith('+++')) {
-      newLine++;
-      result.push({ oldNum: null, newNum: newLine, text: line.substring(1), type: 'add' });
-    } else if (line.startsWith('-') && !line.startsWith('---')) {
-      oldLine++;
-      result.push({ oldNum: oldLine, newNum: null, text: line.substring(1), type: 'del' });
-    } else {
-      oldLine++;
-      newLine++;
-      result.push({ oldNum: oldLine, newNum: newLine, text: line.startsWith(' ') ? line.substring(1) : line, type: 'context' });
-    }
-  }
-  return result;
-}
+  return { adds, dels };
+});
 </script>
 
 <template>
   <div class="h-full flex flex-col overflow-hidden">
-    <!-- Header -->
-    <div v-if="parsedDiff" class="flex items-center justify-between px-3 py-1 border-b border-slate-200/60 dark:border-slate-700/20 bg-white/40 dark:bg-[#1e293b]/40 flex-shrink-0">
-      <div class="flex items-center gap-2 text-[11px]">
-        <div class="i-mdi-file-compare text-xs text-blue-500" />
-        <span class="font-medium text-slate-700 dark:text-slate-300 truncate max-w-[260px]">{{ parsedDiff.fileName || diffFile }}</span>
-        <span class="text-green-500 font-mono text-[10px]">+{{ parsedDiff.additions }}</span>
-        <span class="text-red-500 font-mono text-[10px]">-{{ parsedDiff.deletions }}</span>
-      </div>
-      <div class="flex items-center gap-1 text-[9px] text-slate-400">
-        <span v-if="isStaged" class="px-1.5 py-0.5 rounded-md bg-green-500/8 text-green-500 font-medium">{{ t('git.staged') }}</span>
-        <span v-else class="px-1.5 py-0.5 rounded-md bg-amber-500/8 text-amber-500 font-medium">{{ t('git.unstaged') }}</span>
-      </div>
+    <!-- No diff selected -->
+    <div v-if="!diffContent" class="flex-1 flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 gap-1">
+      <div class="i-mdi-file-document-outline text-2xl" />
+      <span class="text-[11px]">{{ t('git.selectFileToView') }}</span>
     </div>
 
-    <!-- Hunk list -->
-    <div v-if="parsedDiff && parsedDiff.hunks.length > 0" class="flex-1 overflow-auto custom-scrollbar">
-      <div v-for="(hunk, hunkIdx) in parsedDiff.hunks" :key="hunkIdx" class="border-b border-slate-200/40 dark:border-slate-700/20">
-        <!-- Hunk header with actions -->
-        <div class="flex items-center justify-between px-3 py-0.5 bg-blue-50/40 dark:bg-blue-900/8 sticky top-0 z-10 border-b border-slate-200/30 dark:border-slate-700/15">
-          <span class="font-mono text-[10px] text-blue-600/80 dark:text-blue-400/80 truncate flex-1">{{ hunk.header }}</span>
-          <div class="flex items-center gap-1 flex-shrink-0 ml-2">
-            <button v-if="!isStaged" @click="stageHunk(hunk)"
-              class="hunk-action-btn text-green-600 dark:text-green-400 hover:bg-green-100 dark:hover:bg-green-900/30"
-              :title="t('git.stageHunk')">
-              {{ t('git.stageHunk') }}
-            </button>
-            <button v-if="isStaged" @click="unstageHunk(hunk)"
-              class="hunk-action-btn text-amber-600 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/30"
-              :title="t('git.unstageHunk')">
-              {{ t('git.unstageHunk') }}
-            </button>
-            <button v-if="!isStaged" @click="discardHunk(hunk)"
-              class="hunk-action-btn text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30"
-              :title="t('git.discardHunk')">
-              {{ t('git.discardHunk') }}
-            </button>
-          </div>
-        </div>
+    <template v-else>
+      <!-- Header -->
+      <div class="flex items-center gap-2 px-3 py-1.5 border-b border-slate-200/40 dark:border-slate-700/30 shrink-0 text-[11px]">
+        <span class="font-medium text-slate-700 dark:text-slate-300 truncate flex-1">{{ diffFile || t('git.commitDetail') }}</span>
+        <span class="text-green-500 font-mono">+{{ stats.adds }}</span>
+        <span class="text-red-500 font-mono">-{{ stats.dels }}</span>
+      </div>
 
-        <!-- Hunk content: line-by-line diff -->
-        <table class="w-full text-xs font-mono diff-table">
+      <!-- Diff content -->
+      <div class="flex-1 overflow-auto font-mono text-[11px] leading-[18px]">
+        <table class="w-full border-collapse">
           <tbody>
-            <tr v-for="(nline, lineIdx) in computeLineNumbers(hunk.lines.slice(1))" :key="lineIdx"
+            <tr
+              v-for="(line, i) in parsedLines"
+              :key="i"
               :class="{
-                'bg-green-50/80 dark:bg-green-900/10': nline.type === 'add',
-                'bg-red-50/80 dark:bg-red-900/10': nline.type === 'del',
-              }">
-              <td class="diff-line-num text-right select-none w-[50px] px-2 border-r border-slate-200/40 dark:border-slate-700/20"
-                :class="{ 'text-red-400': nline.type === 'del', 'text-green-400': nline.type === 'add' }">
-                {{ nline.oldNum ?? '' }}
+                'bg-green-500/8': line.type === 'add',
+                'bg-red-500/8': line.type === 'del',
+                'bg-blue-500/5': line.type === 'hunk',
+                'bg-slate-500/3': line.type === 'meta',
+              }"
+            >
+              <!-- Line numbers -->
+              <td
+                v-if="line.type !== 'meta' && line.type !== 'hunk'"
+                class="w-[1px] whitespace-nowrap px-1.5 text-right text-slate-400/60 dark:text-slate-500/40 select-none border-r border-slate-200/20 dark:border-slate-700/15"
+              >
+                {{ line.oldNum || '' }}
               </td>
-              <td class="diff-line-num text-right select-none w-[50px] px-2 border-r border-slate-200/40 dark:border-slate-700/20"
-                :class="{ 'text-red-400': nline.type === 'del', 'text-green-400': nline.type === 'add' }">
-                {{ nline.newNum ?? '' }}
+              <td
+                v-if="line.type !== 'meta' && line.type !== 'hunk'"
+                class="w-[1px] whitespace-nowrap px-1.5 text-right text-slate-400/60 dark:text-slate-500/40 select-none border-r border-slate-200/20 dark:border-slate-700/15"
+              >
+                {{ line.newNum || '' }}
               </td>
-              <td class="diff-line-sign w-[18px] text-center select-none"
-                :class="{ 'text-green-600 dark:text-green-400': nline.type === 'add', 'text-red-600 dark:text-red-400': nline.type === 'del' }">
-                {{ nline.type === 'add' ? '+' : nline.type === 'del' ? '-' : '' }}
-              </td>
-              <td class="diff-line-content whitespace-pre pl-1 pr-3">{{ nline.text }}</td>
+              <td
+                v-if="line.type === 'meta' || line.type === 'hunk'"
+                colspan="2"
+                class="w-[1px] whitespace-nowrap px-1.5 text-right text-slate-400/40 select-none border-r border-slate-200/20 dark:border-slate-700/15"
+              />
+              <!-- Content -->
+              <td
+                class="px-2 whitespace-pre"
+                :class="{
+                  'text-green-700 dark:text-green-300': line.type === 'add',
+                  'text-red-700 dark:text-red-300': line.type === 'del',
+                  'text-blue-500/70': line.type === 'hunk',
+                  'text-slate-400/60': line.type === 'meta',
+                  'text-slate-700 dark:text-slate-300': line.type === 'context',
+                }"
+              >{{ line.content }}</td>
             </tr>
           </tbody>
         </table>
       </div>
-    </div>
-
-    <!-- Empty state -->
-    <div v-else class="flex-1 flex items-center justify-center text-slate-400 dark:text-slate-500">
-      <div class="text-center">
-        <div class="i-mdi-file-compare text-4xl opacity-15 mx-auto mb-3" />
-        <p class="text-[11px] text-slate-400/60">{{ t('git.selectFileToView') }}</p>
-      </div>
-    </div>
+    </template>
   </div>
 </template>
-
-<style scoped>
-.hunk-action-btn {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 2px 6px;
-  border-radius: 6px;
-  font-size: 9px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 150ms ease;
-}
-
-.diff-table {
-  border-collapse: collapse;
-}
-
-.diff-table td {
-  padding-top: 0;
-  padding-bottom: 0;
-  line-height: 20px;
-  font-size: 12px;
-}
-
-.diff-line-num {
-  color: #94a3b8;
-  font-size: 10px;
-  min-width: 35px;
-  user-select: none;
-}
-
-.diff-line-content {
-  font-family: 'Cascadia Code', 'Fira Code', 'Source Code Pro', 'Consolas', monospace;
-  tab-size: 4;
-}
-
-.custom-scrollbar::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
-}
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
-}
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  border-radius: 3px;
-}
-.dark .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #334155;
-}
-</style>

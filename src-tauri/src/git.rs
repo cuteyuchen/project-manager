@@ -67,6 +67,16 @@ pub struct GitStatusResult {
     pub conflicted: Vec<GitFileStatus>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitSummary {
+    pub branch: String,
+    pub is_detached: bool,
+    pub ahead: i32,
+    pub behind: i32,
+    pub has_remote: bool,
+    pub remote_name: Option<String>,
+}
+
 // ─── Helper ──────────────────────────────────────────────────────────────────
 
 fn run_git(path: &str, args: &[&str]) -> Result<String, String> {
@@ -238,7 +248,7 @@ pub fn git_stage_all(path: String) -> Result<String, String> {
 
 #[tauri::command]
 pub fn git_unstage_all(path: String) -> Result<String, String> {
-    run_git(&path, &["reset", "HEAD"])
+    run_git(&path, &["restore", "--staged", "."])
 }
 
 #[tauri::command]
@@ -535,12 +545,13 @@ pub fn git_diff(path: String, file: Option<String>, staged: Option<bool>) -> Res
 
 #[tauri::command]
 pub fn git_diff_commit(path: String, hash: String) -> Result<String, String> {
-    run_git_relaxed(&path, &["diff", &format!("{}~1", hash), &hash])
+    // Use git show to handle all commits including root commits
+    run_git_relaxed(&path, &["show", "--format=", "--patch", &hash])
 }
 
 #[tauri::command]
 pub fn git_discard(path: String, files: Vec<String>) -> Result<String, String> {
-    let mut args = vec!["checkout", "--"];
+    let mut args = vec!["restore", "--"];
     let file_refs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
     args.extend(file_refs);
     run_git(&path, &args)
@@ -673,4 +684,218 @@ pub fn git_tags(path: String) -> Result<Vec<GitTag>, String> {
 #[tauri::command]
 pub fn git_delete_tag(path: String, name: String) -> Result<String, String> {
     run_git(&path, &["tag", "-d", &name])
+}
+
+// ─── New Commands (Phase 1 Refactor) ─────────────────────────────────────────
+
+#[tauri::command]
+pub fn git_summary(path: String) -> Result<GitSummary, String> {
+    let branch_output = run_git(&path, &["branch", "--show-current"])?;
+    let branch_raw = branch_output.trim().to_string();
+    let is_detached = branch_raw.is_empty();
+
+    let branch = if is_detached {
+        run_git(&path, &["rev-parse", "--short", "HEAD"])
+            .unwrap_or_else(|_| "HEAD".to_string())
+            .trim()
+            .to_string()
+    } else {
+        branch_raw.clone()
+    };
+
+    let mut ahead = 0;
+    let mut behind = 0;
+    let mut has_remote = false;
+    let mut remote_name = None;
+
+    if !is_detached {
+        if let Ok(upstream) = run_git(
+            &path,
+            &["config", &format!("branch.{}.remote", branch_raw)],
+        ) {
+            let remote = upstream.trim().to_string();
+            if !remote.is_empty() {
+                has_remote = true;
+                remote_name = Some(remote);
+                if let Ok(track) = run_git(
+                    &path,
+                    &[
+                        "rev-list",
+                        "--left-right",
+                        "--count",
+                        &format!("{}@{{upstream}}...HEAD", branch_raw),
+                    ],
+                ) {
+                    let parts: Vec<&str> = track.trim().split_whitespace().collect();
+                    if parts.len() == 2 {
+                        behind = parts[0].parse().unwrap_or(0);
+                        ahead = parts[1].parse().unwrap_or(0);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(GitSummary {
+        branch,
+        is_detached,
+        ahead,
+        behind,
+        has_remote,
+        remote_name,
+    })
+}
+
+#[tauri::command]
+pub fn git_switch_branch(path: String, branch: String) -> Result<String, String> {
+    // If it looks like a remote branch (e.g., "origin/feature"),
+    // try to switch to the local name, or create a tracking branch
+    if branch.contains('/') {
+        let parts: Vec<&str> = branch.splitn(2, '/').collect();
+        if parts.len() == 2 {
+            let local_name = parts[1];
+            // Try switching to existing local branch first
+            match run_git(&path, &["switch", local_name]) {
+                Ok(output) => return Ok(output),
+                Err(_) => {
+                    // Create tracking branch and switch
+                    return run_git(
+                        &path,
+                        &["switch", "-c", local_name, "--track", &branch],
+                    );
+                }
+            }
+        }
+    }
+    run_git(&path, &["switch", &branch])
+}
+
+#[tauri::command]
+pub fn git_create_and_switch_branch(
+    path: String,
+    name: String,
+    start_point: Option<String>,
+) -> Result<String, String> {
+    let mut args = vec!["switch", "-c", &name];
+    if let Some(ref sp) = start_point {
+        args.push(sp.as_str());
+    }
+    run_git(&path, &args)
+}
+
+#[tauri::command]
+pub fn git_list_branches(path: String) -> Result<Vec<GitBranch>, String> {
+    let mut branches = Vec::new();
+
+    let current = run_git(&path, &["branch", "--show-current"])
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    let local_output = run_git(
+        &path,
+        &[
+            "branch",
+            "--format=%(refname:short)\t%(upstream:short)\t%(upstream:track)",
+        ],
+    )?;
+    for line in local_output.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = line.split('\t').collect();
+        let name = parts.get(0).unwrap_or(&"").to_string();
+        let upstream = parts
+            .get(1)
+            .and_then(|s| if s.is_empty() { None } else { Some(s.to_string()) });
+        let track = parts.get(2).unwrap_or(&"").to_string();
+        let (ahead, behind) = parse_track_info(&track);
+
+        branches.push(GitBranch {
+            is_current: name == current,
+            name,
+            is_remote: false,
+            upstream,
+            ahead,
+            behind,
+        });
+    }
+
+    let remote_output = run_git(&path, &["branch", "-r", "--format=%(refname:short)"])?;
+    for line in remote_output.lines() {
+        let name = line.trim().to_string();
+        if name.is_empty() || name.contains("HEAD") {
+            continue;
+        }
+        branches.push(GitBranch {
+            name,
+            is_remote: true,
+            is_current: false,
+            upstream: None,
+            ahead: 0,
+            behind: 0,
+        });
+    }
+
+    Ok(branches)
+}
+
+#[tauri::command]
+pub fn git_history(
+    path: String,
+    max_count: Option<i32>,
+) -> Result<Vec<GitCommit>, String> {
+    let count_str = max_count.unwrap_or(100).to_string();
+    let max_count_arg = format!("--max-count={}", count_str);
+    let args = vec![
+        "log",
+        max_count_arg.as_str(),
+        "--format=%H%n%h%n%an%n%ae%n%aI%n%s%n%P%n%D%n---END---",
+    ];
+
+    let output = run_git_relaxed(&path, &args)?;
+    let mut commits = Vec::new();
+    let mut lines: Vec<&str> = Vec::new();
+
+    for line in output.lines() {
+        if line == "---END---" {
+            if lines.len() >= 7 {
+                let hash = lines[0].to_string();
+                let short_hash = lines[1].to_string();
+                let author = lines[2].to_string();
+                let email = lines[3].to_string();
+                let date = lines[4].to_string();
+                let message = lines[5].to_string();
+                let parents: Vec<String> = if lines[6].is_empty() {
+                    vec![]
+                } else {
+                    lines[6].split(' ').map(|s| s.to_string()).collect()
+                };
+                let refs: Vec<String> = if lines.len() > 7 && !lines[7].is_empty() {
+                    lines[7]
+                        .split(", ")
+                        .map(|s| s.trim().to_string())
+                        .collect()
+                } else {
+                    vec![]
+                };
+
+                commits.push(GitCommit {
+                    hash,
+                    short_hash,
+                    author,
+                    email,
+                    date,
+                    message,
+                    parents,
+                    refs,
+                });
+            }
+            lines.clear();
+        } else {
+            lines.push(line);
+        }
+    }
+
+    Ok(commits)
 }

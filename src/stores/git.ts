@@ -5,32 +5,32 @@ import type {
   GitStatusResult,
   GitBranch,
   GitCommit,
-  GitRemote,
-  GitStashEntry,
-  GitTag,
+  GitSummary,
 } from '../types';
 
 export const useGitStore = defineStore('git', () => {
   // ─── State ───────────────────────────────────────────────────────────────
   const isGitRepo = ref<Record<string, boolean>>({});
+  const summary = ref<Record<string, GitSummary>>({});
   const status = ref<Record<string, GitStatusResult>>({});
+  const history = ref<Record<string, GitCommit[]>>({});
   const branches = ref<Record<string, GitBranch[]>>({});
-  const commits = ref<Record<string, GitCommit[]>>({});
-  const currentBranch = ref<Record<string, string>>({});
-  const remotes = ref<Record<string, GitRemote[]>>({});
-  const stashes = ref<Record<string, GitStashEntry[]>>({});
-  const tags = ref<Record<string, GitTag[]>>({});
-  const selectedDiff = ref<string>('');
-  const selectedDiffFile = ref<string>('');
-  const selectedDiffStaged = ref<boolean>(false);
+
+  // Current diff (not project-scoped – just the currently viewed diff)
+  const selectedDiff = ref('');
+  const selectedDiffFile = ref('');
+  const selectedDiffStaged = ref(false);
 
   // Loading states
   const loading = ref(false);
-  const statusLoading = ref(false);
-  const commitLoading = ref(false);
   const operationLoading = ref(false);
 
   // ─── Getters ─────────────────────────────────────────────────────────────
+
+  function getSummary(projectId: string): GitSummary | undefined {
+    return summary.value[projectId];
+  }
+
   function getStatus(projectId: string): GitStatusResult | undefined {
     return status.value[projectId];
   }
@@ -39,20 +39,12 @@ export const useGitStore = defineStore('git', () => {
     return branches.value[projectId] || [];
   }
 
-  function getCommits(projectId: string): GitCommit[] {
-    return commits.value[projectId] || [];
-  }
-
-  function getCurrentBranch(projectId: string): string {
-    return currentBranch.value[projectId] || '';
-  }
-
   function getLocalBranches(projectId: string): GitBranch[] {
-    return (branches.value[projectId] || []).filter(b => !b.is_remote);
+    return getBranches(projectId).filter(b => !b.is_remote);
   }
 
   function getRemoteBranches(projectId: string): GitBranch[] {
-    return (branches.value[projectId] || []).filter(b => b.is_remote);
+    return getBranches(projectId).filter(b => b.is_remote);
   }
 
   function getTotalChanges(projectId: string): number {
@@ -61,7 +53,7 @@ export const useGitStore = defineStore('git', () => {
     return s.staged.length + s.unstaged.length + s.untracked.length + s.conflicted.length;
   }
 
-  // ─── Actions ─────────────────────────────────────────────────────────────
+  // ─── Refresh Actions (on-demand) ────────────────────────────────────────
 
   async function checkGitRepo(projectId: string, path: string): Promise<boolean> {
     try {
@@ -77,83 +69,50 @@ export const useGitStore = defineStore('git', () => {
   async function initRepo(projectId: string, path: string): Promise<void> {
     await api.gitInit(path);
     isGitRepo.value[projectId] = true;
-    await refreshAll(projectId, path);
+    await refreshSummaryAndStatus(projectId, path);
+  }
+
+  async function refreshSummary(projectId: string, path: string): Promise<void> {
+    try {
+      summary.value[projectId] = await api.gitSummary(path);
+    } catch (e) {
+      console.error('Failed to get git summary:', e);
+    }
   }
 
   async function refreshStatus(projectId: string, path: string): Promise<void> {
-    statusLoading.value = true;
     try {
-      const result = await api.gitStatus(path);
-      status.value[projectId] = result;
+      status.value[projectId] = await api.gitStatus(path);
     } catch (e) {
       console.error('Failed to get git status:', e);
+    }
+  }
+
+  async function refreshSummaryAndStatus(projectId: string, path: string): Promise<void> {
+    loading.value = true;
+    try {
+      await Promise.all([
+        refreshSummary(projectId, path),
+        refreshStatus(projectId, path),
+      ]);
     } finally {
-      statusLoading.value = false;
+      loading.value = false;
+    }
+  }
+
+  async function refreshHistory(projectId: string, path: string, maxCount?: number): Promise<void> {
+    try {
+      history.value[projectId] = await api.gitHistory(path, maxCount);
+    } catch (e) {
+      console.error('Failed to get git history:', e);
     }
   }
 
   async function refreshBranches(projectId: string, path: string): Promise<void> {
     try {
-      const [branchList, current] = await Promise.all([
-        api.gitBranches(path),
-        api.gitCurrentBranch(path),
-      ]);
-      branches.value[projectId] = branchList;
-      currentBranch.value[projectId] = current;
+      branches.value[projectId] = await api.gitListBranches(path);
     } catch (e) {
       console.error('Failed to get branches:', e);
-    }
-  }
-
-  async function refreshLog(projectId: string, path: string, maxCount?: number): Promise<void> {
-    commitLoading.value = true;
-    try {
-      const result = await api.gitLog(path, maxCount);
-      commits.value[projectId] = result;
-    } catch (e) {
-      console.error('Failed to get git log:', e);
-    } finally {
-      commitLoading.value = false;
-    }
-  }
-
-  async function refreshRemotes(projectId: string, path: string): Promise<void> {
-    try {
-      remotes.value[projectId] = await api.gitRemoteList(path);
-    } catch (e) {
-      console.error('Failed to get remotes:', e);
-    }
-  }
-
-  async function refreshStashes(projectId: string, path: string): Promise<void> {
-    try {
-      stashes.value[projectId] = await api.gitStashList(path);
-    } catch (e) {
-      console.error('Failed to get stashes:', e);
-    }
-  }
-
-  async function refreshTags(projectId: string, path: string): Promise<void> {
-    try {
-      tags.value[projectId] = await api.gitTags(path);
-    } catch (e) {
-      console.error('Failed to get tags:', e);
-    }
-  }
-
-  async function refreshAll(projectId: string, path: string): Promise<void> {
-    loading.value = true;
-    try {
-      await Promise.all([
-        refreshStatus(projectId, path),
-        refreshBranches(projectId, path),
-        refreshLog(projectId, path),
-        refreshRemotes(projectId, path),
-        refreshStashes(projectId, path),
-        refreshTags(projectId, path),
-      ]);
-    } finally {
-      loading.value = false;
     }
   }
 
@@ -183,11 +142,7 @@ export const useGitStore = defineStore('git', () => {
     operationLoading.value = true;
     try {
       const result = await api.gitCommit(path, message);
-      await Promise.all([
-        refreshStatus(projectId, path),
-        refreshLog(projectId, path),
-        refreshBranches(projectId, path),
-      ]);
+      await refreshSummaryAndStatus(projectId, path);
       return result;
     } finally {
       operationLoading.value = false;
@@ -198,7 +153,7 @@ export const useGitStore = defineStore('git', () => {
     operationLoading.value = true;
     try {
       const result = await api.gitPull(path, remote, branch);
-      await refreshAll(projectId, path);
+      await refreshSummaryAndStatus(projectId, path);
       return result;
     } finally {
       operationLoading.value = false;
@@ -209,7 +164,7 @@ export const useGitStore = defineStore('git', () => {
     operationLoading.value = true;
     try {
       const result = await api.gitPush(path, remote, branch, force, setUpstream);
-      await refreshBranches(projectId, path);
+      await refreshSummary(projectId, path);
       return result;
     } finally {
       operationLoading.value = false;
@@ -220,44 +175,29 @@ export const useGitStore = defineStore('git', () => {
     operationLoading.value = true;
     try {
       const result = await api.gitFetch(path, remote);
-      await Promise.all([
-        refreshBranches(projectId, path),
-        refreshLog(projectId, path),
-      ]);
+      await refreshSummary(projectId, path);
       return result;
     } finally {
       operationLoading.value = false;
     }
   }
 
-  async function checkout(projectId: string, path: string, branch: string): Promise<string> {
+  async function switchBranch(projectId: string, path: string, branch: string): Promise<string> {
     operationLoading.value = true;
     try {
-      const result = await api.gitCheckout(path, branch);
-      await refreshAll(projectId, path);
+      const result = await api.gitSwitchBranch(path, branch);
+      await refreshSummaryAndStatus(projectId, path);
       return result;
     } finally {
       operationLoading.value = false;
     }
   }
 
-  async function createBranch(projectId: string, path: string, name: string, startPoint?: string): Promise<string> {
+  async function createAndSwitchBranch(projectId: string, path: string, name: string, startPoint?: string): Promise<string> {
     operationLoading.value = true;
     try {
-      const result = await api.gitCreateBranch(path, name, startPoint);
-      await Promise.all([
-        refreshBranches(projectId, path),
-        refreshLog(projectId, path),
-      ]);
-
-      const created = getLocalBranches(projectId).some(branch => branch.name === name);
-      if (!created) {
-        await refreshAll(projectId, path);
-      }
-      const confirmed = getLocalBranches(projectId).some(branch => branch.name === name);
-      if (!confirmed) {
-        throw new Error(`Branch \"${name}\" was not created`);
-      }
+      const result = await api.gitCreateAndSwitchBranch(path, name, startPoint);
+      await refreshSummaryAndStatus(projectId, path);
       return result;
     } finally {
       operationLoading.value = false;
@@ -279,38 +219,11 @@ export const useGitStore = defineStore('git', () => {
     operationLoading.value = true;
     try {
       const result = await api.gitRenameBranch(path, oldName, newName);
-      await refreshBranches(projectId, path);
+      await refreshSummary(projectId, path);
       return result;
     } finally {
       operationLoading.value = false;
     }
-  }
-
-  async function merge(projectId: string, path: string, branch: string): Promise<string> {
-    operationLoading.value = true;
-    try {
-      const result = await api.gitMerge(path, branch);
-      await refreshAll(projectId, path);
-      return result;
-    } finally {
-      operationLoading.value = false;
-    }
-  }
-
-  async function rebase(projectId: string, path: string, branch: string): Promise<string> {
-    operationLoading.value = true;
-    try {
-      const result = await api.gitRebase(path, branch);
-      await refreshAll(projectId, path);
-      return result;
-    } finally {
-      operationLoading.value = false;
-    }
-  }
-
-  async function rmCached(projectId: string, path: string, files: string[]): Promise<void> {
-    await api.gitRmCached(path, files);
-    await refreshStatus(projectId, path);
   }
 
   async function getDiff(path: string, file?: string, staged?: boolean): Promise<string> {
@@ -337,103 +250,43 @@ export const useGitStore = defineStore('git', () => {
     await refreshStatus(projectId, path);
   }
 
-  async function stashSave(projectId: string, path: string, message?: string): Promise<void> {
-    await api.gitStashSave(path, message);
-    await Promise.all([
-      refreshStatus(projectId, path),
-      refreshStashes(projectId, path),
-    ]);
-  }
-
-  async function stashPop(projectId: string, path: string, index?: number): Promise<void> {
-    await api.gitStashPop(path, index);
-    await Promise.all([
-      refreshStatus(projectId, path),
-      refreshStashes(projectId, path),
-    ]);
-  }
-
-  async function stashApply(projectId: string, path: string, index?: number): Promise<void> {
-    await api.gitStashApply(path, index);
-    await Promise.all([
-      refreshStatus(projectId, path),
-      refreshStashes(projectId, path),
-    ]);
-  }
-
-  async function stashDrop(projectId: string, path: string, index: number): Promise<void> {
-    await api.gitStashDrop(path, index);
-    await refreshStashes(projectId, path);
-  }
-
   function clearDiff(): void {
     selectedDiff.value = '';
     selectedDiffFile.value = '';
     selectedDiffStaged.value = false;
   }
 
-  async function applyPatch(projectId: string, path: string, patch: string, cached?: boolean, reverse?: boolean): Promise<void> {
-    await api.gitApplyPatch(path, patch, cached, reverse);
-    await refreshStatus(projectId, path);
-  }
-
-  async function deleteTag(projectId: string, path: string, name: string): Promise<void> {
-    await api.gitDeleteTag(path, name);
-    await refreshTags(projectId, path);
-  }
-
-  async function addRemote(projectId: string, path: string, name: string, url: string): Promise<void> {
-    await api.gitRemoteAdd(path, name, url);
-    await refreshRemotes(projectId, path);
-  }
-
-  async function updateRemoteUrl(projectId: string, path: string, name: string, url: string): Promise<void> {
-    await api.gitRemoteSetUrl(path, name, url);
-    await refreshRemotes(projectId, path);
-  }
-
-  async function removeRemote(projectId: string, path: string, name: string): Promise<void> {
-    await api.gitRemoteRemove(path, name);
-    await refreshRemotes(projectId, path);
-  }
-
   return {
     // State
     isGitRepo,
+    summary,
     status,
+    history,
     branches,
-    commits,
-    currentBranch,
-    remotes,
-    stashes,
-    tags,
     selectedDiff,
     selectedDiffFile,
     selectedDiffStaged,
     loading,
-    statusLoading,
-    commitLoading,
     operationLoading,
 
     // Getters
+    getSummary,
     getStatus,
     getBranches,
-    getCommits,
-    getCurrentBranch,
     getLocalBranches,
     getRemoteBranches,
     getTotalChanges,
 
-    // Actions
+    // Refresh
     checkGitRepo,
     initRepo,
+    refreshSummary,
     refreshStatus,
+    refreshSummaryAndStatus,
+    refreshHistory,
     refreshBranches,
-    refreshLog,
-    refreshRemotes,
-    refreshStashes,
-    refreshTags,
-    refreshAll,
+
+    // Operations
     stageFiles,
     unstageFiles,
     stageAll,
@@ -442,26 +295,14 @@ export const useGitStore = defineStore('git', () => {
     pull,
     push,
     fetch,
-    checkout,
-    createBranch,
+    switchBranch,
+    createAndSwitchBranch,
     deleteBranch,
     renameBranch,
-    merge,
-    rebase,
-    rmCached,
     getDiff,
     getDiffCommit,
     discardFiles,
     discardUntracked,
-    stashSave,
-    stashPop,
-    stashApply,
-    stashDrop,
     clearDiff,
-    applyPatch,
-    deleteTag,
-    addRemote,
-    updateRemoteUrl,
-    removeRemote,
   };
 });

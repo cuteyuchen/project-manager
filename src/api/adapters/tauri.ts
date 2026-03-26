@@ -5,7 +5,7 @@ import { open as openDialogFn, save as saveDialogFn } from '@tauri-apps/plugin-d
 import { openUrl as openUrlFn } from '@tauri-apps/plugin-opener';
 import { readTextFile as readTextFileFn, writeTextFile as writeTextFileFn } from '@tauri-apps/plugin-fs';
 import type { PlatformAPI, ProjectInfo, TerminalInfo } from '../types';
-import type { NodeVersion, GitStatusResult, GitBranch, GitCommit, GitRemote, GitStashEntry, GitTag } from '../../types';
+import type { NodeVersion, GitStatusResult, GitBranch, GitCommit, GitSummary } from '../../types';
 
 import { getCurrentWindow } from '@tauri-apps/api/window';
 
@@ -198,6 +198,10 @@ export class TauriAdapter implements PlatformAPI {
         return invoke('git_init', { path });
     }
 
+    async gitSummary(path: string): Promise<GitSummary> {
+        return invoke('git_summary', { path });
+    }
+
     async gitStatus(path: string): Promise<GitStatusResult> {
         return invoke('git_status', { path });
     }
@@ -234,46 +238,6 @@ export class TauriAdapter implements PlatformAPI {
         return invoke('git_fetch', { path, remote });
     }
 
-    async gitBranches(path: string): Promise<GitBranch[]> {
-        return invoke('git_branches', { path });
-    }
-
-    async gitCheckout(path: string, branch: string): Promise<string> {
-        return invoke('git_checkout', { path, branch });
-    }
-
-    async gitCreateBranch(path: string, name: string, startPoint?: string): Promise<string> {
-        return invoke('git_create_branch', { path, name, startPoint });
-    }
-
-    async gitDeleteBranch(path: string, name: string, force?: boolean): Promise<string> {
-        return invoke('git_delete_branch', { path, name, force });
-    }
-
-    async gitRenameBranch(path: string, oldName: string, newName: string): Promise<string> {
-        return invoke('git_rename_branch', { path, oldName, newName });
-    }
-
-    async gitMerge(path: string, branch: string): Promise<string> {
-        return invoke('git_merge', { path, branch });
-    }
-
-    async gitRebase(path: string, branch: string): Promise<string> {
-        return invoke('git_rebase', { path, branch });
-    }
-
-    async gitRmCached(path: string, files: string[]): Promise<string> {
-        return invoke('git_rm_cached', { path, files });
-    }
-
-    async gitApplyPatch(path: string, patch: string, cached?: boolean, reverse?: boolean): Promise<string> {
-        return invoke('git_apply_patch', { path, patch, cached, reverse });
-    }
-
-    async gitLog(path: string, maxCount?: number, all?: boolean): Promise<GitCommit[]> {
-        return invoke('git_log', { path, maxCount, all });
-    }
-
     async gitDiff(path: string, file?: string, staged?: boolean): Promise<string> {
         return invoke('git_diff', { path, file, staged });
     }
@@ -290,51 +254,31 @@ export class TauriAdapter implements PlatformAPI {
         return invoke('git_discard_untracked', { path, files });
     }
 
-    async gitStashSave(path: string, message?: string): Promise<string> {
-        return invoke('git_stash_save', { path, message });
-    }
-
-    async gitStashPop(path: string, index?: number): Promise<string> {
-        return invoke('git_stash_pop', { path, index });
-    }
-
-    async gitStashApply(path: string, index?: number): Promise<string> {
-        return invoke('git_stash_apply', { path, index });
-    }
-
-    async gitStashDrop(path: string, index: number): Promise<string> {
-        return invoke('git_stash_drop', { path, index });
-    }
-
-    async gitStashList(path: string): Promise<GitStashEntry[]> {
-        return invoke('git_stash_list', { path });
-    }
-
-    async gitRemoteList(path: string): Promise<GitRemote[]> {
-        return invoke('git_remote_list', { path });
-    }
-
-    async gitRemoteAdd(path: string, name: string, url: string): Promise<string> {
-        return invoke('git_remote_add', { path, name, url });
-    }
-
-    async gitRemoteSetUrl(path: string, name: string, url: string): Promise<string> {
-        return invoke('git_remote_set_url', { path, name, url });
-    }
-
-    async gitRemoteRemove(path: string, name: string): Promise<string> {
-        return invoke('git_remote_remove', { path, name });
-    }
-
     async gitCurrentBranch(path: string): Promise<string> {
         return invoke('git_current_branch', { path });
     }
 
-    async gitTags(path: string): Promise<GitTag[]> {
-        return invoke('git_tags', { path });
+    async gitListBranches(path: string): Promise<GitBranch[]> {
+        return invoke('git_list_branches', { path });
     }
 
-    async gitDeleteTag(path: string, name: string): Promise<string> {
-        return invoke('git_delete_tag', { path, name });
+    async gitSwitchBranch(path: string, branch: string): Promise<string> {
+        return invoke('git_switch_branch', { path, branch });
+    }
+
+    async gitCreateAndSwitchBranch(path: string, name: string, startPoint?: string): Promise<string> {
+        return invoke('git_create_and_switch_branch', { path, name, startPoint });
+    }
+
+    async gitDeleteBranch(path: string, name: string, force?: boolean): Promise<string> {
+        return invoke('git_delete_branch', { path, name, force });
+    }
+
+    async gitRenameBranch(path: string, oldName: string, newName: string): Promise<string> {
+        return invoke('git_rename_branch', { path, oldName, newName });
+    }
+
+    async gitHistory(path: string, maxCount?: number): Promise<GitCommit[]> {
+        return invoke('git_history', { path, maxCount });
     }
 }

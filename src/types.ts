@@ -64,21 +64,11 @@ export interface GitRemote {
   remote_type: string;
 }
 
-export interface GitStashEntry {
-  index: number;
-  message: string;
-  date: string;
-}
-
-export interface GitTag {
-  name: string;
-  hash: string;
-}
-
-// SVG graph rendering types
-export interface GitGraphNode {
-  hash: string;
-  column: number;
-  color: string;
-  parents: { hash: string; column: number }[];
+export interface GitSummary {
+  branch: string;
+  is_detached: boolean;
+  ahead: number;
+  behind: number;
+  has_remote: boolean;
+  remote_name?: string;
 }
