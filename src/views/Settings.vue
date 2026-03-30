@@ -88,10 +88,31 @@ async function selectEditor() {
             }]
         });
         if (selected && typeof selected === 'string') {
-            draft.value.editorPath = selected;
+            return selected;
         }
     } catch (e) {
         console.error(e);
+    }
+    return null;
+}
+
+function addEditor() {
+    if (!draft.value.editors) draft.value.editors = [];
+    draft.value.editors.push({ id: crypto.randomUUID(), name: '', path: '' });
+}
+
+function removeEditor(index: number) {
+    if (!draft.value.editors) return;
+    draft.value.editors.splice(index, 1);
+}
+
+async function browseEditorPath(index: number) {
+    const path = await selectEditor();
+    if (path && draft.value.editors?.[index]) {
+        draft.value.editors[index].path = path;
+        if (!draft.value.editors[index].name) {
+            draft.value.editors[index].name = path.split(/[/\\]/).pop()?.replace(/\.\w+$/, '') || '';
+        }
     }
 }
 
@@ -252,9 +273,9 @@ async function testAiConnection() {
 <template>
   <div class="h-full flex flex-col overflow-hidden">
     <!-- Top action bar — sticky -->
-    <div class="flex items-center justify-between px-6 py-3 border-b border-slate-200 dark:border-slate-700/30 bg-white dark:bg-[#0f172a] shrink-0 z-10">
+    <div class="flex items-center justify-between px-6 py-3 border-b border-slate-200 dark:border-slate-700/20 bg-white dark:bg-[#0f172a] shrink-0 z-10">
       <div class="flex items-center gap-3">
-        <h1 class="text-lg font-bold text-slate-900 dark:text-white">{{ t('settings.title') }}</h1>
+        <h1 class="text-base font-bold text-slate-800 dark:text-white">{{ t('settings.title') }}</h1>
         <transition name="fade">
           <span v-if="isDirty" class="text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 font-medium">
             {{ t('settings.unsavedChanges') }}
@@ -276,7 +297,7 @@ async function testAiConnection() {
     <div class="flex-1 overflow-y-auto p-6">
       <div class="max-w-4xl mx-auto space-y-5">
         <!-- General Settings -->
-        <el-card class="!bg-white dark:!bg-gray-800 !border-gray-200 dark:!border-gray-700 shadow-sm">
+        <el-card class="!bg-white dark:!bg-slate-800 !border-slate-200 dark:!border-slate-700 shadow-sm">
           <template #header>
             <div class="font-bold flex items-center gap-2">
               <div class="i-mdi-cog text-blue-500" />
@@ -284,16 +305,25 @@ async function testAiConnection() {
             </div>
           </template>
           <el-form label-position="top" class="max-w-lg">
-            <el-form-item :label="t('settings.editorPath')">
-              <el-input v-model="draft.editorPath" :placeholder="t('settings.editorPathPlaceholder')">
-                <template #prepend>
-                  <el-icon><div class="i-mdi-console" /></el-icon>
-                </template>
-                <template #append>
-                  <el-button @click="selectEditor">{{ t('settings.selectFile') }}</el-button>
-                </template>
-              </el-input>
-              <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ t('settings.editorPathHint') }}</div>
+            <el-form-item :label="t('settings.editors')">
+              <div class="w-full space-y-2">
+                <div v-for="(editor, index) in (draft.editors || [])" :key="editor.id" class="flex gap-2 items-center">
+                  <el-input v-model="editor.name" :placeholder="t('settings.editorName')" class="w-[120px]" size="small" />
+                  <el-input v-model="editor.path" :placeholder="t('settings.editorPathPlaceholder')" class="flex-1" size="small" readonly>
+                    <template #append>
+                      <el-button @click="browseEditorPath(index)" size="small">{{ t('settings.selectFile') }}</el-button>
+                    </template>
+                  </el-input>
+                  <el-button type="danger" text @click="removeEditor(index)" :disabled="(draft.editors?.length || 0) <= 1" size="small">
+                    <el-icon><div class="i-mdi-close" /></el-icon>
+                  </el-button>
+                </div>
+                <el-button type="primary" text @click="addEditor" size="small">
+                  <el-icon class="mr-1"><div class="i-mdi-plus" /></el-icon>
+                  {{ t('settings.addEditor') }}
+                </el-button>
+                <div class="text-xs text-slate-500 dark:text-slate-400">{{ t('settings.editorsHint') }}</div>
+              </div>
             </el-form-item>
 
             <el-form-item :label="t('settings.defaultTerminal')">
@@ -310,7 +340,7 @@ async function testAiConnection() {
                   <div class="i-mdi-plus text-sm" />
                 </el-button>
               </div>
-              <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ t('settings.terminalHint') }}</div>
+              <div class="text-xs text-slate-500 dark:text-slate-400 mt-1">{{ t('settings.terminalHint') }}</div>
               <!-- Custom terminals list -->
               <div v-if="draft.customTerminals?.length" class="mt-2 space-y-1">
                 <div v-for="ct in draft.customTerminals" :key="ct.id" class="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/50 rounded px-2 py-1">
@@ -325,18 +355,18 @@ async function testAiConnection() {
 
             <el-form-item :label="t('settings.contextMenu')" v-if="target !== 'utools' && contextMenuSupported">
               <el-switch v-model="contextMenuEnabled" @change="toggleContextMenu" />
-              <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ t('settings.contextMenuHint') }}</div>
+              <div class="text-xs text-slate-500 dark:text-slate-400 mt-1">{{ t('settings.contextMenuHint') }}</div>
             </el-form-item>
 
             <el-form-item :label="t('settings.autoLaunch')" v-if="target !== 'utools'">
               <el-switch v-model="autoLaunchEnabled" @change="toggleAutoLaunch" />
-              <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ t('settings.autoLaunchHint') }}</div>
+              <div class="text-xs text-slate-500 dark:text-slate-400 mt-1">{{ t('settings.autoLaunchHint') }}</div>
             </el-form-item>
           </el-form>
         </el-card>
 
         <!-- Appearance -->
-        <el-card class="!bg-white dark:!bg-gray-800 !border-gray-200 dark:!border-gray-700 shadow-sm">
+        <el-card class="!bg-white dark:!bg-slate-800 !border-slate-200 dark:!border-slate-700 shadow-sm">
           <template #header>
             <div class="font-bold flex items-center gap-2">
               <div class="i-mdi-palette text-purple-500" />
@@ -362,7 +392,7 @@ async function testAiConnection() {
         </el-card>
 
         <!-- Update -->
-        <el-card class="!bg-white dark:!bg-gray-800 !border-gray-200 dark:!border-gray-700 shadow-sm">
+        <el-card class="!bg-white dark:!bg-slate-800 !border-slate-200 dark:!border-slate-700 shadow-sm">
           <template #header>
             <div class="font-bold flex items-center gap-2">
               <div class="i-mdi-update text-green-500" />
@@ -376,7 +406,7 @@ async function testAiConnection() {
 
             <el-form-item :label="t('settings.autoUpdate')" v-if="target !== 'utools'">
               <el-switch v-model="draft.autoUpdate" />
-              <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ t('settings.autoUpdateHint') }}</div>
+              <div class="text-xs text-slate-500 dark:text-slate-400 mt-1">{{ t('settings.autoUpdateHint') }}</div>
             </el-form-item>
 
             <div class="mt-2">
@@ -390,7 +420,7 @@ async function testAiConnection() {
         </el-card>
 
         <!-- Data Management -->
-        <el-card class="!bg-white dark:!bg-gray-800 !border-gray-200 dark:!border-gray-700 shadow-sm">
+        <el-card class="!bg-white dark:!bg-slate-800 !border-slate-200 dark:!border-slate-700 shadow-sm">
           <template #header>
             <div class="font-bold flex items-center gap-2">
               <div class="i-mdi-database text-amber-500" />
@@ -407,11 +437,11 @@ async function testAiConnection() {
               {{ t('settings.import') }}
             </el-button>
           </div>
-          <div class="text-xs text-gray-500 dark:text-gray-400 mt-2">{{ t('settings.dataHint') }}</div>
+          <div class="text-xs text-slate-500 dark:text-slate-400 mt-2">{{ t('settings.dataHint') }}</div>
         </el-card>
 
         <!-- AI Commit Message Configuration -->
-        <el-card class="!bg-white dark:!bg-gray-800 !border-gray-200 dark:!border-gray-700 shadow-sm">
+        <el-card class="!bg-white dark:!bg-slate-800 !border-slate-200 dark:!border-slate-700 shadow-sm">
           <template #header>
             <div class="font-bold flex items-center gap-2">
               <div class="i-mdi-auto-fix text-violet-500" />

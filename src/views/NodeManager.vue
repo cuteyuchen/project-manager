@@ -63,33 +63,33 @@ function handleRemove(path: string, source: string, version?: string) {
 </script>
 
 <template>
-    <div class="p-8 h-full flex flex-col">
-        <div class="flex justify-between items-center mb-8">
+    <div class="p-6 h-full flex flex-col">
+        <div class="flex justify-between items-center mb-6">
             <div>
             <h1
                 :class="target === 'utools' 
-                    ? 'text-3xl font-bold text-purple-500 mb-1' 
-                    : 'text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-400 mb-1'">
+                    ? 'text-2xl font-bold text-purple-500 mb-1' 
+                    : 'text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-400 mb-1'">
                 {{ t('nodes.title') }}</h1>
-                <p class="text-slate-400 text-sm">Manage Node.js environments</p>
+                <p class="text-slate-400 dark:text-slate-500 text-xs">Manage Node.js environments</p>
             </div>
-            <div class="grid grid-cols-2 gap-3 w-fit">
-                <el-button type="primary" @click="showInstallModal = true" class="!rounded-lg !ml-0">
+            <div class="grid grid-cols-2 gap-2 w-fit">
+                <el-button type="primary" @click="showInstallModal = true" class="!rounded-lg !ml-0" size="small">
                     <el-icon class="mr-1">
                         <div class="i-mdi-download" />
                     </el-icon> {{ t('nodes.installNode') }}
                 </el-button>
-                <el-button type="success" @click="showAddModal = true" class="!rounded-lg !ml-0">
+                <el-button type="success" @click="showAddModal = true" class="!rounded-lg !ml-0" size="small">
                     <el-icon class="mr-1">
                         <div class="i-mdi-plus" />
                     </el-icon> {{ t('nodes.addNode') }}
                 </el-button>
-                <el-button type="warning" @click="showSetDefaultModal = true" class="!rounded-lg !ml-0">
+                <el-button type="warning" @click="showSetDefaultModal = true" class="!rounded-lg !ml-0" size="small">
                     <el-icon class="mr-1">
                         <div class="i-mdi-cog" />
                     </el-icon> {{ t('nodes.setSystemPath') }}
                 </el-button>
-                <el-button type="info" @click="refresh" class="!rounded-lg !ml-0">
+                <el-button type="info" @click="refresh" class="!rounded-lg !ml-0" size="small">
                     <el-icon class="mr-1">
                         <div class="i-mdi-refresh" />
                     </el-icon> Refresh NVM
@@ -98,12 +98,12 @@ function handleRemove(path: string, source: string, version?: string) {
         </div>
 
         <div
-            class="flex-1 bg-white dark:bg-[#1e293b] rounded-xl border border-slate-200 dark:border-slate-700/50 overflow-hidden shadow-xl transition-colors duration-300 min-h-0">
+            class="flex-1 bg-white dark:bg-[#1e293b] rounded-lg border border-slate-200 dark:border-slate-700/30 overflow-hidden shadow-sm transition-colors duration-200 min-h-0">
             <el-table :data="nodeStore.versions" style="width: 100%" height="100%"
                 :row-style="{ background: 'transparent' }" class="custom-table">
                 <el-table-column prop="version" :label="t('nodes.version')">
                     <template #default="{ row }">
-                        <span class="font-bold text-lg font-mono text-slate-800 dark:text-slate-200">{{ row.version
+                        <span class="font-semibold text-sm font-mono text-slate-800 dark:text-slate-200">{{ row.version
                         }}</span>
                     </template>
                 </el-table-column>

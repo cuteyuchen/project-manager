@@ -47,10 +47,13 @@ export default {
     waitingForOutput: '等待输出...',
     dropToImport: '拖动文件夹到此处以导入项目',
     console: '命令运行',
+    files: '文件',
+    memo: '备忘录',
     pin: '置顶',
     unpin: '取消置顶',
     selectProjectHint: '请选择一个项目',
-    selectProjectDesc: '选择左侧项目后可查看命令运行与 Git 管理'
+    selectProjectDesc: '选择左侧项目后可查看命令运行与 Git 管理',
+    locateProject: '定位到当前项目'
   },
   nodes: {
     title: 'Node 版本管理',
@@ -74,6 +77,10 @@ export default {
     editorPath: '编辑器路径',
     editorPathPlaceholder: '例如 code',
     editorPathHint: '默认 "code" 适用于已配置环境变量的 VSCode。如未生效，请选择 Code.exe 的完整路径。',
+    editors: '编辑器配置',
+    editorName: '名称',
+    addEditor: '添加编辑器',
+    editorsHint: '第一个编辑器为默认编辑器。项目可单独配置打开的编辑器。',
     defaultTerminal: '默认终端',
     terminalHint: '脚本执行时的包装器。',
     terminalNotInstalled: '未安装',
@@ -150,7 +157,36 @@ export default {
     customCommands: '自定义命令',
     commandName: '命令名称',
     commandContent: '命令内容',
-    addCommand: '添加命令'
+    addCommand: '添加命令',
+    scriptsVisibilityHint: '勾选要在项目列表中显示的脚本命令',
+    editor: '编辑器',
+    editorDefault: '使用默认编辑器',
+    editorHint: '不选则使用设置中的第一个编辑器'
+  },
+  fileManager: {
+    title: '项目文件',
+    addFile: '添加文件',
+    addFolder: '添加文件夹',
+    root: '根目录',
+    empty: '暂无关联文件',
+    emptyHint: '点击上方按钮添加文件或文件夹',
+    emptyFolder: '此文件夹为空',
+    addSuccess: '成功添加 {count} 个文件',
+    removeConfirm: '确定要移除 "{name}" 吗？（仅从列表移除，不删除文件）',
+    open: '打开',
+    openLocation: '打开所在位置',
+    remove: '从列表移除',
+    preview: '预览',
+    previewFailed: '无法预览此文件',
+  },
+  memo: {
+    title: '项目备忘录',
+    preview: '预览',
+    edit: '编辑',
+    split: '分屏',
+    empty: '暂无备忘录',
+    startEditing: '点击开始编写（支持 Markdown 格式）',
+    placeholder: '在这里编写 Markdown 格式的备忘录...'
   },
   update: {
     title: '发现新版本',

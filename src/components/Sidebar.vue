@@ -50,7 +50,7 @@ function handleSelect(key: string) {
 }
 
 :global(html.dark) .sidebar-menu {
-  --item-hover-bg: rgba(30, 41, 59, 0.5); /* slate-800/50 */
+  --item-hover-bg: rgba(30, 41, 59, 0.6);
   --item-hover-text: #f1f5f9;
 }
 
@@ -58,48 +58,36 @@ function handleSelect(key: string) {
   display: flex;
   justify-content: center;
   align-items: center;
-  height: 56px;
-  margin: 8px 12px;
-  border-radius: 12px;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  color: #64748b;
-  /* slate-500 */
+  height: 48px;
+  margin: 6px 10px;
+  border-radius: 10px;
+  transition: all 0.2s ease-out;
+  color: #94a3b8;
 }
 
 :global(html.dark) :deep(.el-menu-item) {
-  color: #94a3b8;
-  /* slate-400 */
+  color: #64748b;
 }
 
 :deep(.el-menu-item:hover) {
   background-color: var(--item-hover-bg) !important;
   color: var(--item-hover-text) !important;
-  transform: translateX(4px);
 }
 
-/* Removed duplicate :global(html.dark) :deep(.el-menu-item:hover) block as it is handled by CSS variables */
-
 :deep(.el-menu-item.is-active) {
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(37, 99, 235, 0.05)) !important;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.12), rgba(37, 99, 235, 0.06)) !important;
   color: #2563eb !important;
-  /* blue-600 */
-  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.1);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.08);
   font-weight: 600;
 }
 
 :global(html.dark) :deep(.el-menu-item.is-active) {
-  background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(37, 99, 235, 0.1)) !important;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(37, 99, 235, 0.08)) !important;
   color: #60a5fa !important;
-  /* blue-400 */
-  box-shadow: 0 0 20px rgba(59, 130, 246, 0.15);
+  box-shadow: 0 0 16px rgba(59, 130, 246, 0.1);
 }
 
 :deep(.el-icon) {
-  font-size: 24px !important;
-  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
-}
-
-:global(html.dark) :deep(.el-icon) {
-  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+  font-size: 22px !important;
 }
 </style>

@@ -38,7 +38,10 @@ export async function loadData() {
         ...p,
         type: p.type || 'node',
         scripts: p.scripts || [],
+        visibleScripts: p.visibleScripts || undefined,
         customCommands: p.customCommands || [],
+        projectFiles: p.projectFiles || [],
+        memo: p.memo || '',
         pinned: p.pinned ?? false,
         pinOrder: p.pinOrder ?? undefined,
       }));

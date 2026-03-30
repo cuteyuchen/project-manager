@@ -4,6 +4,19 @@ export interface CustomCommand {
   command: string;
 }
 
+export interface EditorConfig {
+  id: string;
+  name: string;
+  path: string;
+}
+
+export interface ProjectFileEntry {
+  id: string;
+  name: string;
+  path: string;
+  isDirectory: boolean;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -12,13 +25,18 @@ export interface Project {
   nodeVersion?: string;
   packageManager?: 'npm' | 'yarn' | 'pnpm' | 'cnpm';
   scripts?: string[];
+  visibleScripts?: string[];
   customCommands?: CustomCommand[];
+  projectFiles?: ProjectFileEntry[];
+  memo?: string;
   pinned?: boolean;
   pinOrder?: number;
+  editorId?: string;
 }
 
 export interface Settings {
-  editorPath: string; // e.g. "code" or absolute path
+  editorPath: string; // legacy fallback
+  editors?: EditorConfig[];
   defaultTerminal: string;
   customTerminals?: { id: string; name: string }[];
   locale: 'zh' | 'en';

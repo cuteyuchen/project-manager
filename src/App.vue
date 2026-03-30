@@ -365,7 +365,7 @@ watch(() => nodeStore.versions, triggerSave, { deep: true });
 </script>
 
 <template>
-  <div class="h-screen w-screen flex flex-col bg-slate-50 dark:bg-[#0f172a] text-slate-900 dark:text-gray-100 font-sans overflow-hidden select-none transition-colors duration-300 antialiased">
+  <div class="h-screen w-screen flex flex-col bg-slate-50 dark:bg-[#0f172a] text-slate-900 dark:text-gray-100 font-sans overflow-hidden select-none transition-colors duration-200 antialiased">
     <TitleBar v-if="target !== 'utools'" />
     
     <div class="flex-1 flex overflow-hidden relative">
@@ -373,21 +373,23 @@ watch(() => nodeStore.versions, triggerSave, { deep: true });
       <main class="flex-1 h-full overflow-hidden relative">
         <!-- Modern deep gradient background -->
         <div
-          class="absolute inset-0 bg-gradient-to-br from-slate-50 via-slate-100 to-slate-50 dark:from-[#0f172a] dark:via-[#1e293b] dark:to-[#0f172a] opacity-100 pointer-events-none transition-colors duration-300" />
+          class="absolute inset-0 bg-gradient-to-br from-slate-50 via-slate-100 to-slate-50 dark:from-[#0f172a] dark:via-[#131c2e] dark:to-[#0f172a] opacity-100 pointer-events-none transition-colors duration-200" />
         <!-- Subtle accent glow -->
         <div
-          class="absolute top-[-20%] right-[-10%] w-[500px] h-[500px] bg-blue-500/10 rounded-full blur-[120px] pointer-events-none">
+          class="absolute top-[-20%] right-[-10%] w-[400px] h-[400px] bg-blue-500/5 dark:bg-blue-500/8 rounded-full blur-[100px] pointer-events-none">
         </div>
         <div
-          class="absolute bottom-[-20%] left-[-10%] w-[500px] h-[500px] bg-purple-500/10 rounded-full blur-[120px] pointer-events-none">
+          class="absolute bottom-[-20%] left-[-10%] w-[400px] h-[400px] bg-purple-500/5 dark:bg-purple-500/8 rounded-full blur-[100px] pointer-events-none">
         </div>
 
         <div class="relative h-full z-10">
+          <Transition name="page-fade" mode="out-in">
           <KeepAlive>
             <Dashboard v-if="currentView === 'dashboard'" key="dashboard" />
             <Settings v-else-if="currentView === 'settings'" key="settings" />
             <NodeManager v-else-if="currentView === 'nodes'" key="nodes" />
           </KeepAlive>
+          </Transition>
         </div>
         
         <!-- Drag Overlay -->
@@ -412,8 +414,11 @@ watch(() => nodeStore.versions, triggerSave, { deep: true });
 </template>
 
 <style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
 :root {
-  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  font-family: 'IBM Plex Sans', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
 }
 
 html.dark {
@@ -437,10 +442,42 @@ body,
   background-color: transparent;
 }
 
+/* Monospace font for all font-mono elements */
+.font-mono, code, pre, kbd, samp {
+  font-family: var(--font-mono);
+}
+
+/* Respect reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Focus visible styles for all interactive elements */
+button:focus-visible,
+[role="button"]:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid rgba(59, 130, 246, 0.5);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+
+/* Ensure all buttons get cursor-pointer */
+button, [role="button"] {
+  cursor: pointer;
+}
+
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
@@ -449,18 +486,50 @@ body,
 
 ::-webkit-scrollbar-thumb {
   background: #cbd5e1;
-  border-radius: 4px;
-}
-
-.dark ::-webkit-scrollbar-thumb {
-  background: #334155;
+  border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
 
+.dark ::-webkit-scrollbar-thumb {
+  background: #334155;
+}
+
 .dark ::-webkit-scrollbar-thumb:hover {
   background: #475569;
+}
+
+/* Element Plus refinements */
+.el-button {
+  transition: all 0.2s ease-out !important;
+}
+
+.el-card {
+  transition: box-shadow 0.2s ease-out, border-color 0.2s ease-out !important;
+}
+
+.el-input__wrapper {
+  transition: box-shadow 0.2s ease-out !important;
+}
+
+/* Smoother tag transitions */
+.el-tag {
+  transition: all 0.15s ease-out !important;
+}
+
+/* Page transition (view switching) */
+.page-fade-enter-active,
+.page-fade-leave-active {
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.page-fade-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.page-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
 }
 </style>

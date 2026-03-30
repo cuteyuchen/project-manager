@@ -5,7 +5,7 @@
     "type": "git",
     "url": "https://github.com/cuteyuchen/fp-node-manager.git"
   },
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -26,6 +26,7 @@
     "ansi_up": "^6.0.6",
     "diff2html": "^3.4.56",
     "element-plus": "^2.13.2",
+    "marked": "^17.0.5",
     "pinia": "^3.0.4",
     "pinyin-pro": "^3.28.0",
     "vue": "^3.5.13",

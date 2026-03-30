@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { useProjectStore } from '../stores/project';
 import { useGitStore } from '../stores/git';
 import ProjectListItem from '../components/ProjectListItem.vue';
 import ConsoleView from '../components/ConsoleView.vue';
 import GitView from '../components/git/GitView.vue';
+import FileManager from '../components/FileManager.vue';
+import ProjectMemo from '../components/ProjectMemo.vue';
 import AddProjectModal from '../components/AddProjectModal.vue';
 import type { Project } from '../types';
 import { useI18n } from 'vue-i18n';
@@ -20,8 +22,58 @@ const showModal = ref(false);
 const editingProject = ref<Project | null>(null);
 const refreshing = ref(false);
 
-// Right panel tab: 'console' or 'git'
-const rightTab = ref<'console' | 'git'>('console');
+// Right panel tab
+const rightTab = ref<'console' | 'git' | 'files' | 'memo'>('console');
+
+// Project list container ref for scroll-to-project
+const projectListContainer = ref<HTMLElement | null>(null);
+
+function scrollToActiveProject() {
+    if (!projectStore.activeProjectId || !projectListContainer.value) return;
+    const el = projectListContainer.value.querySelector(`[data-project-id="${projectStore.activeProjectId}"]`) as HTMLElement;
+    if (el) {
+        const container = projectListContainer.value;
+        const elTop = el.offsetTop;
+        const elHeight = el.offsetHeight;
+        const containerHeight = container.clientHeight;
+        container.scrollTo({
+            top: elTop - containerHeight / 2 + elHeight / 2,
+            behavior: 'smooth'
+        });
+    }
+}
+
+// Tab bar scroll handling
+const tabScrollContainer = ref<HTMLElement | null>(null);
+const canScrollLeft = ref(false);
+const canScrollRight = ref(false);
+
+function checkTabOverflow() {
+    const el = tabScrollContainer.value;
+    if (!el) return;
+    canScrollLeft.value = el.scrollLeft > 0;
+    canScrollRight.value = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+}
+
+function scrollTabs(direction: 'left' | 'right') {
+    const el = tabScrollContainer.value;
+    if (!el) return;
+    el.scrollBy({ left: direction === 'left' ? -120 : 120, behavior: 'smooth' });
+}
+
+let tabResizeObserver: ResizeObserver | null = null;
+
+onMounted(() => {
+    nextTick(checkTabOverflow);
+    if (tabScrollContainer.value) {
+        tabResizeObserver = new ResizeObserver(checkTabOverflow);
+        tabResizeObserver.observe(tabScrollContainer.value);
+    }
+});
+
+onBeforeUnmount(() => {
+    tabResizeObserver?.disconnect();
+});
 
 const activeProject = computed(() =>
   projectStore.projects.find(p => p.id === projectStore.activeProjectId)
@@ -256,29 +308,30 @@ async function batchAddProjects() {
 <template>
   <div class="h-full flex overflow-hidden">
     <!-- Project List Sidebar -->
-    <div class="w-72 flex flex-col border-r border-slate-200 dark:border-slate-700/30 bg-white dark:bg-[#0f172a] z-20 shadow-2xl transition-colors duration-300">
-        <div class="p-4 border-b border-slate-200 dark:border-slate-700/30 flex justify-between items-center bg-white/50 dark:bg-[#0f172a]/50">
-            <h2 class="text-base font-bold text-slate-800 dark:text-slate-100 tracking-wide uppercase text-xs opacity-80 pl-2">{{ t('dashboard.title') }}</h2>
-            <div class="flex gap-2">
-                <button @click="refreshProjects" :disabled="refreshing" class="p-1.5 rounded-md bg-slate-500/10 text-slate-600 dark:text-slate-400 hover:bg-slate-500 hover:text-white transition-all border border-slate-500/20 group cursor-pointer disabled:opacity-50" :title="t('common.refresh') || 'Refresh'">
-                    <div class="i-mdi-refresh text-lg transition-transform duration-700" :class="{ 'animate-spin': refreshing }" />
+    <div class="w-72 flex flex-col border-r border-slate-200 dark:border-slate-700/20 bg-white dark:bg-[#0f172a] z-20 transition-colors duration-200">
+        <div class="px-4 py-3 border-b border-slate-200 dark:border-slate-700/20 flex justify-between items-center">
+            <h2 class="text-xs font-semibold text-slate-500 dark:text-slate-400 tracking-widest uppercase pl-1">{{ t('dashboard.title') }}</h2>
+            <div class="flex gap-1.5">
+                <button @click="refreshProjects" :disabled="refreshing" class="p-1.5 rounded-lg text-slate-400 dark:text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all duration-150 disabled:opacity-40" :title="t('common.refresh') || 'Refresh'">
+                    <div class="i-mdi-refresh text-base transition-transform duration-700" :class="{ 'animate-spin': refreshing }" />
                 </button>
-                <button @click="batchAddProjects" class="p-1.5 rounded-md bg-green-500/10 text-green-600 dark:text-green-400 hover:bg-green-500 hover:text-white transition-all border border-green-500/20 group cursor-pointer" :title="t('dashboard.batchAddProject')">
-                    <div class="i-mdi-folder-multiple-plus text-lg group-hover:scale-110 transition-transform" />
+                <button @click="batchAddProjects" class="p-1.5 rounded-lg text-slate-400 dark:text-slate-400 hover:text-emerald-500 hover:bg-emerald-500/10 transition-all duration-150" :title="t('dashboard.batchAddProject')">
+                    <div class="i-mdi-folder-multiple-plus text-base" />
                 </button>
-                <button @click="openAddModal" class="p-1.5 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500 hover:text-white transition-all border border-blue-500/20 group cursor-pointer" :title="t('dashboard.addProject')">
-                    <div class="i-mdi-plus text-lg group-hover:scale-110 transition-transform" />
+                <button @click="openAddModal" class="p-1.5 rounded-lg text-slate-400 dark:text-slate-400 hover:text-blue-500 hover:bg-blue-500/10 transition-all duration-150" :title="t('dashboard.addProject')">
+                    <div class="i-mdi-plus text-base" />
                 </button>
             </div>
         </div>
         
         <!-- 搜索框 -->
-        <div class="px-3 py-2 border-b border-slate-200 dark:border-slate-700/30">
+        <div class="px-3 py-2 border-b border-slate-200 dark:border-slate-700/20">
             <el-input
                 v-model="searchQuery"
                 :placeholder="t('dashboard.searchPlaceholder')"
                 clearable
                 class="w-full"
+                size="small"
             >
                 <template #prefix>
                     <el-icon><div class="i-mdi-magnify" /></el-icon>
@@ -286,11 +339,12 @@ async function batchAddProjects() {
             </el-input>
         </div>
         
-        <div class="flex-1 overflow-y-auto p-3 custom-scrollbar space-y-2">
+        <div class="flex-1 overflow-y-auto p-3 custom-scrollbar space-y-2" ref="projectListContainer">
              <ProjectListItem 
                 v-for="project in filteredProjects" 
                 :key="project.id" 
-                :project="project" 
+                :project="project"
+                :data-project-id="project.id"
                 @edit="openEditModal(project)"
              />
              
@@ -309,51 +363,93 @@ async function batchAddProjects() {
     </div>
 
     <!-- Main Right Panel -->
-    <div class="flex-1 overflow-hidden relative bg-slate-50 dark:bg-[#0b1120] shadow-inner transition-colors duration-300 flex flex-col">
+    <div class="flex-1 overflow-hidden relative bg-slate-50 dark:bg-[#0b1120] transition-colors duration-200 flex flex-col">
         <!-- Empty state when no project selected -->
-        <div v-if="!activeProject" class="flex-1 flex flex-col items-center justify-center gap-3 text-slate-400 dark:text-slate-500">
-            <div class="i-mdi-monitor-dashboard text-5xl opacity-30" />
+        <div v-if="!activeProject" class="flex-1 flex flex-col items-center justify-center gap-3 text-slate-300 dark:text-slate-600">
+            <div class="i-mdi-monitor-dashboard text-6xl opacity-30" />
             <p class="text-sm font-medium">{{ t('dashboard.selectProjectHint') }}</p>
-            <p class="text-xs opacity-60">{{ t('dashboard.selectProjectDesc') }}</p>
+            <p class="text-xs opacity-50">{{ t('dashboard.selectProjectDesc') }}</p>
         </div>
 
         <!-- Workspace when project selected -->
         <template v-else>
-            <!-- Tab Bar -->
-            <div class="flex items-center border-b border-slate-200 dark:border-slate-700/30 bg-white dark:bg-[#0f172a] px-2 shrink-0">
+            <!-- Project Name + Tab Bar -->
+            <div class="flex items-center border-b border-slate-200 dark:border-slate-700/20 bg-white dark:bg-[#0f172a] px-2 shrink-0 min-w-0">
+                <!-- Project Name (always visible) -->
+                <div class="flex items-center gap-1.5 pr-3 border-r border-slate-200 dark:border-slate-700/20 mr-1 shrink-0">
+                    <button @click="scrollToActiveProject" class="p-1 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-blue-500 transition-all duration-150" :title="t('dashboard.locateProject')">
+                        <div class="i-mdi-crosshairs-gps text-sm" />
+                    </button>
+                    <h3 class="text-xs font-semibold text-slate-700 dark:text-slate-300 truncate max-w-40 tracking-tight">{{ activeProject.name }}</h3>
+                </div>
+                <!-- Tab scroll left arrow -->
+                <button v-show="canScrollLeft" @click="scrollTabs('left')"
+                    class="p-0.5 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors cursor-pointer shrink-0">
+                    <div class="i-mdi-chevron-left text-base" />
+                </button>
+                <!-- Scrollable tabs container -->
+                <div ref="tabScrollContainer" @scroll="checkTabOverflow" class="flex items-center overflow-x-auto scrollbar-none min-w-0 flex-1 py-1.5 px-1">
+                <div class="flex items-center gap-0.5 bg-slate-100/80 dark:bg-slate-800/50 rounded-lg p-0.5">
                 <button
                     @click="rightTab = 'console'"
-                    class="px-4 py-2 text-sm font-medium transition-all relative cursor-pointer"
+                    class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-200 whitespace-nowrap shrink-0"
                     :class="rightTab === 'console'
-                        ? 'text-blue-600 dark:text-blue-400'
-                        : 'text-slate-500 dark:text-slate-300 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100/60 dark:hover:bg-slate-700/40 rounded-t'"
+                        ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm'
+                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'"
                 >
-                    <div class="flex items-center gap-1.5">
-                        <div class="i-mdi-console text-base" />
-                        <span>{{ t('dashboard.console') }}</span>
-                    </div>
-                    <div v-if="rightTab === 'console'" class="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-500 rounded-t" />
+                    <div class="i-mdi-console text-sm" />
+                    <span>{{ t('dashboard.console') }}</span>
                 </button>
                 <button
                     @click="rightTab = 'git'"
-                    class="px-4 py-2 text-sm font-medium transition-all relative cursor-pointer"
+                    class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-200 whitespace-nowrap shrink-0"
                     :class="rightTab === 'git'
-                        ? 'text-blue-600 dark:text-blue-400'
-                        : 'text-slate-500 dark:text-slate-300 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100/60 dark:hover:bg-slate-700/40 rounded-t'"
+                        ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm'
+                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'"
                 >
-                    <div class="flex items-center gap-1.5">
-                        <div class="i-mdi-git text-base" />
-                        <span>{{ t('git.title') }}</span>
-                        <span v-if="isGitRepo && gitChangesCount > 0" class="ml-1 px-1.5 py-0 text-xs rounded-full bg-orange-500/15 text-orange-600 dark:text-orange-400 font-medium min-w-5 text-center">{{ gitChangesCount }}</span>
-                    </div>
-                    <div v-if="rightTab === 'git'" class="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-500 rounded-t" />
+                    <div class="i-mdi-git text-sm" />
+                    <span>{{ t('git.title') }}</span>
+                    <span v-if="isGitRepo && gitChangesCount > 0" class="ml-0.5 px-1.5 py-0 text-[10px] rounded-full bg-orange-500/12 text-orange-600 dark:text-orange-400 font-semibold min-w-4 text-center leading-4">{{ gitChangesCount }}</span>
+                </button>
+                <button
+                    @click="rightTab = 'files'"
+                    class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-200 whitespace-nowrap shrink-0"
+                    :class="rightTab === 'files'
+                        ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm'
+                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'"
+                >
+                    <div class="i-mdi-folder-outline text-sm" />
+                    <span>{{ t('dashboard.files') }}</span>
+                </button>
+                <button
+                    @click="rightTab = 'memo'"
+                    class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-200 whitespace-nowrap shrink-0"
+                    :class="rightTab === 'memo'
+                        ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm'
+                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'"
+                >
+                    <div class="i-mdi-note-text-outline text-sm" />
+                    <span>{{ t('dashboard.memo') }}</span>
+                </button>
+                </div>
+                </div>
+                <!-- Tab scroll right arrow -->
+                <button v-show="canScrollRight" @click="scrollTabs('right')"
+                    class="p-0.5 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors cursor-pointer shrink-0">
+                    <div class="i-mdi-chevron-right text-base" />
                 </button>
             </div>
 
             <!-- Tab Content -->
             <div class="flex-1 overflow-hidden relative">
-                <ConsoleView v-show="rightTab === 'console'" />
-                <GitView v-show="rightTab === 'git'" />
+                <Transition name="tab-fade" mode="out-in">
+                <KeepAlive>
+                <ConsoleView v-if="rightTab === 'console'" key="console" />
+                <GitView v-else-if="rightTab === 'git'" key="git" />
+                <FileManager v-else-if="rightTab === 'files'" :project="activeProject" key="files" />
+                <ProjectMemo v-else-if="rightTab === 'memo'" :project="activeProject" key="memo" />
+                </KeepAlive>
+                </Transition>
             </div>
         </template>
     </div>
@@ -386,5 +482,21 @@ async function batchAddProjects() {
 }
 .dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: #475569;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+/* Tab panel fade transition */
+.tab-fade-enter-active,
+.tab-fade-leave-active {
+  transition: opacity 0.15s ease;
+}
+.tab-fade-enter-from,
+.tab-fade-leave-to {
+  opacity: 0;
 }
 </style>

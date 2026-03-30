@@ -48,10 +48,13 @@ export default {
     waitingForOutput: 'Waiting for output...',
     dropToImport: 'Drop folder here to import project',
     console: 'Console',
+    files: 'Files',
+    memo: 'Memo',
     pin: 'Pin to Top',
     unpin: 'Unpin',
     selectProjectHint: 'Select a project',
-    selectProjectDesc: 'Choose a project from the left to view console and Git management'
+    selectProjectDesc: 'Choose a project from the left to view console and Git management',
+    locateProject: 'Locate project'
   },
   nodes: {
     title: 'Node Version Manager',
@@ -75,6 +78,10 @@ export default {
     editorPath: 'Editor Path',
     editorPathPlaceholder: 'e.g. code',
     editorPathHint: 'Default "code" works if VSCode is in PATH. Otherwise select Code.exe path.',
+    editors: 'Editors',
+    editorName: 'Name',
+    addEditor: 'Add Editor',
+    editorsHint: 'First editor is the default. Projects can override their editor.',
     defaultTerminal: 'Default Terminal',
     terminalHint: 'Wrapper for script execution.',
     terminalNotInstalled: 'Not Installed',
@@ -150,7 +157,36 @@ export default {
     customCommands: 'Custom Commands',
     commandName: 'Command Name',
     commandContent: 'Command',
-    addCommand: 'Add Command'
+    addCommand: 'Add Command',
+    scriptsVisibilityHint: 'Select scripts to show in the project list',
+    editor: 'Editor',
+    editorDefault: 'Use default editor',
+    editorHint: 'Leave empty to use the first editor from settings'
+  },
+  fileManager: {
+    title: 'Project Files',
+    addFile: 'Add File',
+    addFolder: 'Add Folder',
+    root: 'Root',
+    empty: 'No linked files',
+    emptyHint: 'Click the buttons above to add files or folders',
+    emptyFolder: 'This folder is empty',
+    addSuccess: 'Successfully added {count} file(s)',
+    removeConfirm: 'Remove "{name}" from list? (file will not be deleted)',
+    open: 'Open',
+    openLocation: 'Open Location',
+    remove: 'Remove from List',
+    preview: 'Preview',
+    previewFailed: 'Cannot preview this file',
+  },
+  memo: {
+    title: 'Project Memo',
+    preview: 'Preview',
+    edit: 'Edit',
+    split: 'Split',
+    empty: 'No memo yet',
+    startEditing: 'Click to start writing (Markdown supported)',
+    placeholder: 'Write your memo in Markdown format...'
   },
   update: {
     title: 'New Version Found',

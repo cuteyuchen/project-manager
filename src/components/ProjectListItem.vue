@@ -14,6 +14,15 @@ const store = useProjectStore();
 const settingsStore = useSettingsStore();
 
 const isActive = computed(() => store.activeProjectId === props.project.id);
+
+const displayScripts = computed(() => {
+    if (!props.project.scripts?.length) return [];
+    if (props.project.visibleScripts?.length) {
+        return props.project.scripts.filter(s => props.project.visibleScripts!.includes(s));
+    }
+    return props.project.scripts;
+});
+
 const isRunning = computed(() => {
     if (props.project.scripts?.length) {
         if (props.project.scripts.some(s => store.runningStatus[`${props.project.id}:${s}`])) {
@@ -68,7 +77,14 @@ function handleDelete() {
 
 async function openEditor() {
     try {
-        await api.openInEditor(props.project.path, settingsStore.settings.editorPath);
+        let editorPath = settingsStore.settings.editorPath;
+        if (props.project.editorId && settingsStore.settings.editors?.length) {
+            const found = settingsStore.settings.editors.find(e => e.id === props.project.editorId);
+            if (found) editorPath = found.path;
+        } else if (settingsStore.settings.editors?.length) {
+            editorPath = settingsStore.settings.editors[0].path;
+        }
+        await api.openInEditor(props.project.path, editorPath);
     } catch (e) {
         console.error(e);
         ElMessage.error(`${t('common.error')}: ${e}`);
@@ -96,77 +112,77 @@ async function openFolder() {
 
 <template>
     <div @click="handleClick"
-        class="p-4 rounded-xl cursor-pointer transition-all duration-200 border group relative overflow-hidden mb-3 hover:-translate-y-0.5 hover:shadow-md dark:hover:shadow-none" :class="isActive
-            ? 'bg-blue-50 dark:bg-blue-600/10 border-blue-200 dark:border-blue-500/30 shadow-[0_0_20px_rgba(37,99,235,0.1)]'
-            : 'bg-slate-50 dark:bg-[#1e293b]/40 border-slate-200 dark:border-slate-800 hover:bg-white dark:hover:bg-[#1e293b]/80 hover:border-slate-300 dark:hover:border-slate-700'">
-        <div class="absolute right-1 top-0 opacity-0 group-hover:opacity-100 transition-opacity z-20 flex gap-0.5 bg-white dark:bg-slate-800 rounded-md px-0.5 py-0.5 shadow-sm">
+        class="p-3.5 rounded-lg cursor-pointer transition-all duration-200 border group relative overflow-hidden mb-2" :class="isActive
+            ? 'bg-blue-50/80 dark:bg-blue-500/8 border-blue-200/80 dark:border-blue-500/20 shadow-sm'
+            : 'bg-white dark:bg-slate-800/30 border-slate-200/60 dark:border-slate-700/20 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:border-slate-300 dark:hover:border-slate-600/30 hover:shadow-sm'">
+        <div class="absolute right-1 top-0 opacity-0 group-hover:opacity-100 transition-opacity duration-150 z-20 flex gap-0.5 bg-white/95 dark:bg-slate-800/95 backdrop-blur-sm rounded-md px-0.5 py-0.5 shadow-sm border border-slate-200/50 dark:border-slate-700/50">
             <button @click.stop="handleTogglePin"
-                class="p-1 transition-colors rounded hover:bg-slate-200 dark:hover:bg-slate-700/50"
+                class="p-1 transition-colors duration-150 rounded hover:bg-slate-100 dark:hover:bg-slate-700/50"
                 :class="project.pinned ? 'text-amber-500' : 'text-slate-400 hover:text-amber-500'"
                 :title="project.pinned ? t('dashboard.unpin') : t('dashboard.pin')">
-                <div :class="project.pinned ? 'i-mdi-pin' : 'i-mdi-pin-outline'" class="text-sm" />
+                <div :class="project.pinned ? 'i-mdi-pin' : 'i-mdi-pin-outline'" class="text-xs" />
             </button>
             <button @click.stop="openEditor"
-                class="p-1 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors rounded hover:bg-slate-200 dark:hover:bg-slate-700/50"
+                class="p-1 text-slate-400 hover:text-blue-500 transition-colors duration-150 rounded hover:bg-slate-100 dark:hover:bg-slate-700/50"
                 :title="t('dashboard.openInEditor')">
-                <div class="i-mdi-code-tags text-sm" />
+                <div class="i-mdi-code-tags text-xs" />
             </button>
             <button @click.stop="openTerminal"
-                class="p-1 text-slate-400 hover:text-purple-600 dark:hover:text-purple-400 transition-colors rounded hover:bg-slate-200 dark:hover:bg-slate-700/50"
+                class="p-1 text-slate-400 hover:text-purple-500 transition-colors duration-150 rounded hover:bg-slate-100 dark:hover:bg-slate-700/50"
                 :title="t('dashboard.openInTerminal')">
-                <div class="i-mdi-console-line text-sm" />
+                <div class="i-mdi-console-line text-xs" />
             </button>
             <button @click.stop="openFolder"
-                class="p-1 text-slate-400 hover:text-amber-600 dark:hover:text-amber-400 transition-colors rounded hover:bg-slate-200 dark:hover:bg-slate-700/50"
+                class="p-1 text-slate-400 hover:text-amber-500 transition-colors duration-150 rounded hover:bg-slate-100 dark:hover:bg-slate-700/50"
                 :title="t('dashboard.openInExplorer')">
-                <div class="i-mdi-folder-open text-sm" />
+                <div class="i-mdi-folder-open text-xs" />
             </button>
             <button @click.stop="$emit('edit')"
-                class="p-1 text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors rounded hover:bg-slate-200 dark:hover:bg-slate-700/50"
+                class="p-1 text-slate-400 hover:text-emerald-500 transition-colors duration-150 rounded hover:bg-slate-100 dark:hover:bg-slate-700/50"
                 :title="t('project.editProject')">
-                <div class="i-mdi-pencil text-sm" />
+                <div class="i-mdi-pencil text-xs" />
             </button>
             <button @click.stop="handleDelete"
-                class="p-1 text-slate-400 hover:text-red-600 dark:hover:text-red-400 transition-colors rounded hover:bg-slate-200 dark:hover:bg-slate-700/50"
+                class="p-1 text-slate-400 hover:text-red-500 transition-colors duration-150 rounded hover:bg-slate-100 dark:hover:bg-slate-700/50"
                 :title="t('dashboard.deleteProject')">
-                <div class="i-mdi-delete text-sm" />
+                <div class="i-mdi-delete text-xs" />
             </button>
         </div>
 
         <div class="flex justify-between items-center mb-1">
             <div class="flex items-center gap-1.5">
-                <div v-if="project.pinned" class="i-mdi-pin text-amber-500 text-xs flex-shrink-0" />
-                <h3 class="font-bold text-sm truncate pr-20" :class="isActive ? 'text-blue-700 dark:text-blue-400' : 'text-slate-800 dark:text-slate-200'">{{
+                <div v-if="project.pinned" class="i-mdi-pin text-amber-500 text-[10px] flex-shrink-0" />
+                <h3 class="font-semibold text-xs truncate pr-16" :class="isActive ? 'text-blue-700 dark:text-blue-400' : 'text-slate-700 dark:text-slate-200'">{{
                     project.name }}</h3>
             </div>
             <div class="flex-shrink-0">
                 <div v-if="isRunning"
-                    class="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)] animate-pulse">
+                    class="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.7)] animate-pulse">
                 </div>
             </div>
         </div>
 
-        <div class="text-xs text-slate-500 dark:text-slate-500 truncate font-mono mb-3 opacity-80 pr-6">{{ project.path }}</div>
+        <div class="text-[10px] text-slate-400 dark:text-slate-500 truncate font-mono mb-2 pr-4">{{ project.path }}</div>
 
         <!-- Node scripts -->
-        <div class="flex flex-wrap gap-2 relative z-10"
-            v-if="project.type === 'node' && (isActive || isRunning) && project.scripts && project.scripts.length">
-            <button v-for="script in project.scripts" :key="script" @click.stop="handleRun(script)"
+        <div class="flex flex-wrap gap-1.5 relative z-10"
+            v-if="project.type === 'node' && (isActive || isRunning) && displayScripts.length">
+            <button v-for="script in displayScripts" :key="script" @click.stop="handleRun(script)"
                 :disabled="store.runningStatus[`${project.id}:${script}`]"
-                class="px-2 py-1 text-[10px] rounded border transition-all uppercase tracking-wider font-medium"
+                class="px-2 py-0.5 text-[10px] rounded border transition-all duration-150 uppercase tracking-wider font-medium"
                 :class="script === 'dev' || script === 'start' || script === 'serve'
-                    ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed'
-                    : 'bg-slate-200/50 dark:bg-slate-700/50 text-slate-600 dark:text-slate-400 border-slate-300 dark:border-slate-600 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-slate-200 disabled:opacity-50 disabled:cursor-not-allowed'">
+                    ? 'bg-emerald-500/8 text-emerald-600 dark:text-emerald-400 border-emerald-500/15 hover:bg-emerald-500/15 disabled:opacity-40 disabled:cursor-not-allowed'
+                    : 'bg-slate-100 dark:bg-slate-700/40 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-600/40 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-700 dark:hover:text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed'">
                 {{ script }}
             </button>
         </div>
 
-        <!-- Custom commands for non-Node projects -->
-        <div class="flex flex-wrap gap-2 relative z-10"
-            v-if="project.type !== 'node' && (isActive || isRunning) && project.customCommands && project.customCommands.length">
+        <!-- Custom commands (available for all project types) -->
+        <div class="flex flex-wrap gap-1.5 relative z-10"
+            v-if="(isActive || isRunning) && project.customCommands && project.customCommands.length">
             <button v-for="cmd in project.customCommands" :key="cmd.id" @click.stop="handleRunCustom(cmd.id)"
                 :disabled="store.runningStatus[`${project.id}:${cmd.id}`]"
-                class="px-2 py-1 text-[10px] rounded border transition-all tracking-wider font-medium bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20 hover:bg-violet-500/20 disabled:opacity-50 disabled:cursor-not-allowed">
+                class="px-2 py-0.5 text-[10px] rounded border transition-all duration-150 tracking-wider font-medium bg-violet-500/8 text-violet-600 dark:text-violet-400 border-violet-500/15 hover:bg-violet-500/15 disabled:opacity-40 disabled:cursor-not-allowed">
                 {{ cmd.name }}
             </button>
         </div>

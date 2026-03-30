@@ -253,7 +253,19 @@ window.services = {
     scanProject: async (projectPath) => {
         try {
             const pkgPath = path.join(projectPath, 'package.json');
-            if (!fs.existsSync(pkgPath)) throw new Error('package.json not found');
+            const dirName = path.basename(projectPath);
+
+            if (!fs.existsSync(pkgPath)) {
+                // Non-Node project
+                return {
+                    name: dirName,
+                    scripts: [],
+                    path: projectPath,
+                    packageManager: undefined,
+                    nvmVersion: undefined,
+                    projectType: 'other'
+                };
+            }
             
             const content = fs.readFileSync(pkgPath, 'utf-8');
             const pkg = JSON.parse(content);
@@ -277,11 +289,12 @@ window.services = {
             }
             
             return {
-                name: pkg.name || path.basename(projectPath),
+                name: pkg.name || dirName,
                 scripts: Object.keys(pkg.scripts || {}),
                 path: projectPath,
                 packageManager,
-                nvmVersion
+                nvmVersion,
+                projectType: 'node'
             };
         } catch (e) {
             throw e;
@@ -476,6 +489,38 @@ window.services = {
             }
             processes.delete(id);
         }
+    },
+
+    runCustomCommand: async (id, projectPath, command) => {
+        if (processes.has(id)) throw new Error('Already running');
+
+        const child = spawn(command, [], {
+            cwd: projectPath,
+            shell: true,
+            env: { ...process.env }
+        });
+
+        processes.set(id, child);
+
+        child.stdout.on('data', (data) => {
+            const str = data.toString();
+            if (outputCallback) outputCallback({ id, data: str });
+        });
+
+        child.stderr.on('data', (data) => {
+            const str = data.toString();
+            if (outputCallback) outputCallback({ id, data: str });
+        });
+
+        child.on('exit', () => {
+            processes.delete(id);
+            if (exitCallback) exitCallback({ id });
+        });
+
+        child.on('error', (err) => {
+            if (outputCallback) outputCallback({ id, data: `Error: ${err.message}\n` });
+            processes.delete(id);
+        });
     },
 
     onProjectOutput: async (cb) => {

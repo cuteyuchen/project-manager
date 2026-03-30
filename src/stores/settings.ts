@@ -48,10 +48,18 @@ export const useSettingsStore = defineStore('settings', () => {
           delete parsed.themeColor;
           parsed.themeMode = 'auto';
       }
+      // Migrate single editorPath to editors array
+      if (!parsed.editors && parsed.editorPath) {
+        parsed.editors = [{ id: crypto.randomUUID(), name: parsed.editorPath === 'code' ? 'VS Code' : parsed.editorPath.split(/[/\\]/).pop() || 'Editor', path: parsed.editorPath }];
+      }
       settings.value = { ...settings.value, ...parsed };
     } catch (e) {
       console.error(e);
     }
+  }
+  // Ensure at least one editor exists
+  if (!settings.value.editors || settings.value.editors.length === 0) {
+    settings.value.editors = [{ id: crypto.randomUUID(), name: 'VS Code', path: settings.value.editorPath || 'code' }];
   }
   
   const systemThemeMedia = window.matchMedia('(prefers-color-scheme: dark)');
