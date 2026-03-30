@@ -17,48 +17,47 @@ if (!/^\d+\.\d+\.\d+$/.test(newVersion)) {
 
 const rootDir = path.resolve(__dirname, '..');
 
+function run(cmd, opts = {}) {
+    console.log(`  > ${cmd}`);
+    execSync(cmd, { stdio: 'inherit', cwd: rootDir, ...opts });
+}
+
 try {
+    // ═══════════════════════════════════════════
+    // Phase 1: Update version numbers
+    // ═══════════════════════════════════════════
+    console.log('\n📝 Phase 1: Updating version numbers...\n');
+
     // 1. package.json
     const packageJsonPath = path.join(rootDir, 'package.json');
-    const packageJsonContent = fs.readFileSync(packageJsonPath, 'utf8');
-    const packageJson = JSON.parse(packageJsonContent);
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
     const oldVersion = packageJson.version;
     packageJson.version = newVersion;
     fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + '\n');
-    console.log(`✅ Updated package.json: ${oldVersion} -> ${newVersion}`);
+    console.log(`✅ package.json: ${oldVersion} -> ${newVersion}`);
 
     // 2. src-tauri/tauri.conf.json
     const tauriConfPath = path.join(rootDir, 'src-tauri', 'tauri.conf.json');
-    const tauriConfContent = fs.readFileSync(tauriConfPath, 'utf8');
-    const tauriConf = JSON.parse(tauriConfContent);
+    const tauriConf = JSON.parse(fs.readFileSync(tauriConfPath, 'utf8'));
     tauriConf.version = newVersion;
     fs.writeFileSync(tauriConfPath, JSON.stringify(tauriConf, null, 2) + '\n');
-    console.log(`✅ Updated src-tauri/tauri.conf.json: ${oldVersion} -> ${newVersion}`);
+    console.log(`✅ src-tauri/tauri.conf.json -> ${newVersion}`);
 
     // 3. src-tauri/Cargo.toml
     const cargoTomlPath = path.join(rootDir, 'src-tauri', 'Cargo.toml');
     let cargoToml = fs.readFileSync(cargoTomlPath, 'utf8');
-    // Use regex to replace the version under [package]
-    // This assumes version is near the top or distinct enough.
-    // We'll look for `version = "..."` line.
     const cargoRegex = /^version = ".*"$/m;
     if (cargoRegex.test(cargoToml)) {
         cargoToml = cargoToml.replace(cargoRegex, `version = "${newVersion}"`);
         fs.writeFileSync(cargoTomlPath, cargoToml);
-        console.log(`✅ Updated src-tauri/Cargo.toml to ${newVersion}`);
-
-        // Update Cargo.lock by running cargo check or similar
-        // Or simply wait for the user to build?
-        // Actually, for consistency, we should try to update Cargo.lock if possible.
-        // Running `cargo check` inside src-tauri should trigger a lock file update.
+        console.log(`✅ src-tauri/Cargo.toml -> ${newVersion}`);
         try {
             console.log('🔄 Updating Cargo.lock...');
-            execSync('cargo check', { stdio: 'inherit', cwd: path.join(rootDir, 'src-tauri') });
-            console.log('✅ Updated src-tauri/Cargo.lock');
+            run('cargo check', { cwd: path.join(rootDir, 'src-tauri') });
+            console.log('✅ Cargo.lock updated');
         } catch (e) {
-            console.warn('⚠️ Failed to update Cargo.lock automatically. You may need to run "cargo check" manually.');
+            console.warn('⚠️ Failed to update Cargo.lock automatically.');
         }
-
     } else {
         console.warn('⚠️ Could not find version field in Cargo.toml');
     }
@@ -66,93 +65,123 @@ try {
     // 4. utools/plugin.json
     const utoolsPluginPath = path.join(rootDir, 'utools', 'plugin.json');
     if (fs.existsSync(utoolsPluginPath)) {
-        const utoolsPluginContent = fs.readFileSync(utoolsPluginPath, 'utf8');
-        const utoolsPlugin = JSON.parse(utoolsPluginContent);
+        const utoolsPlugin = JSON.parse(fs.readFileSync(utoolsPluginPath, 'utf8'));
         utoolsPlugin.version = newVersion;
         fs.writeFileSync(utoolsPluginPath, JSON.stringify(utoolsPlugin, null, 4) + '\n');
-        console.log(`✅ Updated utools/plugin.json to ${newVersion}`);
-    } else {
-        console.warn('⚠️ Could not find utools/plugin.json');
+        console.log(`✅ utools/plugin.json -> ${newVersion}`);
     }
 
     // 5. utools/preload.js
+    const versionRegex = /(getAppVersion:\s*async\s*\(\)\s*=>\s*\{\s*return\s*")([^"]+)(")/;
     const preloadPath = path.join(rootDir, 'utools', 'preload.js');
     if (fs.existsSync(preloadPath)) {
-        let preloadContent = fs.readFileSync(preloadPath, 'utf8');
-        const versionRegex = /(getAppVersion:\s*async\s*\(\)\s*=>\s*\{\s*return\s*")([^"]+)(")/;
-        if (versionRegex.test(preloadContent)) {
-            preloadContent = preloadContent.replace(versionRegex, `$1${newVersion}$3`);
-            fs.writeFileSync(preloadPath, preloadContent);
-            console.log(`✅ Updated utools/preload.js to ${newVersion}`);
+        let content = fs.readFileSync(preloadPath, 'utf8');
+        if (versionRegex.test(content)) {
+            content = content.replace(versionRegex, `$1${newVersion}$3`);
+            fs.writeFileSync(preloadPath, content);
+            console.log(`✅ utools/preload.js -> ${newVersion}`);
         } else {
-             console.warn('⚠️ Could not find getAppVersion pattern in utools/preload.js');
+            console.warn('⚠️ Could not find getAppVersion in utools/preload.js');
         }
     }
 
     // 6. ztools/plugin.json
     const ztoolsPluginPath = path.join(rootDir, 'ztools', 'plugin.json');
     if (fs.existsSync(ztoolsPluginPath)) {
-        const ztoolsPluginContent = fs.readFileSync(ztoolsPluginPath, 'utf8');
-        const ztoolsPlugin = JSON.parse(ztoolsPluginContent);
+        const ztoolsPlugin = JSON.parse(fs.readFileSync(ztoolsPluginPath, 'utf8'));
         ztoolsPlugin.version = newVersion;
         fs.writeFileSync(ztoolsPluginPath, JSON.stringify(ztoolsPlugin, null, 4) + '\n');
-        console.log(`✅ Updated ztools/plugin.json to ${newVersion}`);
-    } else {
-        console.warn('⚠️ Could not find ztools/plugin.json');
+        console.log(`✅ ztools/plugin.json -> ${newVersion}`);
     }
 
     // 7. ztools/preload.js
     const ztoolsPreloadPath = path.join(rootDir, 'ztools', 'preload.js');
     if (fs.existsSync(ztoolsPreloadPath)) {
-        let ztoolsPreloadContent = fs.readFileSync(ztoolsPreloadPath, 'utf8');
-        const versionRegex2 = /(getAppVersion:\s*async\s*\(\)\s*=>\s*\{\s*return\s*")([^"]+)(")/;
-        if (versionRegex2.test(ztoolsPreloadContent)) {
-            ztoolsPreloadContent = ztoolsPreloadContent.replace(versionRegex2, `$1${newVersion}$3`);
-            fs.writeFileSync(ztoolsPreloadPath, ztoolsPreloadContent);
-            console.log(`✅ Updated ztools/preload.js to ${newVersion}`);
+        let content = fs.readFileSync(ztoolsPreloadPath, 'utf8');
+        if (versionRegex.test(content)) {
+            content = content.replace(versionRegex, `$1${newVersion}$3`);
+            fs.writeFileSync(ztoolsPreloadPath, content);
+            console.log(`✅ ztools/preload.js -> ${newVersion}`);
         } else {
-            console.warn('⚠️ Could not find getAppVersion pattern in ztools/preload.js');
+            console.warn('⚠️ Could not find getAppVersion in ztools/preload.js');
         }
     }
 
-    // 8. Git operations
-    console.log('\n📦 Executing Git operations...');
+    // ═══════════════════════════════════════════
+    // Phase 2: Git commit, tag & push
+    // ═══════════════════════════════════════════
+    console.log('\n📦 Phase 2: Git commit, tag & push...\n');
 
-    // git add
-    execSync('git add .', { stdio: 'inherit', cwd: rootDir });
-    console.log('✅ Staged changes');
-
-    // git commit
+    run('git add .');
     try {
         execSync('git diff --cached --quiet', { stdio: 'ignore', cwd: rootDir });
-        // If exit code is 0, no changes. If 1, changes exist.
-        // Wait, execSync throws on non-zero exit code usually? 
-        // No, git diff --quiet returns 1 if there are differences.
-        // So if it throws (exit code 1), we HAVE changes.
-        // If it returns successfully (exit code 0), we have NO changes.
         console.log('ℹ️ No changes to commit.');
     } catch (e) {
-        // Exit code 1 means changes exist, so we commit.
-        execSync(`git commit -m "chore(release): v${newVersion}"`, { stdio: 'inherit', cwd: rootDir });
-        console.log(`✅ Committed changes: chore(release): v${newVersion}`);
+        run(`git commit -m "chore(release): v${newVersion}"`);
+        console.log(`✅ Committed: chore(release): v${newVersion}`);
     }
 
-    // git tag
     try {
-        execSync(`git tag v${newVersion}`, { stdio: 'inherit', cwd: rootDir });
+        run(`git tag v${newVersion}`);
         console.log(`✅ Created tag: v${newVersion}`);
     } catch (e) {
-        console.log(`⚠️ Tag v${newVersion} might already exist. Skipping creation.`);
+        console.log(`⚠️ Tag v${newVersion} may already exist. Skipping.`);
     }
 
-    // git push
     console.log('🚀 Pushing to remote...');
-    execSync('git push', { stdio: 'inherit', cwd: rootDir });
-    execSync(`git push origin v${newVersion}`, { stdio: 'inherit', cwd: rootDir });
-    console.log('✅ Pushed changes and tags to remote');
+    run('git push');
+    run(`git push origin v${newVersion}`);
+    console.log('✅ Pushed changes and tag to remote');
 
-    console.log(`\n🎉 Version bumped to ${newVersion} successfully!`);
+    // ═══════════════════════════════════════════
+    // Phase 3: Build uTools & ZTools plugins
+    // ═══════════════════════════════════════════
+    console.log('\n🔨 Phase 3: Building plugins...\n');
+
+    console.log('📦 Building uTools plugin...');
+    run('npm run build:utools');
+    console.log('✅ uTools plugin built -> dist-utools/');
+
+    console.log('📦 Building ZTools plugin...');
+    run('npm run build:ztools');
+    console.log('✅ ZTools plugin built -> dist-ztools/');
+
+    // ═══════════════════════════════════════════
+    // Phase 4: Publish ZTools plugin
+    // ═══════════════════════════════════════════
+    console.log('\n🚀 Phase 4: Publishing ZTools plugin...\n');
+
+    const distZtools = path.join(rootDir, 'dist-ztools');
+    try {
+        // ztools publish requires a git repo with at least one commit
+        const gitDir = path.join(distZtools, '.git');
+        if (!fs.existsSync(gitDir)) {
+            run('git init', { cwd: distZtools });
+        }
+        run('git add .', { cwd: distZtools });
+        try {
+            execSync('git diff --cached --quiet', { stdio: 'ignore', cwd: distZtools });
+            // No changes — force a commit with allow-empty for version bump
+            run(`git commit --allow-empty -m "chore(release): v${newVersion}"`, { cwd: distZtools });
+        } catch (e) {
+            run(`git commit -m "chore(release): v${newVersion}"`, { cwd: distZtools });
+        }
+        run('npx @ztools-center/plugin-cli@latest publish', { cwd: distZtools });
+        console.log('✅ ZTools plugin published successfully');
+    } catch (e) {
+        console.error('❌ ZTools publish failed:', e.message);
+        console.log('💡 You can retry manually:');
+        console.log(`   cd dist-ztools && npx @ztools-center/plugin-cli@latest publish`);
+    }
+
+    // ═══════════════════════════════════════════
+    // Done
+    // ═══════════════════════════════════════════
+    console.log(`\n🎉 v${newVersion} released successfully!`);
+    console.log('   - Git: committed, tagged, pushed');
+    console.log('   - uTools: dist-utools/ ready');
+    console.log('   - ZTools: published to plugin repository');
 } catch (error) {
-    console.error('❌ Error updating files:', error);
+    console.error('❌ Release failed:', error);
     process.exit(1);
 }
