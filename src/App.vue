@@ -113,8 +113,8 @@ function compareVersions(v1: string, v2: string) {
   const p1 = v1.split('.').map(Number);
   const p2 = v2.split('.').map(Number);
   for (let i = 0; i < Math.max(p1.length, p2.length); i++) {
-    const n1 = p1[i] || 0;
-    const n2 = p2[i] || 0;
+    const n1 = p1[i] ?? 0;
+    const n2 = p2[i] ?? 0;
     if (n1 > n2) return 1;
     if (n1 < n2) return -1;
   }
@@ -123,10 +123,17 @@ function compareVersions(v1: string, v2: string) {
 
 async function checkUpdate() {
   try {
-    const response = await fetch('https://api.github.com/repos/cuteyuchen/fp-node-manager/releases/latest');
+    // Use /releases list instead of /releases/latest to avoid missing pre-release tagged versions
+    const response = await fetch('https://api.github.com/repos/cuteyuchen/fp-node-manager/releases?per_page=10');
     if (!response.ok) return;
-    const data = await response.json();
-    const latestTag = data.tag_name; // e.g., "v0.1.1"
+    const releases = await response.json();
+    // Find the highest-version non-draft release (regardless of pre-release flag)
+    const validReleases = (releases as any[]).filter((r) => !r.draft && r.tag_name);
+    if (validReleases.length === 0) return;
+    const latestRelease = validReleases.reduce((best: any, cur: any) =>
+      compareVersions(cur.tag_name.replace(/^v/, ''), best.tag_name.replace(/^v/, '')) > 0 ? cur : best
+    );
+    const latestTag: string = latestRelease.tag_name;
     const remoteVersion = latestTag.replace(/^v/, '');
     const localVersion = await api.getAppVersion();
 
