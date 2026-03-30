@@ -19,6 +19,8 @@ Manage all your frontend projects from a single sidebar. Run `npm`/`yarn`/`pnpm`
 - **Pin** frequently used projects to the top
 - Open in your preferred editor, terminal, or file manager with one click
 - Pinyin search support for Chinese project names
+- **Project memo**: Markdown-formatted notes for each project
+- **Project files**: Associate important files/folders with projects for quick access and preview
 
 ---
 
@@ -98,7 +100,8 @@ Manage NVM-installed Node.js versions visually:
 
 - Detect available system terminals automatically (CMD, PowerShell, Git Bash, Windows Terminal, iTerm2, etc.)
 - Add **custom terminal executables** from any path
-- Configure your preferred code editor path (e.g., VS Code, Cursor)
+- Configure your preferred code editors (supports **multiple editors**, e.g., VS Code, Cursor, WebStorm)
+- Projects can **override their editor** individually; defaults to the first editor in settings
 - Open projects in editor, terminal, or file manager from the project card
 
 ---
@@ -112,7 +115,7 @@ Manage NVM-installed Node.js versions visually:
 | Theme | Dark / Light / System |
 | Language | 简体中文 / English |
 | Default Terminal | Auto-detected + custom |
-| Editor Path | Any executable |
+| Editor Path | Multiple editors, per-project override |
 | Auto-update | Enabled / Disabled |
 | Auto-launch | On system startup |
 | Context Menu | Right-click integration (Windows) |
@@ -162,3 +165,21 @@ npm run build:utools
 ## License
 
 [MIT](LICENSE)
+
+---
+
+## Changelog
+
+### New Features
+- **Multi-Editor Configuration**: Support adding multiple editors in settings; each project can independently select its editor
+- **Project Memo**: Markdown-based memo for each project, supporting preview and editing
+- **Project Files**: Built-in file manager panel for quickly browsing project directory structure
+- **Page Transition Animations**: Apple-style smooth transitions for page and tab switching
+
+### Optimizations
+- **Tab Bar Redesign**: macOS-style segmented control replacing underline tabs
+- **Dark Mode Fixes**: Fixed button and text visibility issues in dark mode
+- **Unified Color Palette**: Migrated all gray colors to slate palette for consistency
+- **Global Style Polish**: Optimized fonts, scrollbars, focus-visible, reduced-motion support
+- **Compact Layout**: Reduced spacing and padding for more efficient screen usage
+- **Git Diff Auto-Clear**: Diff view now clears automatically after committing

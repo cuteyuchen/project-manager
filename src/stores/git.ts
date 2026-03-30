@@ -151,6 +151,7 @@ export const useGitStore = defineStore('git', () => {
     operationLoading.value = true;
     try {
       const result = await api.gitCommit(path, message);
+      clearDiff();
       await refreshSummaryAndStatus(projectId, path);
       return result;
     } finally {
