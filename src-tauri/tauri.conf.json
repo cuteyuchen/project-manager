@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "fp-node-manager",
+  "productName": "project-manager",
   "version": "1.0.1",
-  "identifier": "com.cuteyuchen.fp-node-manager",
+  "identifier": "com.cuteyuchen.project-manager",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",

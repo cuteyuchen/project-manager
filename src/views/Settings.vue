@@ -14,6 +14,7 @@ const projectStore = useProjectStore();
 const nodeStore = useNodeStore();
 const appVersion = ref('');
 const target = import.meta.env.VITE_TARGET;
+const isPlugin = target === 'utools' || target === 'ztools';
 const contextMenuEnabled = ref(false);
 const contextMenuSupported = ref(false);
 const autoLaunchEnabled = ref(false);
@@ -43,7 +44,7 @@ onMounted(async () => {
         settingsStore.fetchAvailableTerminals();
     }
 
-    if (target !== 'utools') {
+    if (!isPlugin) {
         contextMenuSupported.value = await api.isContextMenuSupported();
         if (contextMenuSupported.value) {
             contextMenuEnabled.value = await api.checkContextMenu();
@@ -208,7 +209,7 @@ async function importData() {
 }
 
 function openReleases() {
-    api.openUrl('https://github.com/cuteyuchen/fp-node-manager/releases');
+    api.openUrl('https://github.com/cuteyuchen/project-manager/releases');
 }
 
 const aiTestLoading = ref(false);
@@ -353,12 +354,12 @@ async function testAiConnection() {
               </div>
             </el-form-item>
 
-            <el-form-item :label="t('settings.contextMenu')" v-if="target !== 'utools' && contextMenuSupported">
+            <el-form-item :label="t('settings.contextMenu')" v-if="!isPlugin && contextMenuSupported">
               <el-switch v-model="contextMenuEnabled" @change="toggleContextMenu" />
               <div class="text-xs text-slate-500 dark:text-slate-400 mt-1">{{ t('settings.contextMenuHint') }}</div>
             </el-form-item>
 
-            <el-form-item :label="t('settings.autoLaunch')" v-if="target !== 'utools'">
+            <el-form-item :label="t('settings.autoLaunch')" v-if="!isPlugin">
               <el-switch v-model="autoLaunchEnabled" @change="toggleAutoLaunch" />
               <div class="text-xs text-slate-500 dark:text-slate-400 mt-1">{{ t('settings.autoLaunchHint') }}</div>
             </el-form-item>
@@ -404,7 +405,7 @@ async function testAiConnection() {
               <el-tag type="info" effect="plain" round>v{{ appVersion }}</el-tag>
             </el-form-item>
 
-            <el-form-item :label="t('settings.autoUpdate')" v-if="target !== 'utools'">
+            <el-form-item :label="t('settings.autoUpdate')" v-if="!isPlugin">
               <el-switch v-model="draft.autoUpdate" />
               <div class="text-xs text-slate-500 dark:text-slate-400 mt-1">{{ t('settings.autoUpdateHint') }}</div>
             </el-form-item>
@@ -412,7 +413,7 @@ async function testAiConnection() {
             <div class="mt-2">
               <div class="text-sm font-medium mb-2">{{ t('settings.releases') }}</div>
               <el-button link type="primary" @click="openReleases">
-                https://github.com/cuteyuchen/fp-node-manager/releases
+                https://github.com/cuteyuchen/project-manager/releases
                 <el-icon class="ml-1"><div class="i-mdi-open-in-new" /></el-icon>
               </el-button>
             </div>

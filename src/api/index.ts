@@ -8,9 +8,9 @@ let api: PlatformAPI;
 // We can use an environment variable injected by Vite to force a specific adapter
 const target = import.meta.env.VITE_TARGET;
 
-if (target === 'utools') {
+if (target === 'utools' || target === 'ztools') {
     api = new UToolsAdapter();
-    console.log('Using uTools Adapter');
+    console.log('Using uTools/ZTools Adapter');
 } else {
     // Default to Tauri
     api = new TauriAdapter();

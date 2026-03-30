@@ -89,7 +89,33 @@ try {
         }
     }
 
-    // 6. Git operations
+    // 6. ztools/plugin.json
+    const ztoolsPluginPath = path.join(rootDir, 'ztools', 'plugin.json');
+    if (fs.existsSync(ztoolsPluginPath)) {
+        const ztoolsPluginContent = fs.readFileSync(ztoolsPluginPath, 'utf8');
+        const ztoolsPlugin = JSON.parse(ztoolsPluginContent);
+        ztoolsPlugin.version = newVersion;
+        fs.writeFileSync(ztoolsPluginPath, JSON.stringify(ztoolsPlugin, null, 4) + '\n');
+        console.log(`✅ Updated ztools/plugin.json to ${newVersion}`);
+    } else {
+        console.warn('⚠️ Could not find ztools/plugin.json');
+    }
+
+    // 7. ztools/preload.js
+    const ztoolsPreloadPath = path.join(rootDir, 'ztools', 'preload.js');
+    if (fs.existsSync(ztoolsPreloadPath)) {
+        let ztoolsPreloadContent = fs.readFileSync(ztoolsPreloadPath, 'utf8');
+        const versionRegex2 = /(getAppVersion:\s*async\s*\(\)\s*=>\s*\{\s*return\s*")([^"]+)(")/;
+        if (versionRegex2.test(ztoolsPreloadContent)) {
+            ztoolsPreloadContent = ztoolsPreloadContent.replace(versionRegex2, `$1${newVersion}$3`);
+            fs.writeFileSync(ztoolsPreloadPath, ztoolsPreloadContent);
+            console.log(`✅ Updated ztools/preload.js to ${newVersion}`);
+        } else {
+            console.warn('⚠️ Could not find getAppVersion pattern in ztools/preload.js');
+        }
+    }
+
+    // 8. Git operations
     console.log('\n📦 Executing Git operations...');
 
     // git add

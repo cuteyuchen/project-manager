@@ -14,6 +14,7 @@ const showAddModal = ref(false);
 const showInstallModal = ref(false);
 const showSetDefaultModal = ref(false);
 const target = import.meta.env.VITE_TARGET;
+const isPlugin = target === 'utools' || target === 'ztools';
 
 function openFolder(path: string) {
     api.openFolder(path).catch(err => {
@@ -67,7 +68,7 @@ function handleRemove(path: string, source: string, version?: string) {
         <div class="flex justify-between items-center mb-6">
             <div>
             <h1
-                :class="target === 'utools' 
+                :class="isPlugin 
                     ? 'text-2xl font-bold text-purple-500 mb-1' 
                     : 'text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-400 mb-1'">
                 {{ t('nodes.title') }}</h1>

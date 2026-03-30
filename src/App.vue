@@ -19,6 +19,7 @@ import type { Project } from './types';
 import { normalizeNvmVersion, findInstalledNodeVersion } from './utils/nvm';
 
 const target = import.meta.env.VITE_TARGET;
+const isPlugin = target === 'utools' || target === 'ztools';
 
 const { t } = useI18n();
 const currentView = ref<'dashboard' | 'settings' | 'nodes'>('dashboard');
@@ -124,7 +125,7 @@ function compareVersions(v1: string, v2: string) {
 async function checkUpdate() {
   try {
     // Use /releases list instead of /releases/latest to avoid missing pre-release tagged versions
-    const response = await fetch('https://api.github.com/repos/cuteyuchen/fp-node-manager/releases?per_page=10');
+    const response = await fetch('https://api.github.com/repos/cuteyuchen/project-manager/releases?per_page=10');
     if (!response.ok) return;
     const releases = await response.json();
     // Find the highest-version non-draft release (regardless of pre-release flag)
@@ -146,7 +147,7 @@ async function checkUpdate() {
               class: 'text-blue-500 hover:text-blue-600 cursor-pointer underline',
               onClick: (e: Event) => {
                 e.preventDefault();
-                api.openUrl('https://github.com/cuteyuchen/fp-node-manager/releases');
+                api.openUrl('https://github.com/cuteyuchen/project-manager/releases');
               }
             }, t('update.openDownloadPage'))
           ])
@@ -173,29 +174,29 @@ async function checkUpdate() {
           let fileName = '';
 
           if (os === 'windows') {
-            // Windows: fp-node-manager_0.1.10_x64-setup.exe
+            // Windows: project-manager_0.1.10_x64-setup.exe
             const archStr = arch === 'x86_64' ? 'x64' : arch;
-            fileName = `fp-node-manager_${versionNoV}_${archStr}-setup.exe`;
+            fileName = `project-manager_${versionNoV}_${archStr}-setup.exe`;
           } else if (os === 'macos') {
-            // macOS: fp-node-manager_0.1.10_x64.dmg or aarch64.dmg
+            // macOS: project-manager_0.1.10_x64.dmg or aarch64.dmg
             // Tauri bundle naming for mac usually uses target triple or just arch? 
             // Standard tauri bundle is {productName}_{version}_{arch}.dmg
             // x86_64 -> x64, aarch64 -> aarch64
             const archStr = arch === 'x86_64' ? 'x64' : arch;
-            fileName = `fp-node-manager_${versionNoV}_${archStr}.dmg`;
+            fileName = `project-manager_${versionNoV}_${archStr}.dmg`;
           } else if (os === 'linux') {
-            // Linux: fp-node-manager_0.1.10_amd64.AppImage
+            // Linux: project-manager_0.1.10_amd64.AppImage
             // x86_64 -> amd64
             const archStr = arch === 'x86_64' ? 'amd64' : arch;
-            fileName = `fp-node-manager_${versionNoV}_${archStr}.AppImage`;
+            fileName = `project-manager_${versionNoV}_${archStr}.AppImage`;
           } else {
              // Fallback or error? defaulting to windows x64 if unknown is risky.
              // But for now let's assume one of these 3.
              const archStr = arch === 'x86_64' ? 'x64' : arch;
-             fileName = `fp-node-manager_${versionNoV}_${archStr}-setup.exe`;
+             fileName = `project-manager_${versionNoV}_${archStr}-setup.exe`;
           }
 
-          const downloadUrl = `https://github.com/cuteyuchen/fp-node-manager/releases/download/${latestTag}/${fileName}`;
+          const downloadUrl = `https://github.com/cuteyuchen/project-manager/releases/download/${latestTag}/${fileName}`;
           await api.installUpdate(downloadUrl);
         } catch (error: any) {
           if (error && error.toString().includes('cancelled')) {
@@ -243,10 +244,11 @@ onMounted(async () => {
     });
   }
   
-  // Handle Startup Args / uTools Plugin Enter
-  if (target === 'utools') {
-    if ((window as any).utools) {
-      (window as any).utools.onPluginEnter(({ code, type, payload }: any) => {
+  // Handle Startup Args / uTools/ZTools Plugin Enter
+  if (isPlugin) {
+    const pluginApi = (window as any).ztools || (window as any).utools;
+    if (pluginApi) {
+      pluginApi.onPluginEnter(({ code, type, payload }: any) => {
         if (code === 'import_project' && type === 'files' && payload.length > 0) {
           handleImportProject(payload[0].path);
         }
@@ -341,7 +343,7 @@ onMounted(async () => {
   }
 
   // Default to true if undefined (legacy support)
-  if (target !== 'utools' && useSettingsStore().settings.autoUpdate !== false) {
+  if (!isPlugin && useSettingsStore().settings.autoUpdate !== false) {
     checkUpdate();
   }
 });
@@ -373,7 +375,7 @@ watch(() => nodeStore.versions, triggerSave, { deep: true });
 
 <template>
   <div class="h-screen w-screen flex flex-col bg-slate-50 dark:bg-[#0f172a] text-slate-900 dark:text-gray-100 font-sans overflow-hidden select-none transition-colors duration-200 antialiased">
-    <TitleBar v-if="target !== 'utools'" />
+    <TitleBar v-if="!isPlugin" />
     
     <div class="flex-1 flex overflow-hidden relative">
       <Sidebar @navigate="v => currentView = v" />

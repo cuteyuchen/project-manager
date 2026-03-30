@@ -2,7 +2,7 @@
 
 A modern, cross-platform desktop application for managing frontend projects, Node.js versions, and Git repositories — in one unified interface. Built with Tauri v2 + Vue 3 + TypeScript.
 
-Also available as a **uTools plugin**.
+Also available as a **uTools plugin** and **ZTools plugin**.
 
 ---
 

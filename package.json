@@ -1,9 +1,9 @@
 {
-  "name": "fp-node-manager",
+  "name": "project-manager",
   "private": true,
   "repository": {
     "type": "git",
-    "url": "https://github.com/cuteyuchen/fp-node-manager.git"
+    "url": "https://github.com/cuteyuchen/project-manager.git"
   },
   "version": "1.0.1",
   "type": "module",
@@ -15,6 +15,7 @@
     "tauri-dev": "tauri dev",
     "tauri-build": "tauri build",
     "build:utools": "vue-tsc --noEmit && vite build --mode utools && copy utools\\plugin.json dist-utools\\plugin.json && copy utools\\preload.js dist-utools\\preload.js && copy public\\logo.png dist-utools\\logo.png && copy utools\\package.json dist-utools\\package.json",
+    "build:ztools": "vue-tsc --noEmit && vite build --mode ztools && copy ztools\\plugin.json dist-ztools\\plugin.json && copy ztools\\preload.js dist-ztools\\preload.js && copy public\\logo.png dist-ztools\\logo.png && copy ztools\\package.json dist-ztools\\package.json",
     "bump": "node scripts/bump-version.cjs"
   },
   "dependencies": {

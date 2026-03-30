@@ -153,8 +153,8 @@ pub fn set_context_menu(enable: bool, locale: String) -> Result<(), String> {
     };
     
     let keys = vec![
-        r"Software\Classes\Directory\shell\fp-node-manager",
-        r"Software\Classes\Directory\Background\shell\fp-node-manager"
+        r"Software\Classes\Directory\shell\project-manager",
+        r"Software\Classes\Directory\Background\shell\project-manager"
     ];
     
     for key_path in keys {
@@ -176,7 +176,7 @@ pub fn set_context_menu(enable: bool, locale: String) -> Result<(), String> {
 #[tauri::command]
 pub fn check_context_menu() -> bool {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let key_path = r"Software\Classes\Directory\shell\fp-node-manager";
+    let key_path = r"Software\Classes\Directory\shell\project-manager";
     hkcu.open_subkey(key_path).is_ok()
 }
 
@@ -185,7 +185,7 @@ pub fn check_context_menu() -> bool {
 pub fn set_context_menu(enable: bool, locale: String) -> Result<(), String> {
     let home = std::env::var("HOME").map_err(|_| "HOME not set")?;
     let applications_dir = std::path::Path::new(&home).join(".local/share/applications");
-    let desktop_file_path = applications_dir.join("fp-node-manager-context.desktop");
+    let desktop_file_path = applications_dir.join("project-manager-context.desktop");
 
     let menu_text = if locale == "zh" {
         "在项目管理器中打开"
@@ -246,7 +246,7 @@ pub fn check_context_menu() -> bool {
         Ok(h) => h,
         Err(_) => return false,
     };
-    let path = std::path::Path::new(&home).join(".local/share/applications/fp-node-manager-context.desktop");
+    let path = std::path::Path::new(&home).join(".local/share/applications/project-manager-context.desktop");
     path.exists()
 }
 

@@ -1,5 +1,5 @@
 [package]
-name = "fp-node-manager"
+name = "project-manager"
 version = "1.0.1"
 description = "A Tauri App"
 authors = ["you"]

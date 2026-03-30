@@ -2,7 +2,7 @@
 
 一款现代化跨平台桌面应用，将前端项目管理、Node.js 版本管理与 Git 仓库管理集于一体。基于 Tauri v2 + Vue 3 + TypeScript 构建。
 
-同时提供 **uTools 插件** 版本。
+同时提供 **uTools 插件** 和 **ZTools 插件** 版本。
 
 ---
 

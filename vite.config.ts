@@ -8,15 +8,17 @@ const host = process.env.TAURI_DEV_HOST;
 // https://vite.dev/config/
 export default defineConfig(async ({ mode }) => {
   const isUtools = mode === 'utools';
+  const isZtools = mode === 'ztools';
+  const isPlugin = isUtools || isZtools;
   return {
-    base: isUtools ? './' : '/',
+    base: isPlugin ? './' : '/',
     plugins: [vue(), UnoCSS()],
     build: {
-      outDir: isUtools ? 'dist-utools' : 'dist',
+      outDir: isZtools ? 'dist-ztools' : isUtools ? 'dist-utools' : 'dist',
       emptyOutDir: true,
     },
     define: {
-      'import.meta.env.VITE_TARGET': JSON.stringify(isUtools ? 'utools' : 'tauri')
+      'import.meta.env.VITE_TARGET': JSON.stringify(isZtools ? 'ztools' : isUtools ? 'utools' : 'tauri')
     },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

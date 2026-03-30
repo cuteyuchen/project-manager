@@ -1,9 +1,9 @@
 {
-    "pluginName": "项目管理器",
+    "name": "project-manager",
+    "title": "项目管理器",
     "version": "1.0.1",
-    "description": "Project Manager for frontend developers",
-    "author": "Your Name",
-    "homepage": "https://github.com/cuteyuchen/project-manager",
+    "description": "前端项目管理器 - 管理项目、Node.js 版本和 Git 仓库",
+    "author": "cuteyuchen",
     "main": "index.html",
     "preload": "preload.js",
     "logo": "logo.png",
@@ -16,8 +16,7 @@
                 "Project Manager",
                 "project-manager",
                 "pm"
-            ],
-            "windowType": "system"
+            ]
         },
         {
             "code": "import_project",
@@ -30,8 +29,7 @@
                     "match": "/.*/",
                     "minLength": 1
                 }
-            ],
-            "windowType": "system"
+            ]
         }
     ]
 }
