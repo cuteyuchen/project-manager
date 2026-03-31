@@ -55,6 +55,8 @@ try {
     copyRecursive(path.join(rootDir, 'ztools', 'plugin.json'), path.join(ztoolsPublishRepoDir, 'plugin.json'));
     copyRecursive(path.join(rootDir, 'ztools', 'preload.js'), path.join(ztoolsPublishRepoDir, 'preload.js'));
     copyRecursive(path.join(rootDir, 'public', 'logo.png'), path.join(ztoolsPublishRepoDir, 'logo.png'));
+    copyRecursive(path.join(rootDir, 'README.md'), path.join(ztoolsPublishRepoDir, 'README.md'));
+    copyRecursive(path.join(rootDir, 'docs', 'images'), path.join(ztoolsPublishRepoDir, 'docs', 'images'));
     // CI custom build script at root
     copyRecursive(path.join(rootDir, 'ztools', 'build-plugin.sh'), path.join(ztoolsPublishRepoDir, 'build-plugin.sh'));
 

@@ -289,9 +289,14 @@ window.services = {
                 };
             }
             
-            const content = fs.readFileSync(pkgPath, 'utf-8');
-            const pkg = JSON.parse(content);
-            
+            let pkg = {};
+            try {
+                const content = fs.readFileSync(pkgPath, 'utf-8');
+                pkg = JSON.parse(content);
+            } catch (e) {
+                console.error('Failed to parse package.json:', e);
+            }
+
             let packageManager = undefined;
             if (fs.existsSync(path.join(projectPath, 'pnpm-lock.yaml'))) {
                 packageManager = 'pnpm';
@@ -516,12 +521,7 @@ window.services = {
     runCustomCommand: async (id, projectPath, command) => {
         if (processes.has(id)) throw new Error('Already running');
 
-        // Parse command into executable and arguments for safer execution
-        const parts = command.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [command];
-        const cmd = parts[0].replace(/^"|"$/g, '');
-        const args = parts.slice(1).map(a => a.replace(/^"|"$/g, '').replace(/^'|'$/g, ''));
-
-        const child = spawn(cmd, args, {
+        const child = spawn(command, {
             cwd: projectPath,
             shell: true,
             env: { ...process.env }
@@ -710,12 +710,12 @@ window.services = {
                 
                 if (term === 'powershell') {
                      // PowerShell: start a new window, cd to path
-                     spawn('cmd', ['/C', 'start', '/D', winPath, 'powershell', '-NoExit'], { detached: true, stdio: 'ignore' });
+                     spawn('cmd', ['/C', 'start', '', '/D', winPath, 'powershell', '-NoExit'], { detached: true, stdio: 'ignore' });
                 } else if (term === 'pwsh') {
-                     spawn('cmd', ['/C', 'start', '/D', winPath, 'pwsh', '-NoExit'], { detached: true, stdio: 'ignore' });
+                     spawn('cmd', ['/C', 'start', '', '/D', winPath, 'pwsh', '-NoExit'], { detached: true, stdio: 'ignore' });
                 } else {
                     // CMD (Default)
-                    spawn('cmd', ['/C', 'start', '/D', winPath, 'cmd'], { detached: true, stdio: 'ignore' });
+                    spawn('cmd', ['/C', 'start', '', '/D', winPath, 'cmd'], { detached: true, stdio: 'ignore' });
                 }
             } catch (e) {
                 console.error('Failed to open terminal', e);
