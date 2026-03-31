@@ -12,6 +12,7 @@ dist
 dist-ssr
 dist-utools
 dist-ztools
+.ztools-publish-repo
 *.local
 
 # Editor directories and files

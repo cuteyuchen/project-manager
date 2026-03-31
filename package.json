@@ -15,7 +15,9 @@
     "tauri-dev": "tauri dev",
     "tauri-build": "tauri build",
     "build:utools": "vue-tsc --noEmit && vite build --mode utools && copy utools\\plugin.json dist-utools\\plugin.json && copy utools\\preload.js dist-utools\\preload.js && copy public\\logo.png dist-utools\\logo.png && copy utools\\package.json dist-utools\\package.json",
-    "build:ztools": "vue-tsc --noEmit && vite build --mode ztools && copy ztools\\plugin.json dist-ztools\\plugin.json && copy ztools\\preload.js dist-ztools\\preload.js && copy public\\logo.png dist-ztools\\logo.png && copy ztools\\package.json dist-ztools\\package.json",
+    "build:ztools": "vue-tsc --noEmit && vite build --mode ztools && node scripts/post-build-ztools.cjs",
+    "publish:ztools": "node scripts/publish-ztools.cjs",
+    "publish:ztools:dry": "node scripts/publish-ztools.cjs --dry-run",
     "bump": "node scripts/bump-version.cjs"
   },
   "dependencies": {

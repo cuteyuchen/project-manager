@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch, nextTick, onUnmounted } from 'vue';
+import { computed, ref, watch, onUnmounted } from 'vue';
 import { useGitStore } from '../../stores/git';
 import { useI18n } from 'vue-i18n';
 import type { Project, GitCommit } from '../../types';

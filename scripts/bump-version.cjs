@@ -194,6 +194,12 @@ try {
         copyRecursive(path.join(rootDir, 'public'), path.join(ztoolsPublishRepoDir, 'public'));
         copyRecursive(path.join(rootDir, 'ztools'), path.join(ztoolsPublishRepoDir, 'ztools'));
 
+        // build-plugin.sh must be at the repo ROOT so the ZTools-plugins CI finds it
+        copyRecursive(path.join(rootDir, 'ztools', 'build-plugin.sh'), path.join(ztoolsPublishRepoDir, 'build-plugin.sh'));
+        // Also copy scripts/post-build-ztools.cjs in case it's referenced by package.json build script
+        fs.mkdirSync(path.join(ztoolsPublishRepoDir, 'scripts'), { recursive: true });
+        copyRecursive(path.join(rootDir, 'scripts', 'post-build-ztools.cjs'), path.join(ztoolsPublishRepoDir, 'scripts', 'post-build-ztools.cjs'));
+
         for (const file of ['index.html', 'vite.config.ts', 'uno.config.ts', 'tsconfig.json', 'tsconfig.node.json']) {
             copyRecursive(path.join(rootDir, file), path.join(ztoolsPublishRepoDir, file));
         }
