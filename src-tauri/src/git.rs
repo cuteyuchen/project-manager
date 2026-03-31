@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::io::Write;
 use std::process::Command;
 
 #[cfg(target_os = "windows")]
@@ -33,10 +34,12 @@ pub struct GitCommit {
     pub short_hash: String,
     pub author: String,
     pub email: String,
+    pub committer: String,
     pub date: String,
     pub message: String,
     pub parents: Vec<String>,
     pub refs: Vec<String>,
+    pub graph_prefix: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -497,6 +500,7 @@ pub fn git_log(path: String, max_count: Option<i32>, all: Option<bool>) -> Resul
                 let short_hash = lines[1].to_string();
                 let author = lines[2].to_string();
                 let email = lines[3].to_string();
+                let committer = author.clone();
                 let date = lines[4].to_string();
                 let message = lines[5].to_string();
                 let parents: Vec<String> = if lines[6].is_empty() {
@@ -515,10 +519,12 @@ pub fn git_log(path: String, max_count: Option<i32>, all: Option<bool>) -> Resul
                     short_hash,
                     author,
                     email,
+                    committer,
                     date,
                     message,
                     parents,
                     refs,
+                    graph_prefix: None,
                 });
             }
             lines.clear();
@@ -849,52 +855,59 @@ pub fn git_history(
     let max_count_arg = format!("--max-count={}", count_str);
     let args = vec![
         "log",
+        "--all",
+        "--graph",
         max_count_arg.as_str(),
-        "--format=%H%n%h%n%an%n%ae%n%aI%n%s%n%P%n%D%n---END---",
+        "--format=%x1f%H%x1f%h%x1f%an%x1f%ae%x1f%cn%x1f%aI%x1f%s%x1f%P%x1f%D",
     ];
 
     let output = run_git_relaxed(&path, &args)?;
     let mut commits = Vec::new();
-    let mut lines: Vec<&str> = Vec::new();
-
     for line in output.lines() {
-        if line == "---END---" {
-            if lines.len() >= 7 {
-                let hash = lines[0].to_string();
-                let short_hash = lines[1].to_string();
-                let author = lines[2].to_string();
-                let email = lines[3].to_string();
-                let date = lines[4].to_string();
-                let message = lines[5].to_string();
-                let parents: Vec<String> = if lines[6].is_empty() {
-                    vec![]
-                } else {
-                    lines[6].split(' ').map(|s| s.to_string()).collect()
-                };
-                let refs: Vec<String> = if lines.len() > 7 && !lines[7].is_empty() {
-                    lines[7]
-                        .split(", ")
-                        .map(|s| s.trim().to_string())
-                        .collect()
-                } else {
-                    vec![]
-                };
+        let Some(separator_idx) = line.find('\u{1f}') else {
+            continue;
+        };
 
-                commits.push(GitCommit {
-                    hash,
-                    short_hash,
-                    author,
-                    email,
-                    date,
-                    message,
-                    parents,
-                    refs,
-                });
-            }
-            lines.clear();
-        } else {
-            lines.push(line);
+        let graph_prefix = line[..separator_idx].to_string();
+        let payload = &line[separator_idx + '\u{1f}'.len_utf8()..];
+        let parts: Vec<&str> = payload.split('\u{1f}').collect();
+        if parts.len() < 9 {
+            continue;
         }
+
+        let hash = parts[0].to_string();
+        let short_hash = parts[1].to_string();
+        let author = parts[2].to_string();
+        let email = parts[3].to_string();
+        let committer = parts[4].to_string();
+        let date = parts[5].to_string();
+        let message = parts[6].to_string();
+        let parents: Vec<String> = if parts[7].trim().is_empty() {
+            vec![]
+        } else {
+            parts[7].split(' ').map(|s| s.to_string()).collect()
+        };
+        let refs: Vec<String> = if parts[8].trim().is_empty() {
+            vec![]
+        } else {
+            parts[8]
+                .split(", ")
+                .map(|s| s.trim().to_string())
+                .collect()
+        };
+
+        commits.push(GitCommit {
+            hash,
+            short_hash,
+            author,
+            email,
+            committer,
+            date,
+            message,
+            parents,
+            refs,
+            graph_prefix: if graph_prefix.is_empty() { None } else { Some(graph_prefix) },
+        });
     }
 
     Ok(commits)
@@ -954,4 +967,47 @@ pub fn git_commit_files(path: String, hash: String) -> Result<Vec<GitCommitFile>
 #[tauri::command]
 pub fn git_diff_commit_file(path: String, hash: String, file: String) -> Result<String, String> {
     run_git_relaxed(&path, &["show", "--format=", "--patch", &hash, "--", &file])
+}
+
+#[tauri::command]
+pub fn git_revert_hunk(path: String, patch: String, staged: Option<bool>) -> Result<String, String> {
+    let mut args = vec!["apply", "-R", "--whitespace=nowarn"];
+    if staged.unwrap_or(false) {
+        args.push("--cached");
+    }
+
+    let mut cmd = Command::new("git");
+    cmd.current_dir(&path)
+        .args(args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to execute git apply: {}", e))?;
+
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin
+            .write_all(patch.as_bytes())
+            .map_err(|e| format!("Failed to write patch: {}", e))?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("Failed to read git output: {}", e))?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        if stderr.is_empty() {
+            Err("Failed to revert hunk".to_string())
+        } else {
+            Err(stderr)
+        }
+    }
 }

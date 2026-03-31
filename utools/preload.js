@@ -1,6 +1,11 @@
 const fs = require('fs');
 const path = require('path');
-const { spawn, exec, execSync, execFileSync } = require('child_process');
+const { spawn, exec, execFile, execSync, execFileSync } = require('child_process');
+
+// Validate version string to prevent command injection
+function isValidVersion(version) {
+    return /^[a-zA-Z0-9._\-\/]+$/.test(version);
+}
 
 // Helper to run command and get output
 function runCmd(cmd) {
@@ -97,16 +102,24 @@ window.services = {
     },
     
     getNodeVersion: async (nodePath) => {
-        try {
-             const cmd = nodePath ? `"${nodePath}" -v` : 'node -v';
-             return await runCmd(cmd);
-        } catch (e) {
-            return '';
-        }
+        return new Promise(resolve => {
+            const cb = (err, stdout) => {
+                if (err) return resolve('');
+                resolve(stdout.trim());
+            };
+            if (nodePath) {
+                execFile(nodePath, ['-v'], cb);
+            } else {
+                exec('node -v', cb);
+            }
+        });
     },
 
     installNode: async (version) => {
         return new Promise((resolve, reject) => {
+            if (!isValidVersion(version)) {
+                return reject(new Error('Invalid version string.'));
+            }
             if (process.platform === 'win32') {
                 // Use PowerShell to start a new elevated window that runs nvm install
                 // /c executes and terminates, but we add pause so user can see the result
@@ -189,6 +202,9 @@ window.services = {
     
     uninstallNode: async (version) => {
         return new Promise((resolve, reject) => {
+            if (!isValidVersion(version)) {
+                return reject(new Error('Invalid version string.'));
+            }
             if (process.platform === 'win32') {
                 const psCommand = `Start-Process cmd -ArgumentList '/c nvm uninstall ${version} & pause' -Verb RunAs -Wait`;
                 exec(`powershell -Command "${psCommand}"`, (error) => {
@@ -229,6 +245,9 @@ window.services = {
     
     useNode: async (version) => {
         return new Promise((resolve, reject) => {
+            if (!isValidVersion(version)) {
+                return reject(new Error('Invalid version string.'));
+            }
             if (process.platform === 'win32') {
                 const psCommand = `Start-Process cmd -ArgumentList '/c nvm use ${version} & pause' -Verb RunAs -Wait`;
                 exec(`powershell -Command "${psCommand}"`, (error) => {
@@ -420,7 +439,7 @@ window.services = {
 
         // Construct command
         const pm = packageManager || 'npm';
-        const cmdStr = `${pm} run "${script}"`;
+        const cmdStr = `${pm} run ${script}`;
 
         try {
             console.log('[Runner] Executing:', cmdStr);
@@ -430,7 +449,7 @@ window.services = {
             appendLog(`Executing: ${cmdStr}\n`);
             appendLog(`Node Path used: ${nodeDir || 'System Default'}\n`);
             
-            const child = spawn(cmdStr, [], {
+            const child = spawn(pm, ['run', script], {
                 cwd: projectPath,
                 shell: true,
                 env: env
@@ -497,7 +516,12 @@ window.services = {
     runCustomCommand: async (id, projectPath, command) => {
         if (processes.has(id)) throw new Error('Already running');
 
-        const child = spawn(command, [], {
+        // Parse command into executable and arguments for safer execution
+        const parts = command.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [command];
+        const cmd = parts[0].replace(/^"|"$/g, '');
+        const args = parts.slice(1).map(a => a.replace(/^"|"$/g, '').replace(/^'|'$/g, ''));
+
+        const child = spawn(cmd, args, {
             cwd: projectPath,
             shell: true,
             env: { ...process.env }
@@ -606,7 +630,14 @@ window.services = {
     },
     
     openInEditor: async (path, editor = 'code') => {
-        spawn(editor, [path], { shell: true });
+        // Validate editor: must be a simple command name or an absolute file path
+        const isAbsolutePath = require('path').isAbsolute(editor);
+        const isSimpleName = /^[a-zA-Z0-9_\-]+$/.test(editor);
+        if (!isAbsolutePath && !isSimpleName) {
+            console.error(`Disallowed editor: ${editor}`);
+            return;
+        }
+        spawn(editor, [path], { shell: false });
     },
     
     getAppVersion: async () => {
@@ -741,25 +772,25 @@ window.services = {
     },
 
     gitSummary: async (projectPath) => {
-        const runGit = (args) => execSync(`git ${args}`, { cwd: projectPath, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }).toString().trim();
+        const runGit = (args) => execFileSync('git', args, { cwd: projectPath, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }).toString().trim();
         const runGitSafe = (args, fallback = '') => {
             try { return runGit(args); } catch { return fallback; }
         };
 
-        const branchRaw = runGitSafe('branch --show-current');
+        const branchRaw = runGitSafe(['branch', '--show-current']);
         const isDetached = branchRaw === '';
         const branch = isDetached
-            ? (runGitSafe('rev-parse --short HEAD') || 'HEAD')
+            ? (runGitSafe(['rev-parse', '--short', 'HEAD']) || 'HEAD')
             : branchRaw;
 
         let ahead = 0, behind = 0, hasRemote = false, remoteName = null;
 
         if (!isDetached) {
-            const remote = runGitSafe(`config branch.${branchRaw}.remote`);
+            const remote = runGitSafe(['config', `branch.${branchRaw}.remote`]);
             if (remote) {
                 hasRemote = true;
                 remoteName = remote;
-                const track = runGitSafe(`rev-list --left-right --count ${branchRaw}@{upstream}...HEAD`);
+                const track = runGitSafe(['rev-list', '--left-right', '--count', `${branchRaw}@{upstream}...HEAD`]);
                 if (track) {
                     const parts = track.split(/\s+/);
                     if (parts.length === 2) {
@@ -945,14 +976,14 @@ window.services = {
     },
 
     gitListBranches: async (projectPath) => {
-        const runGit = (args) => execSync(`git ${args}`, { cwd: projectPath, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }).toString().trim();
+        const runGit = (args) => execFileSync('git', args, { cwd: projectPath, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }).toString().trim();
         const runGitSafe = (args) => { try { return runGit(args); } catch { return ''; } };
 
-        const current = runGitSafe('branch --show-current');
+        const current = runGitSafe(['branch', '--show-current']);
         const branches = [];
 
         // Local branches
-        const localOutput = runGitSafe('branch --format=%(refname:short)\t%(upstream:short)\t%(upstream:track)');
+        const localOutput = runGitSafe(['branch', '--format=%(refname:short)\t%(upstream:short)\t%(upstream:track)']);
         for (const line of localOutput.split('\n')) {
             if (!line.trim()) continue;
             const parts = line.split('\t');
@@ -981,7 +1012,7 @@ window.services = {
         }
 
         // Remote branches
-        const remoteOutput = runGitSafe('branch -r --format=%(refname:short)');
+        const remoteOutput = runGitSafe(['branch', '-r', '--format=%(refname:short)']);
         for (const line of remoteOutput.split('\n')) {
             const name = line.trim();
             if (!name || name.includes('HEAD')) continue;
@@ -1024,8 +1055,11 @@ window.services = {
         let output;
         try {
             output = execFileSync('git', [
+                '--no-pager',
                 'log', `--max-count=${count}`,
-                '--format=%H%n%h%n%an%n%ae%n%aI%n%s%n%P%n%D%n---END---'
+                '--all',
+                '--graph',
+                '--format=%x1f%H%x1f%h%x1f%an%x1f%ae%x1f%cn%x1f%aI%x1f%s%x1f%P%x1f%D'
             ], {
                 cwd: projectPath, windowsHide: true, maxBuffer: 10 * 1024 * 1024
             }).toString();
@@ -1034,26 +1068,26 @@ window.services = {
         }
 
         const commits = [];
-        let lines = [];
-
         for (const line of output.split('\n')) {
-            if (line === '---END---') {
-                if (lines.length >= 7) {
-                    commits.push({
-                        hash: lines[0],
-                        short_hash: lines[1],
-                        author: lines[2],
-                        email: lines[3],
-                        date: lines[4],
-                        message: lines[5],
-                        parents: lines[6] ? lines[6].split(' ') : [],
-                        refs: (lines[7] && lines[7].trim()) ? lines[7].split(', ').map(s => s.trim()) : [],
-                    });
-                }
-                lines = [];
-            } else {
-                lines.push(line);
-            }
+            const idx = line.indexOf('\x1f');
+            if (idx < 0) continue;
+
+            const graphPrefix = line.slice(0, idx);
+            const parts = line.slice(idx + 1).split('\x1f');
+            if (parts.length < 9) continue;
+
+            commits.push({
+                hash: parts[0],
+                short_hash: parts[1],
+                author: parts[2],
+                email: parts[3],
+                committer: parts[4],
+                date: parts[5],
+                message: parts[6],
+                parents: parts[7] ? parts[7].split(' ') : [],
+                refs: (parts[8] && parts[8].trim()) ? parts[8].split(', ').map(s => s.trim()) : [],
+                graph_prefix: graphPrefix || undefined,
+            });
         }
 
         return commits;
@@ -1099,6 +1133,17 @@ window.services = {
         } catch (e) {
             return e.stdout ? e.stdout.toString() : '';
         }
+    },
+
+    gitRevertHunk: async (projectPath, patch, staged) => {
+        const args = ['apply', '-R', '--whitespace=nowarn'];
+        if (staged) args.push('--cached');
+        return execFileSync('git', args, {
+            cwd: projectPath,
+            windowsHide: true,
+            input: patch,
+            stdio: ['pipe', 'pipe', 'pipe'],
+        }).toString();
     },
 
 };

@@ -16,10 +16,35 @@ if (!/^\d+\.\d+\.\d+$/.test(newVersion)) {
 }
 
 const rootDir = path.resolve(__dirname, '..');
+const ztoolsPublishRepoDir = path.join(rootDir, '.ztools-publish-repo');
 
 function run(cmd, opts = {}) {
     console.log(`  > ${cmd}`);
     execSync(cmd, { stdio: 'inherit', cwd: rootDir, ...opts });
+}
+
+function ensureCleanDir(dir) {
+    if (fs.existsSync(dir)) {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+    fs.mkdirSync(dir, { recursive: true });
+}
+
+function copyRecursive(src, dst) {
+    const stat = fs.statSync(src);
+    if (stat.isDirectory()) {
+        fs.mkdirSync(dst, { recursive: true });
+        for (const entry of fs.readdirSync(src)) {
+            copyRecursive(path.join(src, entry), path.join(dst, entry));
+        }
+        return;
+    }
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.copyFileSync(src, dst);
+}
+
+function writeJson(filePath, value, indent = 2) {
+    fs.writeFileSync(filePath, JSON.stringify(value, null, indent) + '\n');
 }
 
 try {
@@ -112,7 +137,17 @@ try {
     // ═══════════════════════════════════════════
     console.log('\n📦 Phase 2: Git commit, tag & push...\n');
 
-    run('git add .');
+    const releaseTrackedFiles = [
+        'package.json',
+        'src-tauri/tauri.conf.json',
+        'src-tauri/Cargo.toml',
+        'src-tauri/Cargo.lock',
+        'utools/plugin.json',
+        'utools/preload.js',
+        'ztools/plugin.json',
+        'ztools/preload.js',
+    ].filter((file) => fs.existsSync(path.join(rootDir, file)));
+    run(`git add ${releaseTrackedFiles.join(' ')}`);
     try {
         execSync('git diff --cached --quiet', { stdio: 'ignore', cwd: rootDir });
         console.log('ℹ️ No changes to commit.');
@@ -151,27 +186,47 @@ try {
     // ═══════════════════════════════════════════
     console.log('\n🚀 Phase 4: Publishing ZTools plugin...\n');
 
-    const distZtools = path.join(rootDir, 'dist-ztools');
     try {
-        // ztools publish requires a git repo with at least one commit
-        const gitDir = path.join(distZtools, '.git');
-        if (!fs.existsSync(gitDir)) {
-            run('git init', { cwd: distZtools });
+        // Build an isolated source-only publish repo to avoid committing unrelated code/artifacts
+        ensureCleanDir(ztoolsPublishRepoDir);
+
+        copyRecursive(path.join(rootDir, 'src'), path.join(ztoolsPublishRepoDir, 'src'));
+        copyRecursive(path.join(rootDir, 'public'), path.join(ztoolsPublishRepoDir, 'public'));
+        copyRecursive(path.join(rootDir, 'ztools'), path.join(ztoolsPublishRepoDir, 'ztools'));
+
+        for (const file of ['index.html', 'vite.config.ts', 'uno.config.ts', 'tsconfig.json', 'tsconfig.node.json']) {
+            copyRecursive(path.join(rootDir, file), path.join(ztoolsPublishRepoDir, file));
         }
-        run('git add .', { cwd: distZtools });
-        try {
-            execSync('git diff --cached --quiet', { stdio: 'ignore', cwd: distZtools });
-            // No changes — force a commit with allow-empty for version bump
-            run(`git commit --allow-empty -m "chore(release): v${newVersion}"`, { cwd: distZtools });
-        } catch (e) {
-            run(`git commit -m "chore(release): v${newVersion}"`, { cwd: distZtools });
-        }
-        run('npx @ztools-center/plugin-cli@latest publish', { cwd: distZtools });
+
+        const publishPackageJson = {
+            ...JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8')),
+            private: true,
+        };
+        writeJson(path.join(ztoolsPublishRepoDir, 'package.json'), publishPackageJson, 2);
+
+        // Ensure ztools plugin metadata version is synced in publish workspace
+        const publishPluginJsonPath = path.join(ztoolsPublishRepoDir, 'ztools', 'plugin.json');
+        const publishPluginJson = JSON.parse(fs.readFileSync(publishPluginJsonPath, 'utf8'));
+        publishPluginJson.version = newVersion;
+        writeJson(publishPluginJsonPath, publishPluginJson, 4);
+
+        // Local release record for source-only workspace
+        fs.writeFileSync(
+            path.join(ztoolsPublishRepoDir, '.release-source.txt'),
+            `source-only publish workspace for ztools v${newVersion}\n`,
+            'utf8'
+        );
+
+        run('git init', { cwd: ztoolsPublishRepoDir });
+        run('git add .', { cwd: ztoolsPublishRepoDir });
+        run(`git commit -m "chore(release): ztools source v${newVersion}"`, { cwd: ztoolsPublishRepoDir });
+
+        run('npx @ztools-center/plugin-cli@latest publish', { cwd: path.join(ztoolsPublishRepoDir, 'ztools') });
         console.log('✅ ZTools plugin published successfully');
     } catch (e) {
         console.error('❌ ZTools publish failed:', e.message);
         console.log('💡 You can retry manually:');
-        console.log(`   cd dist-ztools && npx @ztools-center/plugin-cli@latest publish`);
+        console.log(`   cd .ztools-publish-repo\\ztools && npx @ztools-center/plugin-cli@latest publish`);
     }
 
     // ═══════════════════════════════════════════

@@ -172,6 +172,10 @@ export class TauriAdapter implements PlatformAPI {
         return this.appWindow.listen('tauri://resize', callback);
     }
 
+    async onWindowFocus(callback: () => void): Promise<() => void> {
+        return this.appWindow.listen('tauri://focus', callback);
+    }
+
     // System Integration
     async setContextMenu(enable: boolean, locale?: string): Promise<void> {
         return invoke('set_context_menu', { enable, locale: locale || 'en' });
@@ -292,5 +296,9 @@ export class TauriAdapter implements PlatformAPI {
 
     async gitDiffCommitFile(path: string, hash: string, file: string): Promise<string> {
         return invoke('git_diff_commit_file', { path, hash, file });
+    }
+
+    async gitRevertHunk(path: string, patch: string, staged?: boolean): Promise<string> {
+        return invoke('git_revert_hunk', { path, patch, staged });
     }
 }

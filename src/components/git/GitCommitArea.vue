@@ -122,7 +122,7 @@ async function handleAiGenerate() {
       <textarea
         v-model="commitMessage"
         :placeholder="t('git.commitPlaceholder')"
-        class="w-full h-full px-2 py-1.5 text-[11px] rounded-md border border-slate-200/60 dark:border-slate-700/30 bg-slate-50/50 dark:bg-slate-900/20 text-slate-700 dark:text-slate-300 resize-none focus:outline-none focus:ring-1 focus:ring-blue-500/30 focus:border-blue-500/30 placeholder:text-slate-400/40 transition-all duration-150"
+        class="w-full h-full box-border px-2 py-1.5 text-[11px] rounded-md border border-slate-200/60 dark:border-slate-700/30 bg-slate-50/50 dark:bg-slate-900/20 text-slate-700 dark:text-slate-300 resize-none focus:outline-none focus:ring-1 focus:ring-blue-500/30 focus:border-blue-500/30 placeholder:text-slate-400/40 transition-all duration-150"
         @keydown.ctrl.enter="handleCommit"
       />
     </div>

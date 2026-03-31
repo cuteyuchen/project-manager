@@ -274,6 +274,15 @@ export const useGitStore = defineStore('git', () => {
     return result;
   }
 
+  async function revertHunk(projectId: string, path: string, patch: string, staged?: boolean): Promise<string> {
+    const result = await api.gitRevertHunk(path, patch, staged);
+    await refreshStatus(projectId, path);
+    if (selectedDiffFile.value) {
+      await getDiff(path, selectedDiffFile.value, selectedDiffStaged.value);
+    }
+    return result;
+  }
+
   async function generateAiCommitMessage(
     projectId: string,
     path: string,
@@ -393,6 +402,7 @@ export const useGitStore = defineStore('git', () => {
     getDiff,
     getDiffCommit,
     getDiffCommitFile,
+    revertHunk,
     discardFiles,
     discardUntracked,
     clearDiff,

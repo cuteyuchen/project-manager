@@ -105,6 +105,7 @@ pub fn run() {
             git::git_history,
             git::git_commit_files,
             git::git_diff_commit_file,
+            git::git_revert_hunk,
             read_config_file,
             write_config_file,
             get_startup_args

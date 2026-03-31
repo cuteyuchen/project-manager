@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { useGitStore } from '../../stores/git';
 import { useI18n } from 'vue-i18n';
 import type { Project } from '../../types';
 
-defineProps<{
+const props = defineProps<{
   project: Project;
 }>();
 
@@ -13,43 +13,71 @@ const gitStore = useGitStore();
 
 const diffContent = computed(() => gitStore.selectedDiff);
 const diffFile = computed(() => gitStore.selectedDiffFile);
+const reverting = ref(false);
 
 interface DiffLine {
-  type: 'header' | 'add' | 'del' | 'context' | 'hunk' | 'meta';
+  type: 'add' | 'del' | 'context';
   content: string;
   oldNum?: number;
   newNum?: number;
 }
 
-const parsedLines = computed((): DiffLine[] => {
+interface DiffHunk {
+  header: string;
+  lines: DiffLine[];
+  rawLines: string[];
+}
+
+const diffHeaders = computed(() => {
+  const headers: string[] = [];
+  for (const line of diffContent.value.split('\n')) {
+    if (line.startsWith('diff --git') || line.startsWith('index ') || line.startsWith('--- ') || line.startsWith('+++ ')) {
+      headers.push(line);
+    }
+    if (line.startsWith('@@')) break;
+  }
+  return headers;
+});
+
+const parsedHunks = computed((): DiffHunk[] => {
   const raw = diffContent.value;
   if (!raw) return [];
 
-  const result: DiffLine[] = [];
+  const hunks: DiffHunk[] = [];
+  let current: DiffHunk | null = null;
   let oldNum = 0;
   let newNum = 0;
 
   for (const line of raw.split('\n')) {
     if (line.startsWith('diff --git') || line.startsWith('index ') || line.startsWith('---') || line.startsWith('+++')) {
-      result.push({ type: 'meta', content: line });
-    } else if (line.startsWith('@@')) {
+      continue;
+    }
+
+    if (line.startsWith('@@')) {
       const match = line.match(/@@ -(\d+)/);
       if (match) {
         oldNum = parseInt(match[1]) - 1;
         const newMatch = line.match(/@@ -\d+(?:,\d+)? \+(\d+)/);
         newNum = newMatch ? parseInt(newMatch[1]) - 1 : oldNum;
       }
-      result.push({ type: 'hunk', content: line });
-    } else if (line.startsWith('+')) {
+      current = { header: line, lines: [], rawLines: [line] };
+      hunks.push(current);
+      continue;
+    }
+
+    if (!current) continue;
+
+    current.rawLines.push(line);
+    if (line.startsWith('+')) {
       newNum++;
-      result.push({ type: 'add', content: line.slice(1), newNum });
+      current.lines.push({ type: 'add', content: line.slice(1), newNum });
     } else if (line.startsWith('-')) {
       oldNum++;
-      result.push({ type: 'del', content: line.slice(1), oldNum });
+      current.lines.push({ type: 'del', content: line.slice(1), oldNum });
     } else {
       oldNum++;
       newNum++;
-      result.push({
+      current.lines.push({
         type: 'context',
         content: line.startsWith(' ') ? line.slice(1) : line,
         oldNum,
@@ -57,19 +85,36 @@ const parsedLines = computed((): DiffLine[] => {
       });
     }
   }
-
-  return result;
+  return hunks;
 });
 
 const stats = computed(() => {
   let adds = 0;
   let dels = 0;
-  for (const line of parsedLines.value) {
-    if (line.type === 'add') adds++;
-    else if (line.type === 'del') dels++;
+  for (const hunk of parsedHunks.value) {
+    for (const line of hunk.lines) {
+      if (line.type === 'add') adds++;
+      else if (line.type === 'del') dels++;
+    }
   }
   return { adds, dels };
 });
+
+async function rollbackHunk(hunk: DiffHunk) {
+  if (!diffFile.value || !hunk.rawLines.length || reverting.value) return;
+  reverting.value = true;
+  try {
+    const patchText = `${diffHeaders.value.join('\n')}\n${hunk.rawLines.join('\n')}\n`;
+    await gitStore.revertHunk(
+      props.project.id,
+      props.project.path,
+      patchText,
+      gitStore.selectedDiffStaged,
+    );
+  } finally {
+    reverting.value = false;
+  }
+}
 </script>
 
 <template>
@@ -89,51 +134,50 @@ const stats = computed(() => {
       </div>
 
       <!-- Diff content -->
-      <div class="flex-1 overflow-auto font-mono text-[11px] leading-[18px]">
-        <table class="w-full border-collapse">
-          <tbody>
-            <tr
-              v-for="(line, i) in parsedLines"
-              :key="i"
-              :class="{
-                'bg-green-500/8': line.type === 'add',
-                'bg-red-500/8': line.type === 'del',
-                'bg-blue-500/5': line.type === 'hunk',
-                'bg-slate-500/3': line.type === 'meta',
-              }"
+      <div class="flex-1 overflow-auto font-mono text-[11px] leading-[18px] p-2 space-y-2">
+        <div
+          v-for="(hunk, hunkIndex) in parsedHunks"
+          :key="hunkIndex"
+          class="border border-slate-200/50 dark:border-slate-700/40 rounded-md overflow-hidden"
+        >
+          <div class="px-2 py-1 bg-slate-100/60 dark:bg-slate-800/50 border-b border-slate-200/40 dark:border-slate-700/40 text-[10px] flex items-center">
+            <span class="text-blue-600 dark:text-blue-400 truncate">{{ hunk.header }}</span>
+            <button
+              class="ml-auto px-2 py-0.5 rounded text-[10px] bg-rose-500/10 text-rose-600 hover:bg-rose-500/18 disabled:opacity-60 cursor-pointer"
+              :disabled="reverting"
+              @click="rollbackHunk(hunk)"
             >
-              <!-- Line numbers -->
-              <td
-                v-if="line.type !== 'meta' && line.type !== 'hunk'"
-                class="w-[1px] whitespace-nowrap px-1.5 text-right text-slate-400/60 dark:text-slate-500/40 select-none border-r border-slate-200/20 dark:border-slate-700/15"
-              >
-                {{ line.oldNum || '' }}
-              </td>
-              <td
-                v-if="line.type !== 'meta' && line.type !== 'hunk'"
-                class="w-[1px] whitespace-nowrap px-1.5 text-right text-slate-400/60 dark:text-slate-500/40 select-none border-r border-slate-200/20 dark:border-slate-700/15"
-              >
-                {{ line.newNum || '' }}
-              </td>
-              <td
-                v-if="line.type === 'meta' || line.type === 'hunk'"
-                colspan="2"
-                class="w-[1px] whitespace-nowrap px-1.5 text-right text-slate-400/40 select-none border-r border-slate-200/20 dark:border-slate-700/15"
-              />
-              <!-- Content -->
-              <td
-                class="px-2 whitespace-pre"
+              回滚区块
+            </button>
+          </div>
+          <table class="w-full border-collapse">
+            <tbody>
+              <tr
+                v-for="(line, i) in hunk.lines"
+                :key="i"
                 :class="{
-                  'text-green-700 dark:text-green-300': line.type === 'add',
-                  'text-red-700 dark:text-red-300': line.type === 'del',
-                  'text-blue-500/70': line.type === 'hunk',
-                  'text-slate-400/60': line.type === 'meta',
-                  'text-slate-700 dark:text-slate-300': line.type === 'context',
+                  'bg-green-500/8': line.type === 'add',
+                  'bg-red-500/8': line.type === 'del',
                 }"
-              >{{ line.content }}</td>
-            </tr>
-          </tbody>
-        </table>
+              >
+                <td class="w-[1px] whitespace-nowrap px-1.5 text-right text-slate-400/60 dark:text-slate-500/40 select-none border-r border-slate-200/20 dark:border-slate-700/15">
+                  {{ line.oldNum || '' }}
+                </td>
+                <td class="w-[1px] whitespace-nowrap px-1.5 text-right text-slate-400/60 dark:text-slate-500/40 select-none border-r border-slate-200/20 dark:border-slate-700/15">
+                  {{ line.newNum || '' }}
+                </td>
+                <td
+                  class="px-2 whitespace-pre"
+                  :class="{
+                    'text-green-700 dark:text-green-300': line.type === 'add',
+                    'text-red-700 dark:text-red-300': line.type === 'del',
+                    'text-slate-700 dark:text-slate-300': line.type === 'context',
+                  }"
+                >{{ line.content }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </template>
   </div>

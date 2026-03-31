@@ -75,6 +75,7 @@ export interface PlatformAPI {
     windowIsMaximized(): Promise<boolean>;
     windowSetAlwaysOnTop(always: boolean): Promise<void>;
     onWindowResize(callback: () => void): Promise<() => void>;
+    onWindowFocus(callback: () => void): Promise<() => void>;
 
     // System Integration
     setContextMenu(enable: boolean, locale?: string): Promise<void>;
@@ -109,4 +110,5 @@ export interface PlatformAPI {
     gitHistory(path: string, maxCount?: number): Promise<GitCommit[]>;
     gitCommitFiles(path: string, hash: string): Promise<GitCommitFile[]>;
     gitDiffCommitFile(path: string, hash: string, file: string): Promise<string>;
+    gitRevertHunk(path: string, patch: string, staged?: boolean): Promise<string>;
 }

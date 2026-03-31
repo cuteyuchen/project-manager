@@ -86,10 +86,12 @@ export interface GitCommit {
   short_hash: string;
   author: string;
   email: string;
+  committer: string;
   date: string;
   message: string;
   parents: string[];
   refs: string[];
+  graph_prefix?: string;
 }
 
 export interface GitRemote {

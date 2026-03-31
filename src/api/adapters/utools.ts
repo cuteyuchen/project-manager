@@ -103,6 +103,11 @@ export class UToolsAdapter implements PlatformAPI {
       return Promise.resolve(() => {});
   }
 
+  async onWindowFocus(callback: () => void): Promise<() => void> {
+      console.log('onWindowFocus registered', callback);
+      return Promise.resolve(() => {});
+  }
+
   // System Integration
   async setContextMenu(_enable: boolean, _locale?: string): Promise<void> {
       // Not supported in uTools
@@ -165,4 +170,5 @@ export class UToolsAdapter implements PlatformAPI {
   async gitHistory(path: string, maxCount?: number): Promise<GitCommit[]> { return this.service.gitHistory(path, maxCount); }
   async gitCommitFiles(path: string, hash: string): Promise<GitCommitFile[]> { return this.service.gitCommitFiles(path, hash); }
   async gitDiffCommitFile(path: string, hash: string, file: string): Promise<string> { return this.service.gitDiffCommitFile(path, hash, file); }
+    async gitRevertHunk(path: string, patch: string, staged?: boolean): Promise<string> { return this.service.gitRevertHunk(path, patch, staged); }
 }
