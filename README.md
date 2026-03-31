@@ -12,7 +12,7 @@
 
 通过侧边栏统一管理所有前端项目，可直接运行 `npm`/`yarn`/`pnpm` 脚本（如 `dev`、`build`），实时查看每个脚本的控制台输出。
 
-![命令运行](docs/images/命令运行.png)
+![命令运行](docs/images/command-runner.png)
 
 - 单个或**批量**添加项目（支持拖拽文件夹导入）
 - 自动识别 `package.json` 中的脚本命令，可自定义显示的脚本
@@ -22,11 +22,11 @@
 - 一键在编辑器、终端或文件管理器中打开项目
 - **项目备忘录**：为每个项目编写 Markdown 格式的笔记，支持编辑 / 预览 / 分屏模式
 
-![项目备忘录](docs/images/项目备忘录.png)
+![项目备忘录](docs/images/project-memo.png)
 
 - **项目文件管理**：关联项目中的重要文件或文件夹，支持拖拽排序、快速预览图片与文本
 
-![项目文件管理](docs/images/项目文件管理.png)
+![项目文件管理](docs/images/project-files.png)
 
 ---
 
@@ -36,7 +36,7 @@
 
 #### 文件状态
 
-![Git 管理](docs/images/git管理.png)
+![Git 管理](docs/images/git-panel.png)
 
 - 已暂存 / 未暂存 / 未跟踪 / 冲突文件列表，带状态颜色指示
 - 暂存、取消暂存、丢弃单个文件或全部文件
@@ -67,7 +67,7 @@
 
 #### 分支管理
 
-![分支管理](docs/images/git分支管理.png)
+![分支管理](docs/images/git-branch.png)
 
 - 查看本地和远程分支、标签列表
 - 切换、新建、重命名、删除（含强制删除）分支
@@ -92,7 +92,7 @@
 
 基于暂存区差异，使用任意 OpenAI 兼容接口自动生成提交信息。
 
-![AI 提交信息生成](docs/images/ai生成提交信息设置.png)
+![AI 提交信息生成](docs/images/ai-commit-settings.png)
 
 - 可配置 Base URL、API Key 和模型（支持 OpenAI、DeepSeek、通义千问等）
 - 默认提示词遵循 **Conventional Commits** 规范，正文使用中文
@@ -103,13 +103,13 @@
 
 ### Node 版本管理
 
-![Node 版本管理](docs/images/node版本管理.png)
+![Node 版本管理](docs/images/node-manager.png)
 
 可视化管理 NVM 安装的 Node.js 版本：
 
 - 安装、卸载、切换 Node.js 版本
 
-![安装 Node 版本](docs/images/node版本安装.png)
+![安装 Node 版本](docs/images/node-install.png)
 
 - 一键设置**系统默认** Node.js 版本（自动维护环境变量）
 - 检测并使用系统已安装的 Node.js（NVM 之外）
@@ -128,7 +128,7 @@
 
 ### 设置
 
-![设置页面](docs/images/设置页面.png)
+![设置页面](docs/images/settings.png)
 
 | 选项 | 说明 |
 |---|---|
