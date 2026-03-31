@@ -169,17 +169,13 @@ try {
     console.log('✅ Pushed changes and tag to remote');
 
     // ═══════════════════════════════════════════
-    // Phase 3: Build uTools & ZTools plugins
+    // Phase 3: Build uTools plugin
     // ═══════════════════════════════════════════
     console.log('\n🔨 Phase 3: Building plugins...\n');
 
     console.log('📦 Building uTools plugin...');
     run('npm run build:utools');
     console.log('✅ uTools plugin built -> dist-utools/');
-
-    console.log('📦 Building ZTools plugin...');
-    run('npm run build:ztools');
-    console.log('✅ ZTools plugin built -> dist-ztools/');
 
     // ═══════════════════════════════════════════
     // Phase 4: Publish ZTools plugin
@@ -190,33 +186,34 @@ try {
         // Build an isolated source-only publish repo to avoid committing unrelated code/artifacts
         ensureCleanDir(ztoolsPublishRepoDir);
 
+        // Source code & build config
         copyRecursive(path.join(rootDir, 'src'), path.join(ztoolsPublishRepoDir, 'src'));
         copyRecursive(path.join(rootDir, 'public'), path.join(ztoolsPublishRepoDir, 'public'));
-        copyRecursive(path.join(rootDir, 'ztools'), path.join(ztoolsPublishRepoDir, 'ztools'));
-
-        // build-plugin.sh must be at the repo ROOT so the ZTools-plugins CI finds it
-        copyRecursive(path.join(rootDir, 'ztools', 'build-plugin.sh'), path.join(ztoolsPublishRepoDir, 'build-plugin.sh'));
-        // Also copy scripts/post-build-ztools.cjs in case it's referenced by package.json build script
-        fs.mkdirSync(path.join(ztoolsPublishRepoDir, 'scripts'), { recursive: true });
-        copyRecursive(path.join(rootDir, 'scripts', 'post-build-ztools.cjs'), path.join(ztoolsPublishRepoDir, 'scripts', 'post-build-ztools.cjs'));
-
         for (const file of ['index.html', 'vite.config.ts', 'uno.config.ts', 'tsconfig.json', 'tsconfig.node.json']) {
             copyRecursive(path.join(rootDir, file), path.join(ztoolsPublishRepoDir, file));
         }
 
+        // ZTools plugin files → repo root (NOT as ztools/ subdirectory)
+        copyRecursive(path.join(rootDir, 'ztools', 'plugin.json'), path.join(ztoolsPublishRepoDir, 'plugin.json'));
+        copyRecursive(path.join(rootDir, 'ztools', 'preload.js'), path.join(ztoolsPublishRepoDir, 'preload.js'));
+        copyRecursive(path.join(rootDir, 'public', 'logo.png'), path.join(ztoolsPublishRepoDir, 'logo.png'));
+        // CI custom build script at root
+        copyRecursive(path.join(rootDir, 'ztools', 'build-plugin.sh'), path.join(ztoolsPublishRepoDir, 'build-plugin.sh'));
+
+        // package.json (keep build scripts for CI)
         const publishPackageJson = {
             ...JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8')),
             private: true,
         };
         writeJson(path.join(ztoolsPublishRepoDir, 'package.json'), publishPackageJson, 2);
 
-        // Ensure ztools plugin metadata version is synced in publish workspace
-        const publishPluginJsonPath = path.join(ztoolsPublishRepoDir, 'ztools', 'plugin.json');
+        // Sync version in plugin.json at root
+        const publishPluginJsonPath = path.join(ztoolsPublishRepoDir, 'plugin.json');
         const publishPluginJson = JSON.parse(fs.readFileSync(publishPluginJsonPath, 'utf8'));
         publishPluginJson.version = newVersion;
         writeJson(publishPluginJsonPath, publishPluginJson, 4);
 
-        // Local release record for source-only workspace
+        // Local release record
         fs.writeFileSync(
             path.join(ztoolsPublishRepoDir, '.release-source.txt'),
             `source-only publish workspace for ztools v${newVersion}\n`,
@@ -227,12 +224,13 @@ try {
         run('git add .', { cwd: ztoolsPublishRepoDir });
         run(`git commit -m "chore(release): ztools source v${newVersion}"`, { cwd: ztoolsPublishRepoDir });
 
-        run('npx @ztools-center/plugin-cli@latest publish', { cwd: path.join(ztoolsPublishRepoDir, 'ztools') });
+        // plugin-cli reads plugin.json from cwd; plugin.json is at repo root
+        run('npx @ztools-center/plugin-cli@latest publish', { cwd: ztoolsPublishRepoDir });
         console.log('✅ ZTools plugin published successfully');
     } catch (e) {
         console.error('❌ ZTools publish failed:', e.message);
         console.log('💡 You can retry manually:');
-        console.log(`   cd .ztools-publish-repo\\ztools && npx @ztools-center/plugin-cli@latest publish`);
+        console.log(`   cd .ztools-publish-repo && npx @ztools-center/plugin-cli@latest publish`);
     }
 
     // ═══════════════════════════════════════════

@@ -46,7 +46,7 @@ function parseAnsi(text: string) {
         if (urlWithAnsi) {
             const cleanUrl = urlWithAnsi.replace(/\x1b\[[0-9;]*[mK]/g, '');
             const displayHtml = ansiUp.ansi_to_html(urlWithAnsi);
-            return `<span class="log-link text-blue-400 hover:underline cursor-pointer" data-url="${cleanUrl}" title="Ctrl + Click to open">${displayHtml}</span>`;
+            return `<span class="log-link text-blue-400 hover:underline cursor-pointer" data-url="${cleanUrl.replace(/"/g, '&quot;')}" title="Ctrl + Click to open">${displayHtml}</span>`;
         }
         return match;
     });

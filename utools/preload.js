@@ -410,7 +410,7 @@ window.services = {
         let nodeDir = '';
 
         // Handle Node version PATH modification
-        if (nodePath) {
+        if (nodePath && nodePath !== 'System Default') {
             try {
                 // If it's a file (e.g. node.exe), get its directory
                 // We shouldn't rely on extension as it could be anything or nothing on linux
