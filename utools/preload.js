@@ -97,7 +97,7 @@ window.services = {
         try {
             return await runCmd('node -e "console.log(process.execPath)"');
         } catch (e) {
-            return 'System Default';
+            return null;
         }
     },
     
