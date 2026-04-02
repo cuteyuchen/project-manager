@@ -527,9 +527,13 @@ async function testAiConnection() {
       </div>
     </div>
     <div class="flex-1 overflow-y-auto p-5">
-      <div class="max-w-7xl mx-auto xl:grid xl:grid-cols-[minmax(360px,0.9fr)_minmax(0,1.25fr)] gap-4 items-start">
+        <div
+        :class="isPlugin
+          ? 'max-w-5xl mx-auto space-y-4'
+          : 'max-w-7xl mx-auto xl:grid xl:grid-cols-[minmax(360px,0.9fr)_minmax(0,1.25fr)] gap-4 items-start'"
+      >
         <div class="space-y-4 min-w-0">
-        <el-card class="settings-card">
+        <el-card v-if="!isPlugin" class="settings-card">
           <template #header><div class="section-title"><div class="i-mdi-rocket-launch-outline text-emerald-500 text-lg" />{{ t('settings.systemIntegration') }}</div></template>
           <div class="space-y-4">
             <div v-if="!isPlugin && contextMenuSupported" class="setting-row">
@@ -604,7 +608,7 @@ async function testAiConnection() {
 
         </div>
 
-        <div class="space-y-4 min-w-0 mt-4 xl:mt-0">
+         <div :class="isPlugin ? 'space-y-4 min-w-0' : 'space-y-4 min-w-0 mt-4 xl:mt-0'">
         <el-card class="settings-card">
           <template #header><div class="section-title"><div class="i-mdi-application-brackets text-blue-500 text-lg" />{{ t('settings.editorsTerminal') }}</div></template>
           <div class="space-y-5">
