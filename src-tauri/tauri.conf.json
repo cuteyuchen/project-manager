@@ -14,9 +14,9 @@
       {
         "label": "main",
         "title": "Project Manager",
-        "width": 1280,
-        "height": 800,
-        "minWidth": 1024,
+        "width": 930,
+        "height": 730,
+        "minWidth": 800,
         "minHeight": 680,
         "decorations": false
       }

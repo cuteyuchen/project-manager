@@ -913,6 +913,49 @@ pub fn git_history(
     Ok(commits)
 }
 
+#[tauri::command]
+pub fn git_commit_detail(path: String, hash: String) -> Result<GitCommit, String> {
+    let output = run_git_relaxed(
+        &path,
+        &[
+            "show",
+            "-s",
+            "--format=%H%x1f%h%x1f%an%x1f%ae%x1f%cn%x1f%aI%x1f%P%x1f%D%x1e%B",
+            &hash,
+        ],
+    )?;
+
+    let Some((meta, body)) = output.split_once('\u{1e}') else {
+        return Err("Failed to parse commit detail".to_string());
+    };
+
+    let parts: Vec<&str> = meta.trim_end().split('\u{1f}').collect();
+    if parts.len() < 8 {
+        return Err("Failed to parse commit detail metadata".to_string());
+    }
+
+    Ok(GitCommit {
+        hash: parts[0].to_string(),
+        short_hash: parts[1].to_string(),
+        author: parts[2].to_string(),
+        email: parts[3].to_string(),
+        committer: parts[4].to_string(),
+        date: parts[5].to_string(),
+        message: body.trim_end_matches('\n').to_string(),
+        parents: if parts[6].trim().is_empty() {
+            vec![]
+        } else {
+            parts[6].split(' ').map(|s| s.to_string()).collect()
+        },
+        refs: if parts[7].trim().is_empty() {
+            vec![]
+        } else {
+            parts[7].split(", ").map(|s| s.trim().to_string()).collect()
+        },
+        graph_prefix: None,
+    })
+}
+
 // ─── Commit File List ─────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
