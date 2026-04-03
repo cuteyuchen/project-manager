@@ -8,20 +8,142 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
+#[cfg(target_os = "windows")]
+use std::os::windows::io::AsRawHandle;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::System::JobObjects::{
+    AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+    SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+};
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+#[cfg(target_os = "windows")]
+struct WindowsJobObject {
+    handle: HANDLE,
+}
+
+#[cfg(target_os = "windows")]
+unsafe impl Send for WindowsJobObject {}
+#[cfg(target_os = "windows")]
+unsafe impl Sync for WindowsJobObject {}
+
+#[cfg(target_os = "windows")]
+impl WindowsJobObject {
+    fn new() -> Result<Self, String> {
+        let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        if handle.is_null() {
+            return Err(format!("Failed to create Windows job object: {}", std::io::Error::last_os_error()));
+        }
+
+        let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+
+        let result = unsafe {
+            SetInformationJobObject(
+                handle,
+                JobObjectExtendedLimitInformation,
+                (&info as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        };
+
+        if result == 0 {
+            unsafe { CloseHandle(handle) };
+            return Err(format!(
+                "Failed to configure Windows job object: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+
+        Ok(Self { handle })
+    }
+
+    fn assign_child(&self, child: &std::process::Child) -> Result<(), String> {
+        let process_handle = child.as_raw_handle() as HANDLE;
+        let result = unsafe { AssignProcessToJobObject(self.handle, process_handle) };
+        if result == 0 {
+            return Err(format!(
+                "Failed to assign child process to Windows job object: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for WindowsJobObject {
+    fn drop(&mut self) {
+        if !self.handle.is_null() {
+            unsafe { CloseHandle(self.handle) };
+        }
+    }
+}
+
 pub struct ProcessState {
     pub processes: Arc<Mutex<HashMap<String, u32>>>,
+    #[cfg(target_os = "windows")]
+    job_object: Option<WindowsJobObject>,
 }
 
 impl ProcessState {
     pub fn new() -> Self {
         Self {
             processes: Arc::new(Mutex::new(HashMap::new())),
+            #[cfg(target_os = "windows")]
+            job_object: WindowsJobObject::new()
+                .map(Some)
+                .unwrap_or_else(|error| {
+                    eprintln!("{}", error);
+                    None
+                }),
         }
     }
+}
+
+#[cfg(unix)]
+fn spawn_parent_watchdog(child_pid: u32) {
+    let parent_pid = std::process::id();
+    let script = format!(
+        "parent={parent_pid}; target={child_pid}; \
+         while kill -0 \"$parent\" 2>/dev/null; do sleep 1; done; \
+         kill -TERM -- -$target 2>/dev/null || kill -TERM $target 2>/dev/null; \
+         sleep 2; \
+         kill -KILL -- -$target 2>/dev/null || kill -KILL $target 2>/dev/null"
+    );
+
+    let _ = Command::new("sh")
+        .arg("-c")
+        .arg(script)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .stdin(Stdio::null())
+        .spawn();
+}
+
+#[cfg(unix)]
+fn terminate_process_tree(pid: u32) {
+    let script = format!(
+        "target={pid}; \
+         kill -TERM -- -$target 2>/dev/null || kill -TERM $target 2>/dev/null; \
+         sleep 2; \
+         kill -KILL -- -$target 2>/dev/null || kill -KILL $target 2>/dev/null"
+    );
+
+    let _ = Command::new("sh")
+        .arg("-c")
+        .arg(script)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .stdin(Stdio::null())
+        .spawn();
 }
 
 pub fn cleanup_processes(state: &ProcessState) {
@@ -41,9 +163,7 @@ pub fn cleanup_processes(state: &ProcessState) {
             }
             #[cfg(not(target_os = "windows"))]
             {
-                 let _ = Command::new("kill")
-                    .arg(pid.to_string())
-                    .spawn();
+                terminate_process_tree(*pid);
             }
         }
         lock.clear();
@@ -359,6 +479,9 @@ pub fn run_project_command(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    #[cfg(unix)]
+    command_builder.process_group(0);
+
     // Emit initial log
     let _ = app.emit(
         "project-output",
@@ -374,7 +497,18 @@ pub fn run_project_command(
     }
 
     let mut child = command_builder.spawn().map_err(|e| e.to_string())?;
+
+    #[cfg(target_os = "windows")]
+    if let Some(job_object) = &state.job_object {
+        if let Err(error) = job_object.assign_child(&child) {
+            eprintln!("{}", error);
+        }
+    }
+
     let pid = child.id();
+
+    #[cfg(unix)]
+    spawn_parent_watchdog(pid);
 
     processes_lock.insert(id.clone(), pid);
     drop(processes_lock);
@@ -475,9 +609,7 @@ pub fn stop_project_command(state: State<'_, ProcessState>, id: String) -> Resul
         }
         #[cfg(not(target_os = "windows"))]
         {
-            let _ = Command::new("kill")
-                .arg(pid.to_string())
-                .spawn();
+            terminate_process_tree(*pid);
         }
     }
     Ok(())
@@ -555,6 +687,9 @@ pub fn run_custom_command(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    #[cfg(unix)]
+    command_builder.process_group(0);
+
     // Emit initial log
     let _ = app.emit(
         "project-output",
@@ -570,7 +705,18 @@ pub fn run_custom_command(
     }
 
     let mut child = command_builder.spawn().map_err(|e| e.to_string())?;
+
+    #[cfg(target_os = "windows")]
+    if let Some(job_object) = &state.job_object {
+        if let Err(error) = job_object.assign_child(&child) {
+            eprintln!("{}", error);
+        }
+    }
+
     let pid = child.id();
+
+    #[cfg(unix)]
+    spawn_parent_watchdog(pid);
 
     processes_lock.insert(id.clone(), pid);
     drop(processes_lock);

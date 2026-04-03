@@ -4,6 +4,7 @@ export default {
     add: '添加',
     refresh: '刷新',
     cancel: '取消',
+    close: '关闭',
     save: '保存',
     delete: '删除',
     edit: '编辑',
@@ -231,6 +232,7 @@ export default {
     interactionHint: '双击优先使用应用内快速预览，不支持时自动调用系统打开；更多操作可使用右键菜单',
     noResults: '没有匹配的文件',
     noResultsHint: '可以尝试搜索名称、路径或切换目录',
+    backToTop: '返回顶部',
   },
   memo: {
     title: '项目备忘录',

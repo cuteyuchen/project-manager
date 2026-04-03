@@ -22,6 +22,86 @@ const processes = new Map();
 let outputCallback = null;
 let exitCallback = null;
 
+function terminateProcessTree(child, { synchronous = false } = {}) {
+    if (!child || !child.pid) return;
+
+    if (process.platform === 'win32') {
+        const command = `taskkill /pid ${child.pid} /T /F`;
+        try {
+            if (synchronous) {
+                execSync(command, { stdio: 'ignore', windowsHide: true });
+            } else {
+                exec(command, () => {});
+            }
+            return;
+        } catch (_) {}
+    }
+
+    try {
+        process.kill(-child.pid, 'SIGTERM');
+    } catch (_) {
+        try { child.kill('SIGTERM'); } catch (_) {}
+    }
+
+    const escalate = () => {
+        try {
+            process.kill(-child.pid, 'SIGKILL');
+        } catch (_) {
+            try { child.kill('SIGKILL'); } catch (_) {}
+        }
+    };
+
+    if (synchronous) {
+        escalate();
+        return;
+    }
+
+    const timer = setTimeout(escalate, 1500);
+    if (typeof timer.unref === 'function') timer.unref();
+}
+
+function spawnParentDeathWatch(child) {
+    if (!child || !child.pid) return;
+
+    const parentPid = process.pid;
+    try {
+        if (process.platform === 'win32') {
+            const watcher = spawn('powershell', [
+                '-NoProfile',
+                '-WindowStyle', 'Hidden',
+                '-Command',
+                `while (Get-Process -Id ${parentPid} -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 1000 }; taskkill /PID ${child.pid} /T /F`
+            ], {
+                detached: true,
+                stdio: 'ignore',
+                windowsHide: true,
+            });
+            watcher.unref();
+            return;
+        }
+
+        const watcher = spawn('sh', [
+            '-c',
+            `parent=${parentPid}; target=${child.pid}; while kill -0 "$parent" 2>/dev/null; do sleep 1; done; kill -TERM -- -$target 2>/dev/null || kill -TERM $target 2>/dev/null; sleep 2; kill -KILL -- -$target 2>/dev/null || kill -KILL $target 2>/dev/null`
+        ], {
+            detached: true,
+            stdio: 'ignore',
+        });
+        watcher.unref();
+    } catch (error) {
+        console.error('[Runner] Failed to start parent death watch:', error);
+    }
+}
+
+function cleanupAllProcesses({ synchronous = false } = {}) {
+    for (const [, child] of processes) {
+        try {
+            terminateProcessTree(child, { synchronous });
+        } catch (_) {}
+    }
+    processes.clear();
+}
+
 function decodeTextBuffer(buffer) {
     if (!buffer || buffer.length === 0) return '';
 
@@ -51,16 +131,32 @@ const platform = typeof ztools !== 'undefined' ? ztools : utools;
 
 // Cleanup on exit
 platform.onPluginOut(() => {
-    for (const [id, child] of processes) {
-        try {
-            if (process.platform === 'win32') {
-                exec(`taskkill /pid ${child.pid} /T /F`);
-            } else {
-                child.kill();
-            }
-        } catch (e) {}
-    }
-    processes.clear();
+    cleanupAllProcesses();
+});
+
+process.once('beforeExit', () => cleanupAllProcesses({ synchronous: true }));
+process.once('exit', () => cleanupAllProcesses({ synchronous: true }));
+process.once('SIGINT', () => {
+    cleanupAllProcesses({ synchronous: true });
+    process.exit(130);
+});
+process.once('SIGTERM', () => {
+    cleanupAllProcesses({ synchronous: true });
+    process.exit(143);
+});
+process.once('SIGHUP', () => {
+    cleanupAllProcesses({ synchronous: true });
+    process.exit(129);
+});
+process.once('uncaughtException', (error) => {
+    console.error(error);
+    cleanupAllProcesses({ synchronous: true });
+    process.exit(1);
+});
+process.once('unhandledRejection', (reason) => {
+    console.error(reason);
+    cleanupAllProcesses({ synchronous: true });
+    process.exit(1);
 });
 
 window.services = {
@@ -482,8 +578,12 @@ window.services = {
             const child = spawn(pm, ['run', script], {
                 cwd: projectPath,
                 shell: true,
-                env: env
+                env: env,
+                detached: process.platform !== 'win32',
+                windowsHide: process.platform === 'win32',
             });
+
+            spawnParentDeathWatch(child);
             
             processes.set(id, child);
             
@@ -528,17 +628,7 @@ window.services = {
     stopProjectCommand: async (id) => {
         const child = processes.get(id);
         if (child) {
-            if (process.platform === 'win32') {
-                try {
-                    // Kill process tree on Windows
-                    exec(`taskkill /pid ${child.pid} /T /F`);
-                } catch (e) {
-                    child.kill(); 
-                }
-            } else {
-                // Unix
-                child.kill(); 
-            }
+            terminateProcessTree(child);
             processes.delete(id);
         }
     },
@@ -549,8 +639,12 @@ window.services = {
         const child = spawn(command, {
             cwd: projectPath,
             shell: true,
-            env: { ...process.env }
+            env: { ...process.env },
+            detached: process.platform !== 'win32',
+            windowsHide: process.platform === 'win32',
         });
+
+        spawnParentDeathWatch(child);
 
         processes.set(id, child);
 

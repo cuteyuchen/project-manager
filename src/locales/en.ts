@@ -4,6 +4,7 @@ export default {
     add: 'Add',
     refresh: 'Refresh',
     cancel: 'Cancel',
+    close: 'Close',
     save: 'Save',
     delete: 'Delete',
     edit: 'Edit',
@@ -231,6 +232,7 @@ export default {
     interactionHint: 'Double-click uses built-in quick preview first, then falls back to the system app; use right-click for more actions',
     noResults: 'No matching files',
     noResultsHint: 'Try a different keyword or switch folders',
+    backToTop: 'Back to Top',
   },
   memo: {
     title: 'Project Memo',

@@ -197,13 +197,18 @@ function removeCustomCommand(index: number) {
     form.value.customCommands.splice(index, 1);
 }
 
+function isScriptVisible(script: string): boolean {
+  return (form.value.visibleScripts || []).includes(script);
+}
+
 function toggleVisibleScript(script: string) {
-  if (form.value.visibleScripts.includes(script)) {
-    form.value.visibleScripts = form.value.visibleScripts.filter(item => item !== script);
+  const current = form.value.visibleScripts || [];
+  if (current.includes(script)) {
+    form.value.visibleScripts = current.filter(item => item !== script);
     return;
   }
 
-  form.value.visibleScripts = [...form.value.visibleScripts, script];
+  form.value.visibleScripts = [...current, script];
 }
 
 function submit() {
@@ -307,14 +312,14 @@ function submit() {
                             type="button"
                             @click="toggleVisibleScript(script)"
                             class="script-toggle"
-                            :class="form.visibleScripts.includes(script)
+                            :class="isScriptVisible(script)
                                 ? 'script-toggle-active'
                                 : 'script-toggle-inactive'"
                         >
                             <span class="truncate font-mono text-[12px]">{{ script }}</span>
                             <div
                                 class="text-sm transition-transform duration-200"
-                                :class="form.visibleScripts.includes(script)
+                                :class="isScriptVisible(script)
                                     ? 'i-mdi-checkbox-marked-circle text-blue-500 scale-100'
                                     : 'i-mdi-checkbox-blank-circle-outline text-slate-300 dark:text-slate-500 scale-90'"
                             />

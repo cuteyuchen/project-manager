@@ -74,8 +74,7 @@ onMounted(async () => {
   if (!isPlugin) {
     contextMenuSupported.value = await api.isContextMenuSupported();
     if (contextMenuSupported.value) contextMenuEnabled.value = await api.checkContextMenu();
-    const autostart = await import('@tauri-apps/plugin-autostart');
-    autoLaunchEnabled.value = await autostart.isEnabled();
+    await refreshAutoLaunchState();
   }
   window.addEventListener('manual-check-update-result', handleManualUpdateResult as EventListener);
 });
@@ -99,10 +98,21 @@ async function toggleAutoLaunch(val: boolean) {
     const autostart = await import('@tauri-apps/plugin-autostart');
     if (val) await autostart.enable();
     else await autostart.disable();
+    await refreshAutoLaunchState();
     ElMessage.success(t('common.success'));
   } catch (error) {
     ElMessage.error(`${t('common.error')}: ${error}`);
     autoLaunchEnabled.value = !val;
+  }
+}
+
+async function refreshAutoLaunchState() {
+  try {
+    const autostart = await import('@tauri-apps/plugin-autostart');
+    autoLaunchEnabled.value = await autostart.isEnabled();
+  } catch (error) {
+    console.error('Failed to read auto-launch state:', error);
+    autoLaunchEnabled.value = false;
   }
 }
 
@@ -318,6 +328,20 @@ function sortNodes(nodes: NodeVersion[]) {
   });
 }
 
+function normalizeDefaultEditorId(settings: Settings): Settings {
+  const editors = settings.editors || [];
+  if (!editors.length) {
+    settings.defaultEditorId = undefined;
+    return settings;
+  }
+
+  if (!settings.defaultEditorId || !editors.some(editor => editor.id === settings.defaultEditorId)) {
+    settings.defaultEditorId = editors[0].id;
+  }
+
+  return settings;
+}
+
 function buildImportPlan(payload: any): ImportPlan {
   const projectFields = [
     { key: 'name', label: t('project.name') },
@@ -434,7 +458,7 @@ function applyImportPlan() {
   plan.settingsConflicts.forEach((conflict) => {
     if (conflict.choice === 'incoming') (nextSettings as any)[conflict.key] = deepClone(conflict.incomingValue);
   });
-  settingsStore.settings = nextSettings;
+  settingsStore.settings = normalizeDefaultEditorId(nextSettings);
 
   const systemNodes = nodeStore.versions.filter(item => item.source !== 'custom');
   const customNodes = deepClone(toRaw(nodeStore.versions.filter(item => item.source === 'custom')));

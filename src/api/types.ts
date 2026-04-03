@@ -73,6 +73,7 @@ export interface PlatformAPI {
     windowMaximize(): Promise<void>;
     windowUnmaximize(): Promise<void>;
     windowClose(): Promise<void>;
+    exitApp(): Promise<void>;
     windowIsMaximized(): Promise<boolean>;
     windowSetAlwaysOnTop(always: boolean): Promise<void>;
     onWindowResize(callback: () => void): Promise<() => void>;

@@ -10,7 +10,7 @@ import Settings from './views/Settings.vue';
 import NodeManager from './views/NodeManager.vue';
 import TitleBar from './components/TitleBar.vue';
 import UpdateProgress from './components/UpdateProgress.vue';
-import { loadData, saveData } from './utils/persistence';
+import { loadData, scheduleSaveData, flushPendingSave } from './utils/persistence';
 import { useProjectStore } from './stores/project';
 import { useSettingsStore } from './stores/settings';
 import { useNodeStore } from './stores/node';
@@ -41,6 +41,7 @@ let pendingCloseResolver: ((action: 'tray' | 'exit' | 'cancel') => void) | null 
 let unlistenCloseRequested: UnlistenFn | null = null;
 let allowWindowClose = false;
 let traySetupToken = 0;
+let exiting = false;
 
 
 async function handleImportProject(path: string) {
@@ -279,6 +280,7 @@ function getCloseAction() {
 }
 
 async function showMainWindow() {
+  useGitStore().setColdStorage(false);
   const { getCurrentWindow } = await import('@tauri-apps/api/window');
   const currentWindow = getCurrentWindow();
   await currentWindow.show();
@@ -287,6 +289,7 @@ async function showMainWindow() {
 }
 
 async function hideToTray() {
+  useGitStore().setColdStorage(true);
   const { getCurrentWindow } = await import('@tauri-apps/api/window');
   await getCurrentWindow().hide();
 }
@@ -298,9 +301,16 @@ async function destroyTray() {
 }
 
 async function exitApp() {
-  allowWindowClose = true;
-  const { getCurrentWindow } = await import('@tauri-apps/api/window');
-  await getCurrentWindow().close();
+  if (exiting) return;
+  exiting = true;
+
+  try {
+    useGitStore().setColdStorage(true);
+    await destroyTray();
+    await api.exitApp();
+  } finally {
+    exiting = false;
+  }
 }
 
 function promptCloseAction(): Promise<'tray' | 'exit' | 'cancel'> {
@@ -394,10 +404,12 @@ async function setupCloseRequestedHandler() {
 
   const { getCurrentWindow } = await import('@tauri-apps/api/window');
   unlistenCloseRequested = await getCurrentWindow().onCloseRequested(async (event) => {
-    if (allowWindowClose) return;
+    if (allowWindowClose || exiting) return;
 
     const closeAction = getCloseAction();
     if (closeAction === 'exit') {
+      event.preventDefault();
+      await exitApp();
       return;
     }
 
@@ -418,20 +430,7 @@ async function setupCloseRequestedHandler() {
 onMounted(async () => {
   await loadData();
   loaded.value = true;
-  
-  // Auto refresh projects
-  useProjectStore().refreshAll();
 
-  // Auto refresh git status for the active project on startup
-  const projectStore = useProjectStore();
-  const gitStore = useGitStore();
-  const activeProject = projectStore.projects.find(p => p.id === projectStore.activeProjectId);
-  if (activeProject) {
-    gitStore.checkGitRepo(activeProject.id, activeProject.path).then(isRepo => {
-      if (isRepo) gitStore.refreshSummaryAndStatus(activeProject.id, activeProject.path);
-    });
-  }
-  
   // Handle Startup Args / uTools/ZTools Plugin Enter
   if (isPlugin) {
     const pluginApi = (window as any).ztools || (window as any).utools;
@@ -549,6 +548,7 @@ onUnmounted(() => {
   if (manualUpdateCheckListener) manualUpdateCheckListener();
   if (unlistenCloseRequested) unlistenCloseRequested();
   void destroyTray();
+  void flushPendingSave();
 });
 
 // Watch stores and save
@@ -556,12 +556,8 @@ const projectStore = useProjectStore();
 const settingsStore = useSettingsStore();
 const nodeStore = useNodeStore();
 
-let saveTimer: any = null;
 const triggerSave = () => {
-  if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    saveData();
-  }, 1000);
+  scheduleSaveData();
 };
 
 watch(() => projectStore.projects, triggerSave, { deep: true });

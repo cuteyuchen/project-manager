@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onUnmounted } from 'vue';
+import { ref, computed, watch, onActivated, onDeactivated, onUnmounted } from 'vue';
 import { useProjectStore } from '../../stores/project';
 import { useGitStore } from '../../stores/git';
 import { useI18n } from 'vue-i18n';
@@ -44,6 +44,8 @@ let stagedDragStart = 0;
 let stagedRatioStart = 0;
 const isDraggingStagedSplit = ref(false);
 const statusPanelRef = ref<HTMLElement | null>(null);
+const isViewActive = ref(false);
+let refreshTimer: number | null = null;
 
 function onStagedSplitMouseDown(e: MouseEvent) {
   e.preventDefault();
@@ -74,41 +76,87 @@ function onStagedSplitMouseUp() {
   document.body.style.userSelect = '';
 }
 
-// Watch project changes — refresh and clear stale diff
-watch(activeProject, async (newProject, oldProject) => {
+function clearScheduledRefresh() {
+  if (refreshTimer !== null) {
+    window.clearTimeout(refreshTimer);
+    refreshTimer = null;
+  }
+}
+
+function scheduleRefresh(options: { force?: boolean; includeHistory?: boolean; delayMs?: number } = {}) {
+  clearScheduledRefresh();
+
+  const delayMs = options.delayMs ?? 120;
+  refreshTimer = window.setTimeout(async () => {
+    refreshTimer = null;
+
+    if (!isViewActive.value || gitStore.coldStorage || !activeProject.value) {
+      return;
+    }
+
+    const project = activeProject.value;
+    const isRepo = await gitStore.checkGitRepo(project.id, project.path, { force: options.force });
+    if (!isRepo) return;
+
+    await gitStore.ensureSummaryAndStatus(project.id, project.path, { force: options.force });
+    if (options.includeHistory) {
+      await gitStore.ensureHistory(project.id, project.path, { force: options.force });
+    }
+  }, delayMs);
+}
+
+function enterActiveMode() {
+  isViewActive.value = true;
+  gitStore.setColdStorage(false);
+  scheduleRefresh({
+    includeHistory: activeTab.value === 'history',
+    delayMs: 60,
+  });
+}
+
+function enterColdStorage() {
+  isViewActive.value = false;
+  clearScheduledRefresh();
+  gitStore.setColdStorage(true);
+}
+
+// Watch project changes — refresh lazily after the selection UI settles
+watch(activeProject, (newProject, oldProject) => {
   if (oldProject?.id !== newProject?.id) {
     gitStore.clearDiff();
   }
-  if (newProject) {
-    const isRepo = await gitStore.checkGitRepo(newProject.id, newProject.path);
-    if (isRepo) {
-      await gitStore.refreshSummaryAndStatus(newProject.id, newProject.path);
-      // Also refresh history so it's ready when user switches to history tab
-      await gitStore.refreshHistory(newProject.id, newProject.path);
-    }
-  }
+  if (!newProject || !isViewActive.value) return;
+  scheduleRefresh({
+    includeHistory: activeTab.value === 'history',
+    delayMs: 140,
+  });
 }, { immediate: true });
 
 // Auto-refresh when window regains focus (e.g. after alt-tab)
 let unlistenFocus: (() => void) | null = null;
 api.onWindowFocus(() => {
-  if (!activeProject.value) return;
-  const p = activeProject.value;
-  gitStore.checkGitRepo(p.id, p.path).then(isRepo => {
-    if (!isRepo) return;
-    gitStore.refreshSummaryAndStatus(p.id, p.path);
-    gitStore.refreshHistory(p.id, p.path);
+  if (!isViewActive.value || !activeProject.value || gitStore.coldStorage) return;
+  scheduleRefresh({
+    includeHistory: activeTab.value === 'history',
+    delayMs: 180,
   });
 }).then(unlisten => { unlistenFocus = unlisten; });
 onUnmounted(() => {
+  clearScheduledRefresh();
   unlistenFocus?.();
 });
 
-// Clear diff when switching tabs; lazy-load history
+onActivated(enterActiveMode);
+onDeactivated(enterColdStorage);
+
+// Clear diff when switching tabs; history is loaded only when the tab is used
 watch(activeTab, (tab) => {
   gitStore.clearDiff();
-  if (tab === 'history' && activeProject.value) {
-    gitStore.refreshHistory(activeProject.value.id, activeProject.value.path);
+  if (tab === 'history' && activeProject.value && isViewActive.value) {
+    scheduleRefresh({
+      includeHistory: true,
+      delayMs: 0,
+    });
   }
 });
 
@@ -172,6 +220,12 @@ const selectedHistoryParent = computed(() => {
   if (!selectedHistoryCommit.value) return '-';
   return selectedHistoryCommit.value.parents[0] || '-';
 });
+
+function closeHistoryDetail() {
+  if (!activeProject.value) return;
+  gitStore.selectedCommitHash[activeProject.value.id] = '';
+  gitStore.clearDiff();
+}
 
 async function copyText(value: string, successMessage: string) {
   try {
@@ -299,16 +353,21 @@ async function copyText(value: string, successMessage: string) {
               class="px-3 py-2 border-b border-slate-200/40 dark:border-slate-700/20 shrink-0 text-[11px] space-y-2 overflow-auto select-text"
               :style="{ height: historyDetailPane.size.value + 'px' }"
             >
+              <div class="flex items-center justify-between gap-2 pb-1 border-b border-slate-200/40 dark:border-slate-700/20">
+                <span class="text-[10px] font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                  {{ t('git.commitDetail') }}
+                </span>
+                <button
+                  class="shrink-0 rounded px-1.5 py-0.5 text-[10px] bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-300 transition-colors"
+                  @click="closeHistoryDetail"
+                >
+                  {{ t('common.close') }}
+                </button>
+              </div>
               <div class="leading-relaxed text-slate-600 dark:text-slate-300">
                 <div class="flex items-center gap-2">
                   <span class="text-slate-400 dark:text-slate-500">提交：</span>
                   <span class="font-mono break-all flex-1">{{ selectedHistoryCommit.hash }} [{{ selectedHistoryCommit.short_hash }}]</span>
-                  <button
-                    class="shrink-0 rounded px-1.5 py-0.5 text-[10px] bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-300 transition-colors"
-                    @click="copyText(selectedHistoryCommit.hash, t('git.copyHashSuccess'))"
-                  >
-                    {{ t('git.copyHash') }}
-                  </button>
                 </div>
               </div>
               <div class="leading-relaxed text-slate-600 dark:text-slate-300">

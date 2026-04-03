@@ -37,6 +37,9 @@ const contextMenuRef = ref<HTMLElement | null>(null);
 // File preview
 const previewVisible = ref(false);
 const previewFile = ref<{ name: string; path: string; content: string; type: 'image' | 'text' | 'unsupported' } | null>(null);
+const fileListContainerRef = ref<HTMLElement | null>(null);
+const showBackToTop = ref(false);
+const BACK_TO_TOP_THRESHOLD = 480;
 
 // Breadcrumb path parts
 const breadcrumbs = computed(() => {
@@ -66,6 +69,19 @@ const filteredDirContents = computed(() => {
     if (!normalizedSearchQuery.value) return dirContents.value;
     return dirContents.value.filter(entry => matchesSearchQuery(entry.name));
 });
+
+function updateBackToTopVisibility() {
+    const container = fileListContainerRef.value;
+    showBackToTop.value = !!container && container.scrollTop > BACK_TO_TOP_THRESHOLD;
+}
+
+function handleFileListScroll() {
+    updateBackToTopVisibility();
+}
+
+function scrollToTop() {
+    fileListContainerRef.value?.scrollTo({ top: 0, behavior: 'smooth' });
+}
 
 function joinPath(...parts: string[]): string {
     return parts.join('/').replace(/\\/g, '/');
@@ -236,6 +252,27 @@ async function refreshSearchResults() {
 watch([normalizedSearchQuery, projectFiles], () => {
     void refreshSearchResults();
 }, { immediate: true, deep: true });
+
+watch(
+    () => [
+        props.project.id,
+        browsingEntry.value?.id || '',
+        currentFullPath.value,
+        viewMode.value,
+        hasSearchQuery.value,
+        projectFiles.value.length,
+        filteredProjectFiles.value.length,
+        filteredDirContents.value.length,
+        searchResults.value.length,
+        loadingDir.value,
+    ],
+    () => {
+        void nextTick(() => {
+            updateBackToTopVisibility();
+        });
+    },
+    { immediate: true },
+);
 
 function openSearchResult(result: IndexEntry) {
     if (!result.isDirectory) {
@@ -604,7 +641,12 @@ function getFileIcon(entry: { name: string; isDirectory: boolean }) {
         </div>
 
         <!-- File List Content -->
-        <div class="flex-1 overflow-y-auto px-2 py-1.5 custom-scrollbar">
+        <div class="relative flex-1 min-h-0 px-3 pb-3 sm:px-4">
+            <div
+                ref="fileListContainerRef"
+                class="h-full overflow-y-auto rounded-2xl px-2 py-1.5 sm:px-3 custom-scrollbar"
+                @scroll="handleFileListScroll"
+            >
             <!-- Deep search results -->
             <template v-if="hasSearchQuery">
                 <div v-if="searchIndexLoading" class="flex items-center justify-center h-full text-slate-400">
@@ -740,6 +782,17 @@ function getFileIcon(entry: { name: string; isDirectory: boolean }) {
                     </div>
                 </template>
             </template>
+            </div>
+
+            <button
+                v-if="showBackToTop"
+                :title="t('fileManager.backToTop')"
+                class="absolute bottom-5 right-5 z-10 inline-flex items-center gap-1.5 rounded-full border border-slate-200/80 bg-white/88 px-3 py-2 text-xs font-medium text-slate-600 shadow-lg shadow-slate-200/40 backdrop-blur-md transition-all duration-200 hover:-translate-y-0.5 hover:border-blue-200 hover:text-blue-600 dark:border-slate-700/70 dark:bg-slate-900/82 dark:text-slate-200 dark:shadow-black/20 dark:hover:border-blue-400/40 dark:hover:text-blue-300"
+                @click="scrollToTop"
+            >
+                <div class="i-mdi-arrow-up text-sm" />
+                <span>{{ t('fileManager.backToTop') }}</span>
+            </button>
         </div>
 
         <!-- Context Menu -->

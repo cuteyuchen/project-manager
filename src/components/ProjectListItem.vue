@@ -24,17 +24,7 @@ const displayScripts = computed(() => {
 });
 
 const isRunning = computed(() => {
-    if (props.project.scripts?.length) {
-        if (props.project.scripts.some(s => store.runningStatus[`${props.project.id}:${s}`])) {
-            return true;
-        }
-    }
-    if (props.project.customCommands?.length) {
-        if (props.project.customCommands.some(c => store.runningStatus[`${props.project.id}:${c.id}`])) {
-            return true;
-        }
-    }
-    return false;
+    return (store.runningProjectCount[props.project.id] || 0) > 0;
 });
 
 function handleClick() {
@@ -118,7 +108,7 @@ async function openFolder() {
         class="p-3.5 rounded-lg cursor-pointer transition-all duration-200 border group relative overflow-hidden mb-2" :class="isActive
             ? 'bg-blue-50/80 dark:bg-blue-500/8 border-blue-200/90 dark:border-blue-500/20 shadow-sm'
             : 'bg-white dark:bg-slate-800/30 border-slate-200/95 dark:border-slate-700/20 shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:border-slate-300/95 dark:hover:border-slate-600/30 hover:shadow-sm'">
-        <div class="project-actions absolute right-1.5 top-1.5 opacity-0 group-hover:opacity-100 transition-opacity duration-150 z-20 flex gap-1 bg-white/92 dark:bg-slate-900/88 backdrop-blur-xl rounded-xl px-1 py-1 shadow-[0_10px_24px_rgba(15,23,42,0.12)]">
+        <div class="project-actions absolute right-0 top-0 opacity-0 group-hover:opacity-100 transition-opacity duration-150 z-20 flex bg-white/92 dark:bg-slate-900/88 backdrop-blur-xl rounded-xl px-0.5 py-0.5 shadow-[0_10px_24px_rgba(15,23,42,0.12)]">
             <button @click.stop="handleTogglePin"
                 class="project-action-btn transition-colors duration-150"
                 :class="project.pinned ? 'text-amber-500' : 'text-slate-400 hover:text-amber-500'"
@@ -229,7 +219,7 @@ async function openFolder() {
   align-items: center;
   justify-content: center;
   width: 26px;
-  height: 26px;
+  height: 20px;
   border: none;
   border-radius: 8px;
   background: transparent;

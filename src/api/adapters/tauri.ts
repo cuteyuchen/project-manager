@@ -167,6 +167,10 @@ export class TauriAdapter implements PlatformAPI {
         return this.appWindow.close();
     }
 
+    async exitApp(): Promise<void> {
+        return invoke('exit_app');
+    }
+
     async windowIsMaximized(): Promise<boolean> {
         return this.appWindow.isMaximized();
     }

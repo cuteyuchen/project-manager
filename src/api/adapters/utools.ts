@@ -73,7 +73,9 @@ export class UToolsAdapter implements PlatformAPI {
 
   // Window
   async windowMinimize(): Promise<void> {
-      // utools.hideMainWindow();
+      if ((this.service as any).windowMinimize) {
+          return (this.service as any).windowMinimize();
+      }
       return Promise.resolve();
   }
 
@@ -86,8 +88,14 @@ export class UToolsAdapter implements PlatformAPI {
   }
 
   async windowClose(): Promise<void> {
-      // utools.outPlugin();
+      if ((this.service as any).windowClose) {
+          return (this.service as any).windowClose();
+      }
       return Promise.resolve();
+  }
+
+  async exitApp(): Promise<void> {
+      return this.windowClose();
   }
 
   async windowIsMaximized(): Promise<boolean> {

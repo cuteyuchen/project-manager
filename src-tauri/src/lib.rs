@@ -34,6 +34,12 @@ fn get_startup_args() -> Vec<String> {
     std::env::args().collect()
 }
 
+#[tauri::command]
+fn exit_app(app: tauri::AppHandle, state: tauri::State<'_, runner::ProcessState>) {
+    runner::cleanup_processes(&state);
+    app.exit(0);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -42,7 +48,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            Some(vec!["--flag1", "--flag2"])
+            None
         ))
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             if args.len() > 1 {
@@ -83,6 +89,7 @@ pub fn run() {
             system::is_context_menu_supported,
             system::get_platform_info,
             system::detect_available_terminals,
+            exit_app,
             git::git_check,
             git::git_init,
             git::git_summary,
