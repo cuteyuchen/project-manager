@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::io::Write;
 use std::process::Command;
 
@@ -123,6 +124,29 @@ fn run_git_relaxed(path: &str, args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+fn run_git_global(args: &[&str]) -> Result<String, String> {
+    let mut cmd = Command::new("git");
+    cmd.args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+
+    let output = cmd.output().map_err(|e| format!("Failed to execute git: {}", e))?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        if stderr.is_empty() {
+            Err(String::from_utf8_lossy(&output.stdout).to_string())
+        } else {
+            Err(stderr)
+        }
+    }
+}
+
 // ─── Commands ────────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -136,6 +160,49 @@ pub fn git_check(path: String) -> Result<bool, String> {
 #[tauri::command]
 pub fn git_init(path: String) -> Result<String, String> {
     run_git(&path, &["init"])
+}
+
+#[tauri::command]
+pub fn git_list_remote_branches(url: String) -> Result<Vec<String>, String> {
+    let output = run_git_global(&["ls-remote", "--heads", &url])?;
+    let mut branches = Vec::new();
+
+    for line in output.lines() {
+        let Some(reference) = line.split_whitespace().nth(1) else {
+            continue;
+        };
+
+        if let Some(name) = reference.strip_prefix("refs/heads/") {
+            if !name.is_empty() {
+                branches.push(name.to_string());
+            }
+        }
+    }
+
+    branches.sort();
+    branches.dedup();
+    Ok(branches)
+}
+
+#[tauri::command]
+pub fn git_clone_branch(url: String, branch: String, destination: String) -> Result<String, String> {
+    let destination_path = std::path::Path::new(&destination);
+
+    if destination_path.exists() {
+        let mut entries = fs::read_dir(destination_path).map_err(|e| e.to_string())?;
+        if entries.next().is_some() {
+            return Err("Destination directory must be empty".to_string());
+        }
+    }
+
+    run_git_global(&[
+        "clone",
+        "--branch",
+        &branch,
+        "--single-branch",
+        &url,
+        &destination,
+    ])
 }
 
 #[tauri::command]

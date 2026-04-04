@@ -92,6 +92,8 @@ pub fn run() {
             exit_app,
             git::git_check,
             git::git_init,
+            git::git_list_remote_branches,
+            git::git_clone_branch,
             git::git_summary,
             git::git_status,
             git::git_stage,
