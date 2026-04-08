@@ -39,6 +39,16 @@ pub fn get_platform_info() -> PlatformInfo {
     }
 }
 
+async fn run_system_task<T, F>(task: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(task)
+        .await
+        .map_err(|e| format!("Background system task failed: {}", e))
+}
+
 fn get_exe_path() -> Result<PathBuf, String> {
     std::env::current_exe().map_err(|e| e.to_string())
 }
@@ -72,69 +82,72 @@ fn check_terminal_app() -> bool {
 }
 
 #[tauri::command]
-pub fn detect_available_terminals() -> Vec<TerminalInfo> {
-    let mut terminals: Vec<TerminalInfo> = Vec::new();
-    
-    #[cfg(target_os = "windows")]
-    {
-        terminals.push(TerminalInfo {
-            id: "cmd".to_string(),
-            name: "Command Prompt (cmd.exe)".to_string(),
-        });
-        
-        if check_command_exists("powershell") {
+pub async fn detect_available_terminals() -> Result<Vec<TerminalInfo>, String> {
+    run_system_task(move || {
+        let mut terminals: Vec<TerminalInfo> = Vec::new();
+
+        #[cfg(target_os = "windows")]
+        {
             terminals.push(TerminalInfo {
-                id: "powershell".to_string(),
-                name: "PowerShell".to_string(),
+                id: "cmd".to_string(),
+                name: "Command Prompt (cmd.exe)".to_string(),
             });
+
+            if check_command_exists("powershell") {
+                terminals.push(TerminalInfo {
+                    id: "powershell".to_string(),
+                    name: "PowerShell".to_string(),
+                });
+            }
         }
-    }
-    
-    #[cfg(target_os = "macos")]
-    {
-        if check_terminal_app() {
-            terminals.push(TerminalInfo {
-                id: "terminal".to_string(),
-                name: "Terminal.app".to_string(),
-            });
+
+        #[cfg(target_os = "macos")]
+        {
+            if check_terminal_app() {
+                terminals.push(TerminalInfo {
+                    id: "terminal".to_string(),
+                    name: "Terminal.app".to_string(),
+                });
+            }
         }
-    }
-    
-    #[cfg(target_os = "linux")]
-    {
-        if check_command_exists("gnome-terminal") {
-            terminals.push(TerminalInfo {
-                id: "gnome-terminal".to_string(),
-                name: "GNOME Terminal".to_string(),
-            });
+
+        #[cfg(target_os = "linux")]
+        {
+            if check_command_exists("gnome-terminal") {
+                terminals.push(TerminalInfo {
+                    id: "gnome-terminal".to_string(),
+                    name: "GNOME Terminal".to_string(),
+                });
+            }
+
+            if check_command_exists("konsole") {
+                terminals.push(TerminalInfo {
+                    id: "konsole".to_string(),
+                    name: "Konsole (KDE)".to_string(),
+                });
+            }
+
+            if check_command_exists("xfce4-terminal") {
+                terminals.push(TerminalInfo {
+                    id: "xfce4-terminal".to_string(),
+                    name: "XFCE Terminal".to_string(),
+                });
+            }
         }
-        
-        if check_command_exists("konsole") {
-            terminals.push(TerminalInfo {
-                id: "konsole".to_string(),
-                name: "Konsole (KDE)".to_string(),
-            });
+
+        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+        {
+            if check_command_exists("bash") {
+                terminals.push(TerminalInfo {
+                    id: "bash".to_string(),
+                    name: "Bash".to_string(),
+                });
+            }
         }
-        
-        if check_command_exists("xfce4-terminal") {
-            terminals.push(TerminalInfo {
-                id: "xfce4-terminal".to_string(),
-                name: "XFCE Terminal".to_string(),
-            });
-        }
-    }
-    
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    {
-        if check_command_exists("bash") {
-            terminals.push(TerminalInfo {
-                id: "bash".to_string(),
-                name: "Bash".to_string(),
-            });
-        }
-    }
-    
-    terminals
+
+        terminals
+    })
+    .await
 }
 
 //************* 右键菜单功能 *************

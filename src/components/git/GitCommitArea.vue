@@ -28,6 +28,10 @@ const stagedFiles = computed(() => {
 
 const aiEnabled = computed(() => settingsStore.settings.gitAiEnabled);
 
+function isCancelledError(error: unknown): boolean {
+  return String(error).toLowerCase().includes('cancelled');
+}
+
 async function handleCommit() {
   if (!commitMessage.value.trim()) {
     ElMessage.warning(t('git.commitEmpty'));
@@ -42,6 +46,10 @@ async function handleCommit() {
     commitMessage.value = '';
     ElMessage.success(t('git.commitSuccess'));
   } catch (e: any) {
+    if (isCancelledError(e)) {
+      ElMessage.info(t('git.operationCancelled'));
+      return;
+    }
     showPersistentGitError(t('git.operationFailed', { error: String(e) }));
   }
 }
@@ -61,6 +69,10 @@ async function handleCommitAndPush() {
     await gitStore.push(props.project.id, props.project.path);
     ElMessage.success(t('git.commitAndPushSuccess'));
   } catch (e: any) {
+    if (isCancelledError(e)) {
+      ElMessage.info(t('git.operationCancelled'));
+      return;
+    }
     showPersistentGitError(t('git.operationFailed', { error: String(e) }));
   }
 }

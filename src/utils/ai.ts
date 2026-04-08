@@ -1,4 +1,5 @@
 import type { AiApiType, AiServiceConfig } from '../types';
+import { DEFAULT_AI_TIMEOUT_MS, fetchWithTimeout } from './network';
 
 export interface AiChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -15,6 +16,7 @@ export interface RequestAiTextOptions {
   signal?: AbortSignal;
   stream?: boolean;
   temperature?: number;
+  timeoutMs?: number;
 }
 
 function trimTrailingSlash(value: string): string {
@@ -450,7 +452,7 @@ export async function requestAiChatCompletion(options: RequestAiTextOptions): Pr
     temperature: options.temperature,
   };
   if (options.stream ?? true) {
-    const streamResponse = await globalThis.fetch(url, {
+    const streamResponse = await fetchWithTimeout(url, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -458,6 +460,8 @@ export async function requestAiChatCompletion(options: RequestAiTextOptions): Pr
         stream: true,
       }),
       signal: options.signal,
+    }, {
+      timeoutMs: options.timeoutMs ?? DEFAULT_AI_TIMEOUT_MS,
     });
     const streamed = await collectChatCompletionStream(streamResponse);
     if (streamed) {
@@ -466,11 +470,13 @@ export async function requestAiChatCompletion(options: RequestAiTextOptions): Pr
     throw new Error('AI API stream returned no message content.');
   }
 
-  const response = await globalThis.fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: 'POST',
     headers,
     body: JSON.stringify(baseBody),
     signal: options.signal,
+  }, {
+    timeoutMs: options.timeoutMs ?? DEFAULT_AI_TIMEOUT_MS,
   });
 
   return await parseAiChatCompletionResponse(response);
@@ -508,7 +514,7 @@ export async function requestAiResponses(options: RequestAiTextOptions): Promise
     temperature: options.temperature,
   };
   if (options.stream ?? true) {
-    const streamResponse = await globalThis.fetch(url, {
+    const streamResponse = await fetchWithTimeout(url, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -516,6 +522,8 @@ export async function requestAiResponses(options: RequestAiTextOptions): Promise
         stream: true,
       }),
       signal: options.signal,
+    }, {
+      timeoutMs: options.timeoutMs ?? DEFAULT_AI_TIMEOUT_MS,
     });
     const streamed = await collectResponsesStream(streamResponse);
     if (streamed) {
@@ -524,11 +532,13 @@ export async function requestAiResponses(options: RequestAiTextOptions): Promise
     throw new Error('AI API stream returned no visible output text.');
   }
 
-  const response = await globalThis.fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method: 'POST',
     headers,
     body: JSON.stringify(baseBody),
     signal: options.signal,
+  }, {
+    timeoutMs: options.timeoutMs ?? DEFAULT_AI_TIMEOUT_MS,
   });
 
   return await parseAiResponsesResponse(response);

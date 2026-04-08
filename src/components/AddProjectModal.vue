@@ -59,6 +59,8 @@ const pathIsGitRepo = ref(false);
 const pathEntryCount = ref(0);
 const remoteBranches = ref<string[]>([]);
 const loadingRemoteBranches = ref(false);
+const cloneOperationId = ref<string | null>(null);
+const cloneCancelling = ref(false);
 
 const form = ref<ProjectForm>({
   id: '',
@@ -78,6 +80,7 @@ const form = ref<ProjectForm>({
 
 const canConfigureRepo = computed(() => !isEdit.value && !!form.value.path && !pathIsGitRepo.value);
 const repoTargetHasFiles = computed(() => pathEntryCount.value > 0);
+const cloneInProgress = computed(() => loading.value && !!cloneOperationId.value);
 
 function buildEmptyForm(): ProjectForm {
   return {
@@ -389,7 +392,8 @@ async function submit() {
       }
 
       await ensureCloneTargetIsEmpty();
-      await api.gitCloneBranch(form.value.gitRemoteUrl.trim(), form.value.gitBranch, form.value.path);
+      cloneOperationId.value = crypto.randomUUID();
+      await api.gitCloneBranch(form.value.gitRemoteUrl.trim(), form.value.gitBranch, form.value.path, cloneOperationId.value);
       pathIsGitRepo.value = true;
 
       const info = await api.scanProject(form.value.path);
@@ -406,9 +410,30 @@ async function submit() {
     visible.value = false;
   } catch (error) {
     console.error('Failed to submit project', error);
-    ElMessage.error(String(error));
+    if (String(error).toLowerCase().includes('cancelled')) {
+      ElMessage.info(t('git.operationCancelled'));
+    } else {
+      ElMessage.error(String(error));
+    }
   } finally {
+    cloneOperationId.value = null;
+    cloneCancelling.value = false;
     loading.value = false;
+  }
+}
+
+async function cancelClone() {
+  if (!cloneOperationId.value || cloneCancelling.value) {
+    return;
+  }
+
+  cloneCancelling.value = true;
+  try {
+    await api.gitCancelOperation(cloneOperationId.value);
+    ElMessage.info(t('git.operationCancelling'));
+  } catch (error) {
+    cloneCancelling.value = false;
+    ElMessage.error(String(error));
   }
 }
 </script>
@@ -419,6 +444,8 @@ async function submit() {
     :title="isEdit ? t('project.editProject') : t('dashboard.addProject')"
     width="680px"
     :close-on-click-modal="false"
+    :close-on-press-escape="!loading"
+    :show-close="!loading"
     destroy-on-close
     align-center
     class="project-modal"
@@ -588,7 +615,16 @@ async function submit() {
 
     <template #footer>
       <div class="dialog-footer">
-        <el-button @click="visible = false">{{ t('common.cancel') }}</el-button>
+        <el-button @click="visible = false" :disabled="loading">{{ t('common.cancel') }}</el-button>
+        <el-button
+          v-if="cloneInProgress"
+          type="danger"
+          plain
+          @click="cancelClone"
+          :loading="cloneCancelling"
+        >
+          {{ cloneCancelling ? t('git.operationCancelling') : t('git.cancelOperation') }}
+        </el-button>
         <el-button
           type="primary"
           @click="submit"

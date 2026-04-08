@@ -5,6 +5,7 @@ use tauri::{AppHandle, Emitter, State};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 pub struct UpdateState {
     pub is_cancelling: Arc<AtomicBool>,
@@ -36,7 +37,14 @@ pub async fn install_update(app: AppHandle, state: State<'_, UpdateState>, url: 
     
     let app_handle = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        let mut response = reqwest::blocking::get(&url).map_err(|e| e.to_string())?;
+        let client = reqwest::blocking::Client::builder()
+            .connect_timeout(Duration::from_secs(15))
+            .timeout(Duration::from_secs(30))
+            .build()
+            .map_err(|e: reqwest::Error| e.to_string())?;
+
+        let mut response = client.get(&url).send().map_err(|e: reqwest::Error| e.to_string())?;
+        response.error_for_status_ref().map_err(|e: reqwest::Error| e.to_string())?;
         
         let total_size = response.content_length().unwrap_or(0);
         
@@ -56,7 +64,7 @@ pub async fn install_update(app: AppHandle, state: State<'_, UpdateState>, url: 
                  return Err("Update cancelled by user".to_string());
             }
 
-            let bytes_read = response.read(&mut buffer).map_err(|e| e.to_string())?;
+            let bytes_read = response.read(&mut buffer).map_err(|e: std::io::Error| e.to_string())?;
             if bytes_read == 0 {
                 break;
             }

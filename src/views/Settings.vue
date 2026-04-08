@@ -8,6 +8,7 @@ import { ElMessage } from 'element-plus';
 import { useI18n } from 'vue-i18n';
 import type { AiServiceConfig, NodeVersion, Project, Settings } from '../types';
 import { isAiServiceConfigured, normalizeAiApiType, requestAiText } from '../utils/ai';
+import { isAbortError } from '../utils/network';
 
 type ImportChoice = 'keep' | 'incoming';
 type ImportDiff = { key: string; label: string; current: string; incoming: string };
@@ -556,8 +557,6 @@ async function testAiConnection() {
 
   aiTestLoading.value = true;
   aiTestResult.value = null;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15000);
   try {
     await requestAiText({
       apiType: service.apiType,
@@ -567,14 +566,12 @@ async function testAiConnection() {
       messages: [{ role: 'user', content: 'Reply with OK only.' }],
       maxTokens: normalizeAiApiType(service.apiType) === 'responses' ? 64 : 32,
       temperature: 0,
-      signal: controller.signal,
       stream: draft.value.gitAiStream,
+      timeoutMs: 15000,
     });
-    clearTimeout(timeoutId);
     aiTestResult.value = { success: true, message: t('settings.gitAiTestSuccess') };
   } catch (error: any) {
-    clearTimeout(timeoutId);
-    if (error.name === 'AbortError') aiTestResult.value = { success: false, message: t('settings.gitAiTestTimeout') };
+    if (isAbortError(error)) aiTestResult.value = { success: false, message: t('settings.gitAiTestTimeout') };
     else if (String(error?.message || '').includes('(401 ') || String(error?.message || '').includes('(403 ')) aiTestResult.value = { success: false, message: t('settings.gitAiTestAuthError') };
     else if (String(error?.message || '').includes('(404 ')) aiTestResult.value = { success: false, message: t('settings.gitAiTestModelNotFound') };
     else if (String(error?.message || '').includes('(429 ')) aiTestResult.value = { success: false, message: t('settings.gitAiTestRateLimit') };

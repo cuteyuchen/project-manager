@@ -35,8 +35,13 @@ fn get_startup_args() -> Vec<String> {
 }
 
 #[tauri::command]
-fn exit_app(app: tauri::AppHandle, state: tauri::State<'_, runner::ProcessState>) {
+fn exit_app(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, runner::ProcessState>,
+    git_state: tauri::State<'_, git::GitOperationState>,
+) {
     runner::cleanup_processes(&state);
+    git::cleanup_git_processes(&git_state);
     app.exit(0);
 }
 
@@ -62,6 +67,7 @@ pub fn run() {
             }
         }))
         .manage(runner::ProcessState::new())
+        .manage(git::GitOperationState::new())
         .manage(updater::UpdateState::new())
         .invoke_handler(tauri::generate_handler![
             nvm::get_nvm_list,
@@ -94,6 +100,7 @@ pub fn run() {
             git::git_init,
             git::git_list_remote_branches,
             git::git_clone_branch,
+            git::git_cancel_operation,
             git::git_summary,
             git::git_status,
             git::git_stage,
@@ -133,7 +140,9 @@ pub fn run() {
     app.run(|app_handle, event| {
         if let tauri::RunEvent::ExitRequested { .. } = event {
              let state = app_handle.state::<runner::ProcessState>();
+             let git_state = app_handle.state::<git::GitOperationState>();
              runner::cleanup_processes(&state);
+             git::cleanup_git_processes(&git_state);
         }
     });
 }

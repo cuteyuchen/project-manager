@@ -17,6 +17,7 @@ import { useNodeStore } from './stores/node';
 import { useGitStore } from './stores/git';
 import type { Project } from './types';
 import { normalizeNvmVersion, findInstalledNodeVersion } from './utils/nvm';
+import { DEFAULT_NETWORK_TIMEOUT_MS, fetchWithTimeout, isAbortError } from './utils/network';
 
 const target = import.meta.env.VITE_TARGET;
 const isPlugin = target === 'utools' || target === 'ztools';
@@ -148,7 +149,11 @@ function dispatchManualUpdateResult(detail: ManualUpdateResult) {
 async function checkUpdate(manual = false) {
   try {
     // Use /releases list instead of /releases/latest to avoid missing pre-release tagged versions
-    const response = await fetch('https://api.github.com/repos/cuteyuchen/project-manager/releases?per_page=10');
+    const response = await fetchWithTimeout(
+      'https://api.github.com/repos/cuteyuchen/project-manager/releases?per_page=10',
+      {},
+      { timeoutMs: DEFAULT_NETWORK_TIMEOUT_MS },
+    );
     if (!response.ok) {
       if (manual) {
         dispatchManualUpdateResult({
@@ -262,7 +267,7 @@ async function checkUpdate(manual = false) {
     if (manual) {
       dispatchManualUpdateResult({
         status: 'error',
-        error: String(e)
+        error: isAbortError(e) ? t('common.requestTimeout') : String(e),
       });
     }
   }
