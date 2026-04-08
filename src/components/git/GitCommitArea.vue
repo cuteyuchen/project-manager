@@ -67,17 +67,17 @@ async function handleCommitAndPush() {
 
 async function handleAiGenerate() {
   const s = settingsStore.settings;
-  if (!s.gitAiApiKey?.trim()) {
+  const service = s.gitAiPrimaryService;
+  if (!service?.apiKey?.trim() || !service?.baseUrl?.trim() || !service?.model?.trim()) {
     ElMessage.warning(t('git.aiConfigMissing'));
     return;
   }
   aiGenerating.value = true;
   try {
     const msg = await gitStore.generateAiCommitMessage(props.project.id, props.project.path, {
-      baseUrl: s.gitAiBaseUrl || 'https://api.openai.com/v1',
-      apiKey: s.gitAiApiKey,
-      model: s.gitAiModel || 'gpt-4o-mini',
+      service,
       promptTemplate: s.gitAiPromptTemplate,
+      stream: s.gitAiStream,
     });
     if (msg) {
       commitMessage.value = msg;

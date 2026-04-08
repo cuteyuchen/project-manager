@@ -1,7 +1,9 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { api } from '../api';
+import { requestAiChatCompletion, requestAiText } from '../utils/ai';
 import type {
+  AiServiceConfig,
   GitStatusResult,
   GitBranch,
   GitCommit,
@@ -516,9 +518,99 @@ export const useGitStore = defineStore('git', () => {
     return data.choices?.[0]?.message?.content?.trim() || '';
   }
 
+  void generateAiCommitMessage;
+
   async function discardFiles(projectId: string, path: string, files: string[]): Promise<void> {
     await api.gitDiscard(path, files);
     await refreshStatus(projectId, path);
+  }
+
+  async function generateAiCommitMessageV2(
+    projectId: string,
+    path: string,
+    settings: {
+      baseUrl: string;
+      apiKey: string;
+      model: string;
+      promptTemplate?: string;
+    }
+  ): Promise<string> {
+    const diff = await api.gitDiff(path, undefined, true);
+    if (!diff.trim()) {
+      throw new Error('no_staged');
+    }
+
+    const systemPrompt = settings.promptTemplate?.trim() ||
+      `Generate a git commit message with these rules:
+1. The first line must use Conventional Commits format: <type>(<scope>): <short summary>.
+2. Use one of these types: feat, fix, refactor, chore, docs, style, test, perf.
+3. Add a blank line after the first line, then write a concise body describing the concrete changes.
+4. Write the body in Chinese. The first line may be in Chinese or English.
+5. Keep each line within 72 characters.
+6. Output only the commit message itself, with no extra explanation.`;
+
+    const content = await requestAiChatCompletion({
+      baseUrl: settings.baseUrl,
+      apiKey: settings.apiKey,
+      model: settings.model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `Git diff:\n\`\`\`\n${diff}\n\`\`\`` },
+      ],
+      maxTokens: 200,
+      temperature: 0.3,
+    });
+
+    void projectId;
+    return content;
+  }
+
+  void generateAiCommitMessageV2;
+
+  async function generateAiCommitMessageV3(
+    projectId: string,
+    path: string,
+    settings: {
+      service: Partial<AiServiceConfig> | null | undefined;
+      promptTemplate?: string;
+      stream?: boolean;
+    }
+  ): Promise<string> {
+    const diff = await api.gitDiff(path, undefined, true);
+    if (!diff.trim()) {
+      throw new Error('no_staged');
+    }
+
+    const systemPrompt = settings.promptTemplate?.trim() ||
+      `Generate a git commit message with these rules:
+1. The first line must use Conventional Commits format: <type>(<scope>): <short summary>.
+2. Use one of these types: feat, fix, refactor, chore, docs, style, test, perf.
+3. Add a blank line after the first line, then write a concise body describing the concrete changes.
+4. Write the body in Chinese. The first line may be in Chinese or English.
+5. Keep each line within 72 characters.
+6. Output only the commit message itself, with no extra explanation.`;
+
+    const service = settings.service;
+    if (!service?.baseUrl?.trim() || !service?.apiKey?.trim() || !service?.model?.trim()) {
+      throw new Error('No configured AI service is available.');
+    }
+
+    const content = await requestAiText({
+      apiType: service.apiType,
+      baseUrl: service.baseUrl,
+      apiKey: service.apiKey,
+      model: service.model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: `Git diff:\n\`\`\`\n${diff}\n\`\`\`` },
+      ],
+      maxTokens: 200,
+      temperature: 0.3,
+      stream: settings.stream,
+    });
+
+    void projectId;
+    return content;
   }
 
   async function discardUntracked(projectId: string, path: string, files: string[]): Promise<void> {
@@ -594,6 +686,6 @@ export const useGitStore = defineStore('git', () => {
     discardFiles,
     discardUntracked,
     clearDiff,
-    generateAiCommitMessage,
+    generateAiCommitMessage: generateAiCommitMessageV3,
   };
 });

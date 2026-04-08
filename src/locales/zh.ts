@@ -1,4 +1,4 @@
-export default {
+﻿export default {
   common: {
     title: '项目管理器',
     add: '添加',
@@ -164,6 +164,13 @@ export default {
     // AI commit
     gitAi: 'AI 提交信息生成',
     gitAiEnabled: '启用 AI 生成',
+    gitAiPrimaryService: 'AI 服务',
+    gitAiApiType: '接口类型',
+    gitAiApiTypeChat: 'Chat Completions',
+    gitAiApiTypeResponses: 'Responses',
+    gitAiStream: '流式输出',
+    gitAiStreamEnabledHint: '默认使用流式请求接收模型输出。',
+    gitAiStreamDisabledHint: '关闭后使用普通非流式请求。',
     gitAiBaseUrl: 'API 地址',
     gitAiBaseUrlPlaceholder: 'https://api.openai.com/v1',
     gitAiApiKey: 'API Key',

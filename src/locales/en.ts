@@ -165,6 +165,13 @@ export default {
     // AI commit
     gitAi: 'AI Commit Message',
     gitAiEnabled: 'Enable AI Generation',
+    gitAiPrimaryService: 'AI Service',
+    gitAiApiType: 'API Type',
+    gitAiApiTypeChat: 'Chat Completions',
+    gitAiApiTypeResponses: 'Responses',
+    gitAiStream: 'Stream Output',
+    gitAiStreamEnabledHint: 'Requests are sent in streaming mode by default.',
+    gitAiStreamDisabledHint: 'Requests are sent in normal non-streaming mode.',
     gitAiBaseUrl: 'API Base URL',
     gitAiBaseUrlPlaceholder: 'https://api.openai.com/v1',
     gitAiApiKey: 'API Key',
