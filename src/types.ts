@@ -2,6 +2,7 @@ export interface CustomCommand {
   id: string;
   name: string;
   command: string;
+  builtinId?: 'install_dependencies';
 }
 
 export interface EditorConfig {

@@ -145,6 +145,7 @@ fn run_git_relaxed(path: &str, args: &[&str]) -> Result<String, String> {
 fn run_git_global(args: &[&str]) -> Result<String, String> {
     let mut cmd = Command::new("git");
     cmd.args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
@@ -233,6 +234,7 @@ fn run_git_cancellable(
         cmd.current_dir(current_dir);
     }
     cmd.args(args)
+        .env("GIT_TERMINAL_PROMPT", "0")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -340,7 +342,7 @@ pub async fn git_init(path: String) -> Result<String, String> {
 #[tauri::command]
 pub async fn git_list_remote_branches(url: String) -> Result<Vec<String>, String> {
     run_git_task(move || {
-        let output = run_git_global(&["ls-remote", "--heads", &url])?;
+        let output = run_git_global(&["ls-remote", "--heads", "--", &url])?;
         let mut branches = Vec::new();
 
         for line in output.lines() {
@@ -390,6 +392,7 @@ pub async fn git_clone_branch(
             "--branch",
             branch.as_str(),
             "--single-branch",
+            "--",
             url.as_str(),
             destination.as_str(),
         ];

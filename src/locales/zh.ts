@@ -227,6 +227,7 @@
     autoInstallFailed: 'Node {version} 自动安装失败',
     typeOther: '其他',
     customCommands: '自定义命令',
+    installDependencies: '安装依赖',
     commandName: '命令名称',
     commandContent: '命令内容',
     addCommand: '添加命令',

@@ -4,6 +4,7 @@ import { useProjectStore } from '../stores/project';
 import { useI18n } from 'vue-i18n';
 import { AnsiUp } from 'ansi_up';
 import { api } from '../api';
+import { getCustomCommandDisplayName } from '../utils/projectCommands';
 
 const { t } = useI18n();
 const projectStore = useProjectStore();
@@ -164,7 +165,7 @@ const availableTabs = computed(() => {
 function getTabLabel(tabId: string): string {
     if (!activeProject.value) return tabId;
     const customCmd = activeProject.value.customCommands?.find(c => c.id === tabId);
-    if (customCmd) return customCmd.name;
+    if (customCmd) return getCustomCommandDisplayName(customCmd, t);
     return tabId;
 }
 

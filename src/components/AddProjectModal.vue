@@ -6,6 +6,7 @@ import { api } from '../api';
 import type { Project, CustomCommand } from '../types';
 import type { ProjectInfo } from '../api/types';
 import { normalizeNvmVersion, findInstalledNodeVersion } from '../utils/nvm';
+import { ensureNodeInstallCommand } from '../utils/projectCommands';
 import { useSettingsStore } from '../stores/settings';
 
 type ProjectForm = {
@@ -204,7 +205,12 @@ function hydrateFormFromProject(project: Project) {
     scripts: project.scripts || [],
     visibleScripts: project.visibleScripts || [...(project.scripts || [])],
     customCommands: project.customCommands
-      ? project.customCommands.map((command) => ({ ...command }))
+      ? project.customCommands.map((command) => ({
+        ...command,
+        name: command.builtinId === 'install_dependencies'
+          ? t('project.installDependencies')
+          : command.name,
+      }))
       : [],
     editorId: project.editorId || '',
   };
@@ -334,15 +340,6 @@ function toggleVisibleScript(script: string) {
   form.value.visibleScripts = [...current, script];
 }
 
-async function ensureCloneTargetIsEmpty() {
-  const entries = await api.readDir(form.value.path);
-  pathEntryCount.value = entries.length;
-
-  if (entries.length > 0) {
-    throw new Error(t('project.gitTargetNotEmpty'));
-  }
-}
-
 function buildProjectPayload(): Project {
   const project: Project = {
     id: isEdit.value ? form.value.id : crypto.randomUUID(),
@@ -364,15 +361,13 @@ function buildProjectPayload(): Project {
     project.visibleScripts = form.value.visibleScripts;
   }
 
-  if (form.value.customCommands.length > 0) {
-    project.customCommands = form.value.customCommands.filter((command) => command.name && command.command);
-  }
+  project.customCommands = form.value.customCommands.filter((command) => command.name && command.command);
 
   if (form.value.editorId) {
     project.editorId = form.value.editorId;
   }
 
-  return project;
+  return ensureNodeInstallCommand(project, t('project.installDependencies'));
 }
 
 async function submit() {
@@ -391,7 +386,6 @@ async function submit() {
         return;
       }
 
-      await ensureCloneTargetIsEmpty();
       cloneOperationId.value = crypto.randomUUID();
       await api.gitCloneBranch(form.value.gitRemoteUrl.trim(), form.value.gitBranch, form.value.path, cloneOperationId.value);
       pathIsGitRepo.value = true;

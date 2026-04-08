@@ -227,6 +227,7 @@ export default {
     autoInstallFailed: 'Failed to auto install Node {version}',
     typeOther: 'Other',
     customCommands: 'Custom Commands',
+    installDependencies: 'Install Deps',
     commandName: 'Command Name',
     commandContent: 'Command',
     addCommand: 'Add Command',

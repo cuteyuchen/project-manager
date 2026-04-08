@@ -9,6 +9,7 @@ import { useI18n } from 'vue-i18n';
 import type { AiServiceConfig, NodeVersion, Project, Settings } from '../types';
 import { isAiServiceConfigured, normalizeAiApiType, requestAiText } from '../utils/ai';
 import { isAbortError } from '../utils/network';
+import { ensureNodeInstallCommand } from '../utils/projectCommands';
 
 type ImportChoice = 'keep' | 'incoming';
 type ImportDiff = { key: string; label: string; current: string; incoming: string };
@@ -234,7 +235,7 @@ async function exportData() {
 
 function normalizeProject(project: any): Project | null {
   if (!project || !project.path) return null;
-  return {
+  return ensureNodeInstallCommand({
     id: typeof project.id === 'string' && project.id ? project.id : crypto.randomUUID(),
     name: project.name || project.path.split(/[\\/]/).pop() || 'Untitled',
     path: project.path,
@@ -252,7 +253,7 @@ function normalizeProject(project: any): Project | null {
     pinned: project.pinned ?? false,
     pinOrder: project.pinOrder ?? undefined,
     editorId: project.editorId || undefined,
-  };
+  }, t('project.installDependencies'));
 }
 
 function normalizeSettingsPayload(settings: any): Settings {

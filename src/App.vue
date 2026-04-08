@@ -18,6 +18,7 @@ import { useGitStore } from './stores/git';
 import type { Project } from './types';
 import { normalizeNvmVersion, findInstalledNodeVersion } from './utils/nvm';
 import { DEFAULT_NETWORK_TIMEOUT_MS, fetchWithTimeout, isAbortError } from './utils/network';
+import { ensureNodeInstallCommand } from './utils/projectCommands';
 
 const target = import.meta.env.VITE_TARGET;
 const isPlugin = target === 'utools' || target === 'ztools';
@@ -115,7 +116,7 @@ async function handleImportProject(path: string) {
       project.scripts = info.scripts;
     }
 
-    store.addProject(project);
+    store.addProject(ensureNodeInstallCommand(project, t('project.installDependencies')));
     ElMessage.success(t('dashboard.addProject') + ' Success');
   } catch (e) {
     ElMessage.error('Failed to import: ' + e);

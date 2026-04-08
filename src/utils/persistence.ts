@@ -3,6 +3,7 @@ import { useProjectStore } from '../stores/project';
 import { useSettingsStore } from '../stores/settings';
 import { useNodeStore } from '../stores/node';
 import type { NodeVersion, Project, Settings } from '../types';
+import { ensureNodeInstallCommand } from './projectCommands';
 
 const FILE_NAME = 'data.json';
 const SAVE_DEBOUNCE_MS = 800;
@@ -121,6 +122,7 @@ export async function loadData() {
   try {
     const content = await api.readConfigFile(FILE_NAME);
     if (!content) return;
+    let normalizedDataChanged = false;
 
     let data: any;
     try {
@@ -132,8 +134,11 @@ export async function loadData() {
 
     if (data.projects) {
       const projectStore = useProjectStore();
+      const settingsStore = useSettingsStore();
+      const installCommandName = settingsStore.settings.locale === 'en' ? 'Install Dependencies' : '安装依赖';
+
       // Migrate old project data: ensure new optional fields have defaults
-      projectStore.projects = data.projects.map((p: any) => ({
+      projectStore.projects = data.projects.map((p: any) => ensureNodeInstallCommand({
         ...p,
         type: p.type || 'node',
         gitRemoteUrl: typeof p.gitRemoteUrl === 'string' ? p.gitRemoteUrl : undefined,
@@ -146,7 +151,12 @@ export async function loadData() {
         memo: p.memo || '',
         pinned: p.pinned ?? false,
         pinOrder: p.pinOrder ?? undefined,
-      }));
+      }, installCommandName));
+
+      normalizedDataChanged = projectStore.projects.some((project: Project, index: number) => {
+        const originalCommands = Array.isArray(data.projects[index]?.customCommands) ? data.projects[index].customCommands : [];
+        return JSON.stringify(project.customCommands || []) !== JSON.stringify(originalCommands);
+      });
     }
     if (data.settings) {
       const settingsStore = useSettingsStore();
@@ -164,6 +174,10 @@ export async function loadData() {
     }
     console.log('Data loaded');
     lastSerializedData = serializePersistedData();
+
+    if (normalizedDataChanged) {
+      await api.writeConfigFile(FILE_NAME, lastSerializedData);
+    }
   } catch (e) {
     console.error('Failed to load data:', e);
   }

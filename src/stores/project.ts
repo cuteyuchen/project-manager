@@ -3,6 +3,8 @@ import { ref } from 'vue';
 import { api } from '../api';
 import type { Project } from '../types';
 import { useNodeStore } from './node';
+import { useSettingsStore } from './settings';
+import { getCustomCommandDisplayNameByLocale } from '../utils/projectCommands';
 
 type WorkspaceTab = 'console' | 'git' | 'files' | 'memo';
 
@@ -165,6 +167,7 @@ export const useProjectStore = defineStore('project', () => {
   async function runCustomCommand(project: Project, commandId: string) {
     const cmd = project.customCommands?.find(c => c.id === commandId);
     if (!cmd) return;
+    const settingsStore = useSettingsStore();
 
     const runId = `${project.id}:${cmd.id}`;
 
@@ -176,7 +179,7 @@ export const useProjectStore = defineStore('project', () => {
         requestRightTab('console');
         setRunningState(runId, true);
 
-        logs.value[runId].push(`[Runner] Starting custom command: ${cmd.name}`);
+        logs.value[runId].push(`[Runner] Starting custom command: ${getCustomCommandDisplayNameByLocale(cmd, settingsStore.settings.locale)}`);
         logs.value[runId].push(`[Runner] Command: ${cmd.command}`);
         logs.value[runId].push(`[Runner] Project: ${project.name}`);
 

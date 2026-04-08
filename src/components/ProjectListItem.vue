@@ -6,6 +6,7 @@ import { computed } from 'vue';
 import { api } from '../api';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { useI18n } from 'vue-i18n';
+import { getCustomCommandDisplayName } from '../utils/projectCommands';
 
 const { t } = useI18n();
 const props = defineProps<{ project: Project }>();
@@ -37,6 +38,10 @@ function handleRun(script: string) {
 
 function handleRunCustom(commandId: string) {
     store.runCustomCommand(props.project, commandId);
+}
+
+function getCommandLabel(name: string, builtinId?: 'install_dependencies') {
+    return getCustomCommandDisplayName({ name, builtinId }, t);
 }
 
 function handleTogglePin() {
@@ -168,7 +173,7 @@ async function openFolder() {
                     <button v-for="cmd in project.customCommands" :key="cmd.id" @click.stop="handleRunCustom(cmd.id)"
                         :disabled="store.runningStatus[`${project.id}:${cmd.id}`]"
                         class="px-2 py-0.5 text-[10px] rounded border border-dashed transition-all duration-150 uppercase tracking-wider font-medium bg-blue-500/8 text-blue-600 dark:text-blue-400 border-blue-500/15 hover:bg-blue-500/15 disabled:opacity-40 disabled:cursor-not-allowed">
-                        {{ cmd.name }}
+                        {{ getCommandLabel(cmd.name, cmd.builtinId) }}
                     </button>
                 </template>
                 <!-- Node scripts -->
