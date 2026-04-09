@@ -186,6 +186,21 @@ npm run build:ztools
 
 ## 更新日志
 
+### 1.0.9
+
+**新功能**
+
+- **终端打开后自动显示 Node 版本**：打开终端后自动执行 `node -v`，确认当前激活的 Node.js 版本，支持所有终端类型（PowerShell、pwsh、CMD、Windows Terminal、Cmder、Git Bash、gnome-terminal、konsole、xfce4-terminal、alacritty、kitty 等）
+- **自动安装缺失 Node 版本**：项目配置了特定 Node 版本但尚未安装时，打开终端或运行脚本会自动触发安装并提示进度
+- **nvm-windows 旧版兼容**：自动处理旧版 Node（如 v12）仅包含 `node64.exe` 的情况，通过硬链接创建 `node.exe` 确保 PATH 可正常解析
+
+**优化**
+
+- **Node 版本解析优先使用 NVM 固定路径**：项目终端和脚本运行现在优先匹配 NVM 安装目录中的版本专属路径，避免依赖会随全局切换变化的系统符号链接
+- **插件版本同步更新**：uTools 和 ZTools 插件的终端功能同步支持 `node -v` 自动输出和 `node64.exe` 兼容
+
+---
+
 ### 1.0.8
 
 **新功能**

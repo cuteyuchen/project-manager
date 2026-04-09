@@ -323,6 +323,11 @@ pub fn run_project_command(
              }
         }
 
+        // Ensure node.exe exists (nvm-windows compat for node64.exe)
+        if !node_dir_str.is_empty() {
+            ensure_node_exe_in_dir(std::path::Path::new(&node_dir_str));
+        }
+
         let new_path = if !node_dir_str.is_empty() {
             format!("{};{}", node_dir_str, current_path)
         } else {
@@ -848,67 +853,202 @@ fn get_git_bash_path() -> Option<String> {
     None
 }
 
+/// On Windows, nvm-windows may store the executable as `node64.exe` (or `node32.exe`)
+/// instead of `node.exe` for older Node versions. This function ensures a `node.exe`
+/// exists in the given directory by creating a hard link when necessary.
+#[cfg(target_os = "windows")]
+fn ensure_node_exe_in_dir(dir: &std::path::Path) {
+    let node_exe = dir.join("node.exe");
+    if node_exe.exists() {
+        return;
+    }
+    // Try node64.exe first (most common on 64-bit), then node32.exe
+    for alt in &["node64.exe", "node32.exe"] {
+        let alt_path = dir.join(alt);
+        if alt_path.exists() {
+            // Create a hard link so `node` resolves correctly in PATH
+            if let Err(e) = fs::hard_link(&alt_path, &node_exe) {
+                println!("[nvm-compat] Failed to hard-link {} -> node.exe: {}", alt, e);
+                // Fallback: try a copy
+                if let Err(e2) = fs::copy(&alt_path, &node_exe) {
+                    println!("[nvm-compat] Failed to copy {} -> node.exe: {}", alt, e2);
+                }
+            }
+            return;
+        }
+    }
+}
+
+fn resolve_terminal_node_dir(node_path: &str) -> Option<String> {
+    let trimmed = node_path.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let path = std::path::Path::new(trimmed);
+    if path.is_file() {
+        return path.parent().map(|parent| parent.to_string_lossy().to_string());
+    }
+
+    if path.is_dir() {
+        #[cfg(target_os = "windows")]
+        {
+            ensure_node_exe_in_dir(path);
+            if path.join("node.exe").exists() {
+                return Some(trimmed.to_string());
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            if path.join("node").exists() {
+                return Some(trimmed.to_string());
+            }
+        }
+
+        let bin_dir = path.join("bin");
+        #[cfg(target_os = "windows")]
+        if bin_dir.is_dir() {
+            ensure_node_exe_in_dir(&bin_dir);
+            if bin_dir.join("node.exe").exists() {
+                return Some(bin_dir.to_string_lossy().to_string());
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        if bin_dir.join("node").exists() {
+            return Some(bin_dir.to_string_lossy().to_string());
+        }
+    }
+
+    Some(trimmed.to_string())
+}
+
+fn build_terminal_path_env(node_path: &str) -> Option<String> {
+    let node_dir = resolve_terminal_node_dir(node_path)?;
+    let current_path = std::env::var("PATH").unwrap_or_default();
+
+    #[cfg(target_os = "windows")]
+    let separator = ";";
+    #[cfg(not(target_os = "windows"))]
+    let separator = ":";
+
+    if current_path.is_empty() {
+        Some(node_dir)
+    } else {
+        Some(format!("{}{}{}", node_dir, separator, current_path))
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn escape_for_cmd_double_quotes(value: &str) -> String {
+    value.replace('"', "\"\"")
+}
+
+#[cfg(target_os = "windows")]
+fn escape_for_powershell_single_quotes(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
 #[tauri::command]
-pub fn open_in_terminal(path: String, terminal: String) -> Result<(), String> {
+pub fn open_in_terminal(path: String, terminal: String, node_path: String) -> Result<(), String> {
     let terminal = terminal.trim().to_lowercase();
+    let terminal_path_env = build_terminal_path_env(&node_path);
 
     #[cfg(target_os = "windows")]
     {
         let win_path = path.replace('/', "\\");
+        let win_path_cmd = escape_for_cmd_double_quotes(&win_path);
+        let path_env_cmd = terminal_path_env
+            .as_ref()
+            .map(|value| escape_for_cmd_double_quotes(value));
+        let win_path_ps = escape_for_powershell_single_quotes(&win_path);
+        let path_env_ps = terminal_path_env
+            .as_ref()
+            .map(|value| escape_for_powershell_single_quotes(value));
 
         match terminal.as_str() {
             "powershell" => {
-                Command::new("cmd")
-                    .args(&["/C", "start", "/D", &win_path, "powershell", "-NoExit"])
-                    .spawn()
-                    .map_err(|e| e.to_string())?;
+                let startup_script = if let Some(path_env) = &path_env_ps {
+                    format!("$env:PATH='{}'; Set-Location '{}'; node -v", path_env, win_path_ps)
+                } else {
+                    format!("Set-Location '{}'; node -v", win_path_ps)
+                };
+                let mut command = Command::new("cmd");
+                command.args(["/C", "start", "", "powershell", "-NoExit", "-Command", &startup_script]);
+                command.spawn().map_err(|e| e.to_string())?;
             }
             "pwsh" => {
-                Command::new("cmd")
-                    .args(&["/C", "start", "/D", &win_path, "pwsh", "-NoExit"])
-                    .spawn()
-                    .map_err(|e| e.to_string())?;
+                let startup_script = if let Some(path_env) = &path_env_ps {
+                    format!("$env:PATH='{}'; Set-Location '{}'; node -v", path_env, win_path_ps)
+                } else {
+                    format!("Set-Location '{}'; node -v", win_path_ps)
+                };
+                let mut command = Command::new("cmd");
+                command.args(["/C", "start", "", "pwsh", "-NoExit", "-Command", &startup_script]);
+                command.spawn().map_err(|e| e.to_string())?;
             }
             "windows-terminal" => {
-                Command::new("wt")
-                    .args(&["-d", &win_path])
-                    .spawn()
-                    .map_err(|e| e.to_string())?;
+                let mut command = Command::new("wt");
+                if let Some(path_env) = &path_env_cmd {
+                    let startup_command = format!("set \"PATH={}\" && cd /d \"{}\" && node -v", path_env, win_path_cmd);
+                    command.args(["-d", &win_path, "cmd", "/K", &startup_command]);
+                } else {
+                    command.args(["-d", &win_path, "cmd", "/K", "node -v"]);
+                }
+                command.spawn().map_err(|e| e.to_string())?;
             }
             "git-bash" => {
                 if let Some(git_bash_path) = get_git_bash_path() {
-                     Command::new(git_bash_path)
-                         .arg(format!("--cd={}", win_path))
-                         .spawn()
-                         .map_err(|e| e.to_string())?;
+                    let mut command = Command::new("cmd");
+                    command.args(["/C", "start", "", &git_bash_path, &format!("--cd={}", win_path)]);
+                    if let Some(path_env) = &path_env_cmd {
+                        command.env("PATH", path_env);
+                    }
+                    command.spawn().map_err(|e| e.to_string())?;
                 } else {
-                     // Fallback: try to run bash in a new CMD window that stays open if bash fails
-                     Command::new("cmd")
-                        .args(&["/C", "start", "/D", &win_path, "cmd", "/K", "bash"])
-                        .spawn()
-                        .map_err(|e| e.to_string())?;
+                    // Fallback: try to run bash in a new CMD window that stays open if bash fails
+                    let mut command = Command::new("cmd");
+                    let startup_command = if let Some(path_env) = &path_env_cmd {
+                        format!("set \"PATH={}\" && cd /d \"{}\" && bash -c \"node -v; exec bash\"", path_env, win_path_cmd)
+                    } else {
+                        format!("cd /d \"{}\" && bash -c \"node -v; exec bash\"", win_path_cmd)
+                    };
+                    command.args(["/K", &startup_command]);
+                    command.spawn().map_err(|e| e.to_string())?;
                 }
             }
             "cmder" => {
-                Command::new("cmd")
-                    .args(&["/C", "start", "/D", &win_path, "cmder"])
-                    .spawn()
-                    .map_err(|e| e.to_string())?;
+                let mut command = Command::new("cmd");
+                let startup_command = if let Some(path_env) = &path_env_cmd {
+                    format!("set \"PATH={}\" && cd /d \"{}\" && cmder && node -v", path_env, win_path_cmd)
+                } else {
+                    format!("cd /d \"{}\" && cmder && node -v", win_path_cmd)
+                };
+                command.args(["/C", "start", "", "cmd", "/K", &startup_command]);
+                command.spawn().map_err(|e| e.to_string())?;
             }
             _ => {
                 // Check if terminal is a custom executable path
                 if terminal.contains('\\') || terminal.contains('/') || terminal.ends_with(".exe") {
-                    Command::new(&terminal)
-                        .current_dir(&win_path)
-                        .creation_flags(CREATE_NO_WINDOW)
+                    let mut command = Command::new(&terminal);
+                    command.current_dir(&win_path);
+                    if let Some(path_env) = &terminal_path_env {
+                        command.env("PATH", path_env);
+                    }
+                    command
                         .spawn()
                         .map_err(|e| format!("Failed to launch custom terminal '{}': {}", terminal, e))?;
                 } else {
                     // CMD (Default)
-                    Command::new("cmd")
-                        .args(&["/C", "start", "/D", &win_path, "cmd"])
-                        .spawn()
-                        .map_err(|e| e.to_string())?;
+                    let mut command = Command::new("cmd");
+                    let startup_command = if let Some(path_env) = &path_env_cmd {
+                        format!("set \"PATH={}\" && cd /d \"{}\" && node -v", path_env, win_path_cmd)
+                    } else {
+                        format!("cd /d \"{}\" && node -v", win_path_cmd)
+                    };
+                    command.args(["/C", "start", "", "cmd", "/K", &startup_command]);
+                    command.spawn().map_err(|e| e.to_string())?;
                 }
             }
         }
@@ -918,22 +1058,30 @@ pub fn open_in_terminal(path: String, terminal: String) -> Result<(), String> {
     {
         match terminal.as_str() {
             "iterm2" => {
-                Command::new("open")
-                    .args(&["-a", "iTerm", &path])
-                    .spawn()
-                    .map_err(|e| e.to_string())?;
+                let mut command = Command::new("open");
+                command.args(&["-a", "iTerm", &path]);
+                if let Some(path_env) = &terminal_path_env {
+                    command.env("PATH", path_env);
+                }
+                command.spawn().map_err(|e| e.to_string())?;
             }
             _ => {
                 if terminal.contains('/') {
-                    Command::new(&terminal)
-                        .current_dir(&path)
+                    let mut command = Command::new(&terminal);
+                    command.current_dir(&path);
+                    if let Some(path_env) = &terminal_path_env {
+                        command.env("PATH", path_env);
+                    }
+                    command
                         .spawn()
                         .map_err(|e| format!("Failed to launch custom terminal '{}': {}", terminal, e))?;
                 } else {
-                    Command::new("open")
-                        .args(&["-a", "Terminal", &path])
-                        .spawn()
-                        .map_err(|e| e.to_string())?;
+                    let mut command = Command::new("open");
+                    command.args(&["-a", "Terminal", &path]);
+                    if let Some(path_env) = &terminal_path_env {
+                        command.env("PATH", path_env);
+                    }
+                    command.spawn().map_err(|e| e.to_string())?;
                 }
             }
         }
@@ -941,49 +1089,65 @@ pub fn open_in_terminal(path: String, terminal: String) -> Result<(), String> {
 
     #[cfg(target_os = "linux")]
     {
-        let shell_command = format!("cd '{}' ; exec bash", path.replace('\'', "'\\''"));
+        let shell_command = format!("cd '{}' ; node -v ; exec bash", path.replace('\'', "'\\''"));
         match terminal.as_str() {
             "gnome-terminal" => {
-                Command::new("gnome-terminal")
-                    .args(&["--working-directory", &path])
-                    .spawn()
-                    .map_err(|e| e.to_string())?;
+                let mut command = Command::new("gnome-terminal");
+                command.args(&["--working-directory", &path, "--", "bash", "-c", "node -v; exec bash"]);
+                if let Some(path_env) = &terminal_path_env {
+                    command.env("PATH", path_env);
+                }
+                command.spawn().map_err(|e| e.to_string())?;
             }
             "konsole" => {
-                Command::new("konsole")
-                    .args(&["--workdir", &path])
-                    .spawn()
-                    .map_err(|e| e.to_string())?;
+                let mut command = Command::new("konsole");
+                command.args(&["--workdir", &path, "-e", "bash", "-c", "node -v; exec bash"]);
+                if let Some(path_env) = &terminal_path_env {
+                    command.env("PATH", path_env);
+                }
+                command.spawn().map_err(|e| e.to_string())?;
             }
             "xfce4-terminal" => {
-                Command::new("xfce4-terminal")
-                    .args(&["--working-directory", &path])
-                    .spawn()
-                    .map_err(|e| e.to_string())?;
+                let mut command = Command::new("xfce4-terminal");
+                command.args(&["--working-directory", &path, "-e", "bash -c 'node -v; exec bash'"]);
+                if let Some(path_env) = &terminal_path_env {
+                    command.env("PATH", path_env);
+                }
+                command.spawn().map_err(|e| e.to_string())?;
             }
             "alacritty" => {
-                Command::new("alacritty")
-                    .args(&["--working-directory", &path])
-                    .spawn()
-                    .map_err(|e| e.to_string())?;
+                let mut command = Command::new("alacritty");
+                command.args(&["--working-directory", &path, "-e", "bash", "-c", "node -v; exec bash"]);
+                if let Some(path_env) = &terminal_path_env {
+                    command.env("PATH", path_env);
+                }
+                command.spawn().map_err(|e| e.to_string())?;
             }
             "kitty" => {
-                Command::new("kitty")
-                    .args(&["--directory", &path])
-                    .spawn()
-                    .map_err(|e| e.to_string())?;
+                let mut command = Command::new("kitty");
+                command.args(&["--directory", &path, "bash", "-c", "node -v; exec bash"]);
+                if let Some(path_env) = &terminal_path_env {
+                    command.env("PATH", path_env);
+                }
+                command.spawn().map_err(|e| e.to_string())?;
             }
             _ => {
                 if terminal.contains('/') {
-                    Command::new(&terminal)
-                        .current_dir(&path)
+                    let mut command = Command::new(&terminal);
+                    command.current_dir(&path);
+                    if let Some(path_env) = &terminal_path_env {
+                        command.env("PATH", path_env);
+                    }
+                    command
                         .spawn()
                         .map_err(|e| format!("Failed to launch custom terminal '{}': {}", terminal, e))?;
                 } else {
-                    Command::new("x-terminal-emulator")
-                        .args(&["-e", "bash", "-lc", &shell_command])
-                        .spawn()
-                        .map_err(|e| e.to_string())?;
+                    let mut command = Command::new("x-terminal-emulator");
+                    command.args(&["-e", "bash", "-lc", &shell_command]);
+                    if let Some(path_env) = &terminal_path_env {
+                        command.env("PATH", path_env);
+                    }
+                    command.spawn().map_err(|e| e.to_string())?;
                 }
             }
         }

@@ -1,17 +1,21 @@
 <script setup lang="ts">
 import type { Project } from '../types';
 import { useProjectStore } from '../stores/project';
+import { useNodeStore } from '../stores/node';
 import { useSettingsStore } from '../stores/settings';
 import { computed } from 'vue';
 import { api } from '../api';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { useI18n } from 'vue-i18n';
 import { getCustomCommandDisplayName } from '../utils/projectCommands';
+import { resolveNodePathFromVersion, resolveProjectNodePath, isExplicitNodeVersion } from '../utils/nodeRuntime';
+import { normalizeNvmVersion } from '../utils/nvm';
 
 const { t } = useI18n();
 const props = defineProps<{ project: Project }>();
 const emit = defineEmits(['edit']);
 const store = useProjectStore();
+const nodeStore = useNodeStore();
 const settingsStore = useSettingsStore();
 
 const isActive = computed(() => store.activeProjectId === props.project.id);
@@ -91,7 +95,39 @@ async function openEditor() {
 
 async function openTerminal() {
     try {
-        await api.openInTerminal(props.project.path, settingsStore.settings.defaultTerminal);
+        if (props.project.type === 'node') {
+            await nodeStore.loadNvmNodes();
+        }
+
+        let nodePath = '';
+        if (props.project.type === 'node') {
+            nodePath = resolveProjectNodePath(props.project, nodeStore.versions);
+
+            // If a specific version is configured but not installed, auto-install it
+            if (!nodePath && isExplicitNodeVersion(props.project.nodeVersion)) {
+                const version = normalizeNvmVersion(props.project.nodeVersion!)!;
+                try {
+                    ElMessage.info(t('project.autoInstallStart', { version }));
+                    await nodeStore.installNode(version);
+                    ElMessage.success(t('project.autoInstallSuccess', { version }));
+                    nodePath = resolveProjectNodePath(props.project, nodeStore.versions);
+                } catch (installError) {
+                    ElMessage.error(`${t('project.autoInstallFailed', { version })}: ${String(installError)}`);
+                    console.error('Failed to auto-install node version for terminal', installError);
+                }
+            }
+
+            if (!nodePath) {
+                try {
+                    const info = await api.scanProject(props.project.path);
+                    nodePath = resolveNodePathFromVersion(info.nvmVersion, nodeStore.versions);
+                } catch (scanError) {
+                    console.warn('Failed to scan project for terminal node version', scanError);
+                }
+            }
+        }
+
+        await api.openInTerminal(props.project.path, settingsStore.settings.defaultTerminal, nodePath);
     } catch (e) {
         console.error(e);
         ElMessage.error(`${t('common.error')}: ${e}`);
