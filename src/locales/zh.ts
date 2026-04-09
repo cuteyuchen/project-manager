@@ -228,6 +228,7 @@
     typeOther: '其他',
     customCommands: '自定义命令',
     installDependencies: '安装依赖',
+    pmNotInstalled: '当前 Node {version} 环境下未安装 {pm}，请先运行 npm install -g {pm} 进行安装',
     commandName: '命令名称',
     commandContent: '命令内容',
     addCommand: '添加命令',

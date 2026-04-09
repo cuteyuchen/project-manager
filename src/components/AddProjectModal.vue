@@ -6,7 +6,7 @@ import { api } from '../api';
 import type { Project, CustomCommand } from '../types';
 import type { ProjectInfo } from '../api/types';
 import { normalizeNvmVersion, findInstalledNodeVersion } from '../utils/nvm';
-import { ensureNodeInstallCommand } from '../utils/projectCommands';
+import { ensureNodeInstallCommand, getInstallDependenciesCommand } from '../utils/projectCommands';
 import { useSettingsStore } from '../stores/settings';
 
 type ProjectForm = {
@@ -242,6 +242,54 @@ watch(() => props.modelValue, async (opened) => {
 
   form.value = buildEmptyForm();
 });
+
+// When package manager changes, update the install command and check PM availability
+watch(() => form.value.packageManager, (newPm, oldPm) => {
+  if (!newPm || newPm === oldPm) return;
+
+  // Update existing install dependencies command text
+  const newInstallCommand = getInstallDependenciesCommand(newPm);
+  for (const command of form.value.customCommands) {
+    if (command.builtinId === 'install_dependencies') {
+      command.command = newInstallCommand;
+    }
+  }
+
+  // Check if the selected Node version has this PM
+  checkPackageManagerAvailability(newPm, form.value.nodeVersion);
+});
+
+// When Node version changes, check PM availability
+watch(() => form.value.nodeVersion, (newVersion, oldVersion) => {
+  if (!newVersion || newVersion === oldVersion) return;
+  checkPackageManagerAvailability(form.value.packageManager, newVersion);
+});
+
+async function checkPackageManagerAvailability(pm: string, nodeVersion: string) {
+  if (!nodeVersion || pm === 'npm') return; // npm is always bundled with Node
+
+  const nvmVersionEntry = nodeVersions.value.find((v) => v === nodeVersion);
+  if (!nvmVersionEntry) return;
+
+  try {
+    const list = await api.getNvmList();
+    const versionInfo = list.find((v) => v.version === nodeVersion);
+    if (!versionInfo) return;
+
+    const entries = await api.readDir(versionInfo.path);
+    const hasPm = entries.some((e) =>
+      e.name === pm || e.name === `${pm}.cmd` || e.name === `${pm}.exe`
+    );
+
+    if (!hasPm) {
+      ElMessage.warning(
+        t('project.pmNotInstalled', { pm, version: nodeVersion }),
+      );
+    }
+  } catch (error) {
+    console.error('Failed to check PM availability', error);
+  }
+}
 
 async function selectFolder() {
   try {
@@ -568,18 +616,18 @@ async function cancelClone() {
       </template>
 
       <el-form-item :label="t('project.customCommands')">
-        <div class="w-full space-y-3">
+        <div class="w-full space-y-2">
           <div
             v-for="(command, index) in form.customCommands"
             :key="command.id"
-            class="rounded-xl border border-slate-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/30 p-3"
+            class="rounded-lg border border-slate-200/80 dark:border-slate-700/60 bg-white dark:bg-slate-900/30 px-3 py-0.5"
           >
-            <div class="flex items-start gap-3 min-w-0">
+            <div class="flex items-center gap-3 min-w-0">
               <div class="grid min-w-0 flex-1 gap-3 md:grid-cols-[180px_minmax(0,1fr)]">
                 <el-input v-model="command.name" :placeholder="t('project.commandName')" />
                 <el-input v-model="command.command" :placeholder="t('project.commandContent')" />
               </div>
-              <el-button type="danger" text @click="removeCustomCommand(index)" class="!mt-1">
+              <el-button type="danger" text @click="removeCustomCommand(index)">
                 <el-icon><div class="i-mdi-close" /></el-icon>
               </el-button>
             </div>

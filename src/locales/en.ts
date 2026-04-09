@@ -228,6 +228,7 @@ export default {
     typeOther: 'Other',
     customCommands: 'Custom Commands',
     installDependencies: 'Install Deps',
+    pmNotInstalled: '{pm} is not installed in Node {version}. Please run: npm install -g {pm}',
     commandName: 'Command Name',
     commandContent: 'Command',
     addCommand: 'Add Command',

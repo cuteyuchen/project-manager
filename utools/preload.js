@@ -126,6 +126,31 @@ function decodeTextBuffer(buffer) {
     return new TextDecoder('utf-8').decode(buffer);
 }
 
+function findPmFromNvm(nodeExe, packageManager) {
+    // Search NVM directories for npm-cli.js or {pm}.cmd when the version dir lacks npm
+    const nvmSymlink = process.env.NVM_SYMLINK;
+    if (nvmSymlink) {
+        const cli = path.join(nvmSymlink, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+        if (fs.existsSync(cli)) return `"${nodeExe}" "${cli}"`;
+        const cmd = path.join(nvmSymlink, `${packageManager}.cmd`);
+        if (fs.existsSync(cmd)) return `"${cmd}"`;
+    }
+    const nvmHome = process.env.NVM_HOME;
+    if (nvmHome) {
+        try {
+            for (const entry of fs.readdirSync(nvmHome)) {
+                const dir = path.join(nvmHome, entry);
+                if (!fs.statSync(dir).isDirectory()) continue;
+                const cli = path.join(dir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+                if (fs.existsSync(cli)) return `"${nodeExe}" "${cli}"`;
+                const cmd = path.join(dir, `${packageManager}.cmd`);
+                if (fs.existsSync(cmd)) return `"${cmd}"`;
+            }
+        } catch (_) {}
+    }
+    return null;
+}
+
 function ensureNodeExeInDir(dir) {
     if (process.platform !== 'win32') return;
     try {
@@ -709,9 +734,30 @@ window.services = {
             }
         }
 
-        // Construct command
+        // Construct command - resolve absolute path to package manager
         const pm = packageManager || 'npm';
-        const cmdStr = `${pm} run ${script}`;
+        let spawnCmd = pm;
+        let spawnArgs = ['run', script];
+
+        if (nodeDir && process.platform === 'win32') {
+            const nodeExe = path.join(nodeDir, 'node.exe');
+            const npmCliJs = path.join(nodeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+            const pmCmd = path.join(nodeDir, `${pm}.cmd`);
+
+            if (fs.existsSync(npmCliJs)) {
+                spawnCmd = `"${nodeExe}" "${npmCliJs}"`;
+            } else if (fs.existsSync(pmCmd)) {
+                spawnCmd = `"${pmCmd}"`;
+            } else {
+                // Fallback: search NVM directories for npm
+                const found = findPmFromNvm(nodeExe, pm);
+                if (found) {
+                    spawnCmd = found;
+                }
+            }
+        }
+
+        const cmdStr = `${spawnCmd} run ${script}`;
 
         try {
             console.log('[Runner] Executing:', cmdStr);
@@ -721,7 +767,7 @@ window.services = {
             appendLog(`Executing: ${cmdStr}\n`);
             appendLog(`Node Path used: ${nodeDir || 'System Default'}\n`);
             
-            const child = spawn(pm, ['run', script], {
+            const child = spawn(spawnCmd, ['run', script], {
                 cwd: projectPath,
                 shell: true,
                 env: env,

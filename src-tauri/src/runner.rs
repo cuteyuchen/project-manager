@@ -337,6 +337,9 @@ pub fn run_project_command(
         // Try to resolve absolute path to package manager if node_path is provided
         let pm_cmd = if !node_dir_str.is_empty() {
             let node_dir = std::path::Path::new(&node_dir_str);
+            let node_exe_path = node_dir.join("node.exe");
+
+            // 1. Check node_dir/node_modules/npm/bin/npm-cli.js
             let npm_cli_js = node_dir
                 .join("node_modules")
                 .join("npm")
@@ -346,17 +349,19 @@ pub fn run_project_command(
             if npm_cli_js.exists() {
                 format!(
                     "\"{}\" \"{}\"",
-                    node_dir
-                        .join("node.exe")
-                        .to_string_lossy(),
+                    node_exe_path.to_string_lossy(),
                     npm_cli_js.to_string_lossy()
                 )
             } else {
+                // 2. Check node_dir/{pm}.cmd
                 let pm_path_cmd = node_dir.join(format!("{}.cmd", package_manager));
                 if pm_path_cmd.exists() {
                     format!("\"{}\"", pm_path_cmd.to_string_lossy())
                 } else {
-                    package_manager.clone()
+                    // 3. Fallback: search NVM directories for npm-cli.js / {pm}.cmd
+                    //    (handles broken nvm-windows installs where node_modules is empty)
+                    find_pm_from_nvm(&node_exe_path, &package_manager)
+                        .unwrap_or_else(|| package_manager.clone())
                 }
             }
         } else {
@@ -877,6 +882,57 @@ fn ensure_node_exe_in_dir(dir: &std::path::Path) {
             return;
         }
     }
+}
+
+/// When a Node version directory lacks npm (empty node_modules), search other
+/// NVM directories for a usable npm-cli.js or {pm}.cmd and pair it with the
+/// project's own node.exe so the correct Node version is still used.
+#[cfg(target_os = "windows")]
+fn find_pm_from_nvm(node_exe: &std::path::Path, package_manager: &str) -> Option<String> {
+    let node_exe_str = node_exe.to_string_lossy();
+
+    // Check NVM_SYMLINK first (usually has npm for the active version)
+    if let Ok(nvm_symlink) = std::env::var("NVM_SYMLINK") {
+        let symlink_dir = std::path::Path::new(&nvm_symlink);
+        let cli = symlink_dir
+            .join("node_modules")
+            .join("npm")
+            .join("bin")
+            .join("npm-cli.js");
+        if cli.exists() {
+            return Some(format!("\"{}\" \"{}\"", node_exe_str, cli.to_string_lossy()));
+        }
+        let cmd = symlink_dir.join(format!("{}.cmd", package_manager));
+        if cmd.exists() {
+            return Some(format!("\"{}\"", cmd.to_string_lossy()));
+        }
+    }
+
+    // Scan NVM_HOME version directories
+    if let Ok(nvm_home) = std::env::var("NVM_HOME") {
+        if let Ok(entries) = std::fs::read_dir(&nvm_home) {
+            for entry in entries.flatten() {
+                let dir = entry.path();
+                if !dir.is_dir() {
+                    continue;
+                }
+                let cli = dir
+                    .join("node_modules")
+                    .join("npm")
+                    .join("bin")
+                    .join("npm-cli.js");
+                if cli.exists() {
+                    return Some(format!("\"{}\" \"{}\"", node_exe_str, cli.to_string_lossy()));
+                }
+                let cmd = dir.join(format!("{}.cmd", package_manager));
+                if cmd.exists() {
+                    return Some(format!("\"{}\"", cmd.to_string_lossy()));
+                }
+            }
+        }
+    }
+
+    None
 }
 
 fn resolve_terminal_node_dir(node_path: &str) -> Option<String> {
