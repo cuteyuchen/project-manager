@@ -126,6 +126,87 @@ function decodeTextBuffer(buffer) {
     return new TextDecoder('utf-8').decode(buffer);
 }
 
+function ensureNodeExeInDir(dir) {
+    if (process.platform !== 'win32') return;
+    try {
+        const nodeExe = path.join(dir, 'node.exe');
+        if (fs.existsSync(nodeExe)) return;
+        const candidates = ['node64.exe', 'node32.exe'];
+        for (const name of candidates) {
+            const src = path.join(dir, name);
+            if (fs.existsSync(src)) {
+                try { fs.linkSync(src, nodeExe); } catch { fs.copyFileSync(src, nodeExe); }
+                return;
+            }
+        }
+    } catch (_) {}
+}
+
+function resolveTerminalNodeDir(nodePath) {
+    const trimmed = String(nodePath || '').trim();
+    if (!trimmed) return '';
+
+    let resolved = trimmed;
+    try {
+        if (fs.existsSync(trimmed) && fs.statSync(trimmed).isFile()) {
+            resolved = path.dirname(trimmed);
+            ensureNodeExeInDir(resolved);
+            return resolved;
+        }
+
+        if (fs.existsSync(trimmed) && fs.statSync(trimmed).isDirectory()) {
+            if (process.platform === 'win32') {
+                ensureNodeExeInDir(trimmed);
+                if (fs.existsSync(path.join(trimmed, 'node.exe'))) {
+                    return trimmed;
+                }
+            }
+
+            if (process.platform !== 'win32' && fs.existsSync(path.join(trimmed, 'node'))) {
+                return trimmed;
+            }
+
+            const binDir = path.join(trimmed, 'bin');
+            if (process.platform === 'win32') {
+                ensureNodeExeInDir(binDir);
+                if (fs.existsSync(path.join(binDir, 'node.exe'))) {
+                    return binDir;
+                }
+            }
+
+            if (process.platform !== 'win32' && fs.existsSync(path.join(binDir, 'node'))) {
+                return binDir;
+            }
+        }
+    } catch (_) {}
+
+    return trimmed;
+}
+
+function getTerminalSpawnOptions(nodePath) {
+    const nodeDir = resolveTerminalNodeDir(nodePath);
+    if (!nodeDir) {
+        return { detached: true, stdio: 'ignore' };
+    }
+
+    return {
+        detached: true,
+        stdio: 'ignore',
+        env: {
+            ...process.env,
+            PATH: `${nodeDir}${path.delimiter}${process.env.PATH || ''}`,
+        },
+    };
+}
+
+function escapeCmdDoubleQuotes(value) {
+    return String(value || '').replace(/"/g, '""');
+}
+
+function escapePowerShellSingleQuotes(value) {
+    return String(value || '').replace(/'/g, "''");
+}
+
 // Platform-adaptive: support both uTools and ZTools
 const platform = typeof ztools !== 'undefined' ? ztools : utools;
 
@@ -829,7 +910,7 @@ window.services = {
     },
     
     getAppVersion: async () => {
-        return "1.0.8";
+        return "1.0.9";
     },
     
     installUpdate: async (url) => {
@@ -889,48 +970,86 @@ window.services = {
     },
     
     //************* 终端打开 *************
-    openInTerminal: async (projectPath, terminal) => {
+    openInTerminal: async (projectPath, terminal, nodePath) => {
         const term = (terminal || 'cmd').trim().toLowerCase();
+        const spawnOptions = getTerminalSpawnOptions(nodePath);
         
         if (process.platform === 'win32') {
             try {
                 const winPath = projectPath.replace(/\//g, "\\");
+                const winPathCmd = escapeCmdDoubleQuotes(winPath);
+                const pathEnvCmd = spawnOptions.env?.PATH ? escapeCmdDoubleQuotes(spawnOptions.env.PATH) : '';
+                const winPathPs = escapePowerShellSingleQuotes(winPath);
+                const pathEnvPs = spawnOptions.env?.PATH ? escapePowerShellSingleQuotes(spawnOptions.env.PATH) : '';
                 
                 if (term === 'powershell') {
-                     // PowerShell: start a new window, cd to path
-                     spawn('cmd', ['/C', 'start', '', '/D', winPath, 'powershell', '-NoExit'], { detached: true, stdio: 'ignore' });
+                     const startupScript = pathEnvPs
+                        ? `$env:PATH='${pathEnvPs}'; Set-Location '${winPathPs}'; node -v`
+                        : `Set-Location '${winPathPs}'; node -v`;
+                     spawn('cmd', ['/C', 'start', '', 'powershell', '-NoExit', '-Command', startupScript], spawnOptions);
                 } else if (term === 'pwsh') {
-                     spawn('cmd', ['/C', 'start', '', '/D', winPath, 'pwsh', '-NoExit'], { detached: true, stdio: 'ignore' });
+                     const startupScript = pathEnvPs
+                        ? `$env:PATH='${pathEnvPs}'; Set-Location '${winPathPs}'; node -v`
+                        : `Set-Location '${winPathPs}'; node -v`;
+                     spawn('cmd', ['/C', 'start', '', 'pwsh', '-NoExit', '-Command', startupScript], spawnOptions);
+                } else if (term === 'windows-terminal') {
+                    const startupCommand = pathEnvCmd
+                        ? `set "PATH=${pathEnvCmd}" && cd /d "${winPathCmd}" && node -v`
+                        : `node -v`;
+                    spawn('wt', ['-d', winPath, 'cmd', '/K', startupCommand], spawnOptions);
+                } else if (term === 'cmder') {
+                    const startupCommand = pathEnvCmd
+                        ? `set "PATH=${pathEnvCmd}" && cd /d "${winPathCmd}" && cmder && node -v`
+                        : `cd /d "${winPathCmd}" && cmder && node -v`;
+                    spawn('cmd', ['/C', 'start', '', 'cmd', '/K', startupCommand], spawnOptions);
+                } else if (term === 'git-bash') {
+                    const gitBash = [
+                        path.join(process.env.ProgramFiles || '', 'Git', 'git-bash.exe'),
+                        path.join(process.env['ProgramFiles(x86)'] || '', 'Git', 'git-bash.exe'),
+                        path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Git', 'git-bash.exe'),
+                    ].find(fs.existsSync);
+
+                    if (gitBash) {
+                        spawn('cmd', ['/C', 'start', '', gitBash, `--cd=${winPath}`], spawnOptions);
+                    } else {
+                        const startupCommand = pathEnvCmd
+                            ? `set "PATH=${pathEnvCmd}" && cd /d "${winPathCmd}" && bash -c "node -v; exec bash"`
+                            : `cd /d "${winPathCmd}" && bash -c "node -v; exec bash"`;
+                        spawn('cmd', ['/K', startupCommand], spawnOptions);
+                    }
                 } else {
                     // CMD (Default)
-                    spawn('cmd', ['/C', 'start', '', '/D', winPath, 'cmd'], { detached: true, stdio: 'ignore' });
+                    const startupCommand = pathEnvCmd
+                        ? `set "PATH=${pathEnvCmd}" && cd /d "${winPathCmd}" && node -v`
+                        : `cd /d "${winPathCmd}" && node -v`;
+                    spawn('cmd', ['/C', 'start', '', 'cmd', '/K', startupCommand], spawnOptions);
                 }
             } catch (e) {
                 console.error('Failed to open terminal', e);
             }
         } else if (process.platform === 'darwin') {
              try {
-                spawn('open', ['-a', 'Terminal', projectPath], { detached: true, stdio: 'ignore' });
+                spawn('open', ['-a', 'Terminal', projectPath], spawnOptions);
              } catch (e) {
                 console.error(e);
              }
         } else {
             // Linux
             const terms = [
-                { id: 'gnome-terminal', cmd: 'gnome-terminal', args: ['--working-directory', projectPath] },
-                { id: 'konsole', cmd: 'konsole', args: ['--workdir', projectPath] },
-                { id: 'xfce4-terminal', cmd: 'xfce4-terminal', args: ['--working-directory', projectPath] }
+                { id: 'gnome-terminal', cmd: 'gnome-terminal', args: ['--working-directory', projectPath, '--', 'bash', '-c', 'node -v; exec bash'] },
+                { id: 'konsole', cmd: 'konsole', args: ['--workdir', projectPath, '-e', 'bash', '-c', 'node -v; exec bash'] },
+                { id: 'xfce4-terminal', cmd: 'xfce4-terminal', args: ['--working-directory', projectPath, '-e', "bash -c 'node -v; exec bash'"] }
             ];
             
             const target = terms.find(t => t.id === term);
             
             if (target) {
-                 spawn(target.cmd, target.args, { detached: true, stdio: 'ignore' }).unref();
+                 spawn(target.cmd, target.args, spawnOptions).unref();
             } else {
                 // Fallback attempt
                 for (const t of terms) {
                     try {
-                        const child = spawn(t.cmd, t.args, { detached: true, stdio: 'ignore' });
+                        const child = spawn(t.cmd, t.args, spawnOptions);
                         child.on('error', () => {});
                         child.unref();
                         break;
