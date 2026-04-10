@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 
 const emit = defineEmits<{
-  (e: 'navigate', view: 'dashboard' | 'settings' | 'nodes'): void
+  (e: 'navigate', view: 'dashboard' | 'settings' | 'nodes' | 'ports'): void
 }>();
 
+const { t } = useI18n();
 const activeIndex = ref('dashboard');
 
 function handleSelect(key: string) {
@@ -31,9 +33,15 @@ function handleSelect(key: string) {
       </el-icon>
     </el-menu-item>
 
+    <el-menu-item index="ports" :title="t('sidebar.ports')">
+      <el-icon>
+        <div class="i-mdi-lan-connect" />
+      </el-icon>
+    </el-menu-item>
+
     <div class="flex-1"></div> <!-- Spacer -->
 
-    <el-menu-item index="settings">
+    <el-menu-item index="settings" :title="t('sidebar.settings')">
       <el-icon>
         <div class="i-mdi-cog" />
       </el-icon>

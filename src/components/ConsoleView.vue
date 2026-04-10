@@ -76,6 +76,7 @@ const parsedLogCache = new Map<string, string>();
 const MAX_PARSED_LOG_CACHE_SIZE = 2000;
 const LOG_BOTTOM_THRESHOLD = 48;
 const shouldFollowLogs = ref(true);
+let scrollToBottomToken = 0;
 
 function getCachedParsedAnsi(text: string) {
     const cached = parsedLogCache.get(text);
@@ -202,10 +203,7 @@ function handleLogScroll() {
 
 function resumeLogFollow() {
     shouldFollowLogs.value = true;
-    nextTick(() => {
-        scrollToBottom();
-        requestAnimationFrame(scrollToBottom);
-    });
+    void scheduleScrollToBottom();
 }
 
 // Auto-scroll logic
@@ -220,17 +218,37 @@ const scrollToBottom = () => {
     }
 };
 
-watch(() => logs.value.length, () => {
-    if (!shouldFollowLogs.value) return;
+async function scheduleScrollToBottom() {
+    const token = ++scrollToBottomToken;
 
-    requestAnimationFrame(() => {
-        scrollToBottom();
-    });
+    await nextTick();
+    if (token !== scrollToBottomToken || !shouldFollowLogs.value) return;
+    scrollToBottom();
+
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    if (token !== scrollToBottomToken || !shouldFollowLogs.value) return;
+    scrollToBottom();
+
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    if (token !== scrollToBottomToken || !shouldFollowLogs.value) return;
+    scrollToBottom();
+}
+
+const renderedLogWindowSignature = computed(() => {
+    const currentLogs = logs.value;
+    const first = currentLogs[0] || '';
+    const last = currentLogs[currentLogs.length - 1] || '';
+    return `${activeScript.value || ''}:${currentLogs.length}:${first}:${last}`;
 });
+
+watch(renderedLogWindowSignature, () => {
+    if (!shouldFollowLogs.value) return;
+    void scheduleScrollToBottom();
+}, { flush: 'post' });
 
 // Force scroll on script switch - INSTANTLY
 watch(activeScript, () => {
-    resumeLogFollow();
+    void resumeLogFollow();
 });
 
 watch(activeProject, () => {

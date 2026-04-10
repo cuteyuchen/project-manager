@@ -34,6 +34,7 @@ export const useSettingsStore = defineStore('settings', () => {
     editorPath: 'code',
     defaultTerminal: 'cmd',
     customTerminals: [],
+    layoutState: {},
     locale: 'zh',
     themeMode: 'auto',
     autoUpdate: true,
@@ -87,6 +88,9 @@ export const useSettingsStore = defineStore('settings', () => {
           model: typeof parsed.gitAiModel === 'string' && parsed.gitAiModel ? parsed.gitAiModel : 'gpt-4o-mini',
         });
       }
+      if (!parsed.layoutState || typeof parsed.layoutState !== 'object' || Array.isArray(parsed.layoutState)) {
+        parsed.layoutState = {};
+      }
       parsed.gitAiPrimaryService = normalizeAiService(parsed.gitAiPrimaryService, createDefaultAiService());
       if (typeof parsed.gitAiStream !== 'boolean') {
         parsed.gitAiStream = true;
@@ -107,6 +111,9 @@ export const useSettingsStore = defineStore('settings', () => {
   // Ensure defaultEditorId is valid
   if (!settings.value.defaultEditorId || !settings.value.editors.find(e => e.id === settings.value.defaultEditorId)) {
     settings.value.defaultEditorId = settings.value.editors[0].id;
+  }
+  if (!settings.value.layoutState || typeof settings.value.layoutState !== 'object' || Array.isArray(settings.value.layoutState)) {
+    settings.value.layoutState = {};
   }
   
   const systemThemeMedia = window.matchMedia('(prefers-color-scheme: dark)');

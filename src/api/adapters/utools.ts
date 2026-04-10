@@ -1,4 +1,4 @@
-import type { PlatformAPI, ProjectInfo, TerminalInfo } from '../types';
+import type { PlatformAPI, ProjectInfo, TerminalInfo, PortEntry } from '../types';
 import type { NodeVersion, GitStatusResult, GitBranch, GitCommit, GitSummary, GitCommitFile } from '../../types';
 
 // Declare global interface for uTools services
@@ -156,6 +156,14 @@ export class UToolsAdapter implements PlatformAPI {
       return Promise.resolve([
           { id: 'cmd', name: 'Command Prompt (cmd.exe)' }
       ]);
+  }
+
+  async listUsedPorts(): Promise<PortEntry[]> {
+      return Promise.reject(new Error('Port management is not supported in plugin mode'));
+  }
+
+  async terminateProcessByPid(_pid: number): Promise<void> {
+      return Promise.reject(new Error('Port management is not supported in plugin mode'));
   }
 
   // Git

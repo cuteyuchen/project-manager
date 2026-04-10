@@ -14,6 +14,19 @@ export interface TerminalInfo {
     name: string;
 }
 
+export interface PortEntry {
+    protocol: string;
+    local_address: string;
+    local_port: number;
+    remote_address?: string | null;
+    remote_port?: number | null;
+    state: string;
+    pid?: number | null;
+    process_name?: string | null;
+    executable_path?: string | null;
+    command_line?: string | null;
+}
+
 export interface PlatformAPI {
     // NVM
     getNvmList(): Promise<NodeVersion[]>;
@@ -88,6 +101,8 @@ export interface PlatformAPI {
     isContextMenuSupported(): Promise<boolean>;
     getPlatformInfo(): Promise<{ os: string; arch: string }>;
     detectAvailableTerminals(): Promise<TerminalInfo[]>;
+    listUsedPorts(): Promise<PortEntry[]>;
+    terminateProcessByPid(pid: number): Promise<void>;
 
     // Git
     gitCheck(path: string): Promise<boolean>;

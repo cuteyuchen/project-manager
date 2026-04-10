@@ -3,7 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
 import { open as openDialogFn, save as saveDialogFn } from '@tauri-apps/plugin-dialog';
 import { openPath as openPathFn, openUrl as openUrlFn } from '@tauri-apps/plugin-opener';
-import type { PlatformAPI, ProjectInfo, TerminalInfo } from '../types';
+import type { PlatformAPI, ProjectInfo, TerminalInfo, PortEntry } from '../types';
 import type { NodeVersion, GitStatusResult, GitBranch, GitCommit, GitSummary, GitCommitFile } from '../../types';
 
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -218,6 +218,14 @@ export class TauriAdapter implements PlatformAPI {
 
     async detectAvailableTerminals(): Promise<TerminalInfo[]> {
         return invoke('detect_available_terminals');
+    }
+
+    async listUsedPorts(): Promise<PortEntry[]> {
+        return invoke('list_used_ports');
+    }
+
+    async terminateProcessByPid(pid: number): Promise<void> {
+        return invoke('terminate_process_by_pid', { pid });
     }
 
     // Git

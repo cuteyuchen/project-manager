@@ -8,6 +8,7 @@ import Sidebar from './components/Sidebar.vue';
 import Dashboard from './views/Dashboard.vue';
 import Settings from './views/Settings.vue';
 import NodeManager from './views/NodeManager.vue';
+import PortManager from './views/PortManager.vue';
 import TitleBar from './components/TitleBar.vue';
 import UpdateProgress from './components/UpdateProgress.vue';
 import { loadData, scheduleSaveData, flushPendingSave } from './utils/persistence';
@@ -24,7 +25,7 @@ const target = import.meta.env.VITE_TARGET;
 const isPlugin = target === 'utools' || target === 'ztools';
 
 const { t } = useI18n();
-const currentView = ref<'dashboard' | 'settings' | 'nodes'>('dashboard');
+const currentView = ref<'dashboard' | 'settings' | 'nodes' | 'ports'>('dashboard');
 const loaded = ref(false);
 const isDragging = ref(false);
 let unlistenDragEnter: UnlistenFn | null = null;
@@ -615,6 +616,7 @@ watch(
             <Dashboard v-if="currentView === 'dashboard'" key="dashboard" />
             <Settings v-else-if="currentView === 'settings'" key="settings" />
             <NodeManager v-else-if="currentView === 'nodes'" key="nodes" />
+            <PortManager v-else-if="currentView === 'ports'" key="ports" />
           </KeepAlive>
           </Transition>
         </div>

@@ -1,4 +1,5 @@
 import { ref, onUnmounted } from 'vue';
+import { useSettingsStore } from '../stores/settings';
 
 export interface SplitPaneOptions {
   /** Initial size in pixels */
@@ -11,13 +12,30 @@ export interface SplitPaneOptions {
   direction: 'horizontal' | 'vertical';
   /** If true, dragging in the positive direction decreases size (e.g. bottom panel: drag down = shrink) */
   reverse?: boolean;
+  /** Persist the pane size using settings.layoutState */
+  storageKey?: string;
 }
 
 export function useSplitPane(options: SplitPaneOptions) {
-  const size = ref(options.initial);
+  const settingsStore = useSettingsStore();
+  const savedSize = options.storageKey
+    ? settingsStore.settings.layoutState?.[options.storageKey]
+    : undefined;
+  const initialSize = typeof savedSize === 'number'
+    ? Math.min(options.max, Math.max(options.min, savedSize))
+    : options.initial;
+  const size = ref(initialSize);
   const isDragging = ref(false);
   let startPos = 0;
   let startSize = 0;
+
+  function persistSize() {
+    if (!options.storageKey) return;
+    if (!settingsStore.settings.layoutState) {
+      settingsStore.settings.layoutState = {};
+    }
+    settingsStore.settings.layoutState[options.storageKey] = size.value;
+  }
 
   function onMouseDown(e: MouseEvent) {
     e.preventDefault();
@@ -43,6 +61,7 @@ export function useSplitPane(options: SplitPaneOptions) {
     document.removeEventListener('mouseup', onMouseUp);
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
+    persistSize();
   }
 
   onUnmounted(() => {
@@ -50,6 +69,7 @@ export function useSplitPane(options: SplitPaneOptions) {
     document.removeEventListener('mouseup', onMouseUp);
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
+    persistSize();
   });
 
   return {

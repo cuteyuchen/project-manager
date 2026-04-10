@@ -95,6 +95,8 @@ pub fn run() {
             system::is_context_menu_supported,
             system::get_platform_info,
             system::detect_available_terminals,
+            system::list_used_ports,
+            system::terminate_process_by_pid,
             exit_app,
             git::git_check,
             git::git_init,

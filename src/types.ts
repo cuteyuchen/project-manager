@@ -53,6 +53,7 @@ export interface Settings {
   defaultEditorId?: string;
   defaultTerminal: string;
   customTerminals?: { id: string; name: string }[];
+  layoutState?: Record<string, number>;
   locale: 'zh' | 'en';
   themeMode: 'dark' | 'light' | 'auto';
   autoUpdate: boolean;

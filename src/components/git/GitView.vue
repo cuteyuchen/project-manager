@@ -2,6 +2,7 @@
 import { ref, computed, watch, onActivated, onDeactivated, onUnmounted } from 'vue';
 import { useProjectStore } from '../../stores/project';
 import { useGitStore } from '../../stores/git';
+import { useSettingsStore } from '../../stores/settings';
 import { useI18n } from 'vue-i18n';
 import { ElMessage } from 'element-plus';
 import { useSplitPane } from '../../composables/useSplitPane';
@@ -19,6 +20,7 @@ import { showPersistentGitError } from './message';
 const { t } = useI18n();
 const projectStore = useProjectStore();
 const gitStore = useGitStore();
+const settingsStore = useSettingsStore();
 
 const activeTab = ref<'changes' | 'history'>('changes');
 const showBranchDialog = ref(false);
@@ -34,13 +36,57 @@ const isGitRepo = computed(() => {
 });
 
 // Draggable split panes for changes tab
-const leftPane = useSplitPane({ initial: 280, min: 180, max: 500, direction: 'horizontal' });
-const commitPane = useSplitPane({ initial: 180, min: 120, max: 400, direction: 'vertical', reverse: true });
-const historyTopPane = useSplitPane({ initial: 250, min: 140, max: 820, direction: 'vertical' });
-const historyLeftPane = useSplitPane({ initial: 360, min: 260, max: 700, direction: 'horizontal' });
-const historyDetailPane = useSplitPane({ initial: 170, min: 110, max: 420, direction: 'vertical' });
+function getSavedLayoutNumber(storageKey: string, fallback: number, min: number, max: number) {
+  const value = settingsStore.settings.layoutState?.[storageKey];
+  if (typeof value !== 'number') return fallback;
+  return Math.min(max, Math.max(min, value));
+}
+
+function persistLayoutNumber(storageKey: string, value: number) {
+  if (!settingsStore.settings.layoutState) {
+    settingsStore.settings.layoutState = {};
+  }
+  settingsStore.settings.layoutState[storageKey] = value;
+}
+
+const leftPane = useSplitPane({
+  initial: 280,
+  min: 180,
+  max: 500,
+  direction: 'horizontal',
+  storageKey: 'git.changes.leftPane',
+});
+const commitPane = useSplitPane({
+  initial: 180,
+  min: 120,
+  max: 400,
+  direction: 'vertical',
+  reverse: true,
+  storageKey: 'git.changes.commitPane',
+});
+const historyTopPane = useSplitPane({
+  initial: 250,
+  min: 140,
+  max: 820,
+  direction: 'vertical',
+  storageKey: 'git.history.topPane',
+});
+const historyLeftPane = useSplitPane({
+  initial: 360,
+  min: 260,
+  max: 700,
+  direction: 'horizontal',
+  storageKey: 'git.history.leftPane',
+});
+const historyDetailPane = useSplitPane({
+  initial: 170,
+  min: 110,
+  max: 420,
+  direction: 'vertical',
+  storageKey: 'git.history.detailPane',
+});
 // For the staged/unstaged vertical split inside status panel, we use a percentage-based approach
-const stagedRatio = ref(50); // percentage of staged area height
+const stagedRatio = ref(getSavedLayoutNumber('git.changes.stagedRatio', 50, 15, 85)); // percentage of staged area height
 let stagedDragStart = 0;
 let stagedRatioStart = 0;
 const isDraggingStagedSplit = ref(false);
@@ -75,6 +121,7 @@ function onStagedSplitMouseUp() {
   document.removeEventListener('mouseup', onStagedSplitMouseUp);
   document.body.style.cursor = '';
   document.body.style.userSelect = '';
+  persistLayoutNumber('git.changes.stagedRatio', stagedRatio.value);
 }
 
 function clearScheduledRefresh() {
@@ -145,6 +192,7 @@ api.onWindowFocus(() => {
 onUnmounted(() => {
   clearScheduledRefresh();
   unlistenFocus?.();
+  persistLayoutNumber('git.changes.stagedRatio', stagedRatio.value);
 });
 
 onActivated(enterActiveMode);
