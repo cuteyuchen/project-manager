@@ -104,9 +104,9 @@ function viewProcess(entry: PortEntry) {
 
 async function openExecutableLocation() {
   if (!selectedPort.value?.executable_path) return;
-  const normalized = selectedPort.value.executable_path.replace(/\//g, '\\');
-  const index = normalized.lastIndexOf('\\');
-  const directory = index > 0 ? normalized.slice(0, index) : normalized;
+  const exePath = selectedPort.value.executable_path;
+  const index = Math.max(exePath.lastIndexOf('/'), exePath.lastIndexOf('\\'));
+  const directory = index > 0 ? exePath.slice(0, index) : exePath;
 
   try {
     await api.openFolder(directory);

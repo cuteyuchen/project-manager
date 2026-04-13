@@ -235,6 +235,32 @@ function escapePowerShellSingleQuotes(value) {
 // Platform-adaptive: support both uTools and ZTools
 const platform = typeof ztools !== 'undefined' ? ztools : utools;
 
+// Port parsing helpers
+function parseLsofEndpoint(str) {
+    if (!str) return { address: '', port: 0 };
+    const lastColon = str.lastIndexOf(':');
+    if (lastColon < 0) return { address: str, port: 0 };
+    const address = str.substring(0, lastColon);
+    const port = parseInt(str.substring(lastColon + 1)) || 0;
+    return { address: address === '*' ? '0.0.0.0' : address, port };
+}
+
+function parseSsEndpoint(str) {
+    if (!str || str === '*:*') return { address: '*', port: null };
+    // IPv6: [::1]:port
+    const bracketEnd = str.lastIndexOf(']:');
+    if (bracketEnd >= 0) {
+        const address = str.substring(1, bracketEnd);
+        const port = parseInt(str.substring(bracketEnd + 2)) || null;
+        return { address, port };
+    }
+    const lastColon = str.lastIndexOf(':');
+    if (lastColon < 0) return { address: str, port: null };
+    const address = str.substring(0, lastColon);
+    const portStr = str.substring(lastColon + 1);
+    return { address, port: portStr === '*' ? null : (parseInt(portStr) || null) };
+}
+
 // Cleanup on exit
 platform.onPluginOut(() => {
     cleanupAllProcesses();
@@ -1103,6 +1129,219 @@ window.services = {
                 }
             }
         }
+    },
+
+    // ─── Port Management ─────────────────────────────────────────────────────
+
+    listUsedPorts: async () => {
+        return new Promise((resolve, reject) => {
+            if (process.platform === 'win32') {
+                // Windows: Use PowerShell Get-NetTCPConnection + Get-NetUDPEndpoint
+                const script = `
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$ports = @()
+$ports += Get-NetTCPConnection -ErrorAction SilentlyContinue | ForEach-Object {
+  [pscustomobject]@{
+    Protocol = 'TCP'
+    LocalAddress = if ($_.LocalAddress) { $_.LocalAddress.ToString() } else { '' }
+    LocalPort = $_.LocalPort
+    RemoteAddress = if ($_.RemoteAddress) { $_.RemoteAddress.ToString() } else { '' }
+    RemotePort = $_.RemotePort
+    State = if ($_.State) { $_.State.ToString() } else { 'UNKNOWN' }
+    OwningProcess = $_.OwningProcess
+  }
+}
+$ports += Get-NetUDPEndpoint -ErrorAction SilentlyContinue | ForEach-Object {
+  [pscustomobject]@{
+    Protocol = 'UDP'
+    LocalAddress = if ($_.LocalAddress) { $_.LocalAddress.ToString() } else { '' }
+    LocalPort = $_.LocalPort
+    RemoteAddress = ''
+    RemotePort = $null
+    State = 'LISTEN'
+    OwningProcess = $_.OwningProcess
+  }
+}
+$pids = ($ports | Select-Object -ExpandProperty OwningProcess -Unique) -join ','
+$procs = @{}
+if ($pids) {
+  Get-CimInstance Win32_Process -Filter "ProcessId IN ($pids)" -ErrorAction SilentlyContinue | ForEach-Object {
+    $procs[$_.ProcessId] = @{ Name = $_.Name; Path = $_.ExecutablePath; Cmd = $_.CommandLine }
+  }
+}
+$result = $ports | ForEach-Object {
+  $p = $procs[$_.OwningProcess]
+  [pscustomobject]@{
+    protocol = $_.Protocol
+    local_address = $_.LocalAddress
+    local_port = $_.LocalPort
+    remote_address = if ($_.RemoteAddress -and $_.RemoteAddress -ne '') { $_.RemoteAddress } else { $null }
+    remote_port = $_.RemotePort
+    state = $_.State.ToUpper()
+    pid = $_.OwningProcess
+    process_name = if ($p) { $p.Name } else { $null }
+    executable_path = if ($p) { $p.Path } else { $null }
+    command_line = if ($p) { $p.Cmd } else { $null }
+  }
+} | Sort-Object local_port, protocol, pid
+$result | ConvertTo-Json -Compress`;
+
+                exec(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"')}"`, {
+                    maxBuffer: 50 * 1024 * 1024,
+                    windowsHide: true,
+                    encoding: 'utf8',
+                }, (error, stdout) => {
+                    if (error) return reject(error);
+                    try {
+                        const trimmed = (stdout || '').trim();
+                        if (!trimmed || trimmed === 'null') return resolve([]);
+                        const parsed = JSON.parse(trimmed);
+                        resolve(Array.isArray(parsed) ? parsed : [parsed]);
+                    } catch (e) {
+                        reject(new Error('Failed to parse port data: ' + e.message));
+                    }
+                });
+            } else if (process.platform === 'darwin') {
+                // macOS: Use lsof
+                exec('lsof -i -n -P', { maxBuffer: 50 * 1024 * 1024 }, (error, stdout) => {
+                    if (error && !stdout) return resolve([]);
+                    const lines = (stdout || '').split('\n').slice(1);
+                    const entries = [];
+
+                    for (const line of lines) {
+                        if (!line.trim()) continue;
+                        const parts = line.split(/\s+/);
+                        if (parts.length < 9) continue;
+
+                        const processName = parts[0];
+                        const pid = parseInt(parts[1]) || null;
+                        const rawType = (parts[7] || '').toUpperCase();
+                        const protocol = rawType === 'UDP' ? 'UDP' : 'TCP';
+                        const namePart = parts[8] || '';
+                        const state = parts[9] || (protocol === 'UDP' ? 'LISTEN' : 'UNKNOWN');
+
+                        let localAddr = '', localPort = 0, remoteAddr = null, remotePort = null;
+
+                        if (namePart.includes('->')) {
+                            const [local, remote] = namePart.split('->');
+                            const lp = parseLsofEndpoint(local);
+                            const rp = parseLsofEndpoint(remote);
+                            localAddr = lp.address;
+                            localPort = lp.port;
+                            remoteAddr = rp.address || null;
+                            remotePort = rp.port || null;
+                        } else {
+                            const lp = parseLsofEndpoint(namePart);
+                            localAddr = lp.address;
+                            localPort = lp.port;
+                        }
+
+                        if (!localPort) continue;
+
+                        const normalizedState = state.replace(/[()]/g, '').toUpperCase();
+
+                        entries.push({
+                            protocol,
+                            local_address: localAddr,
+                            local_port: localPort,
+                            remote_address: remoteAddr,
+                            remote_port: remotePort,
+                            state: normalizedState === 'ESTABLISHED' ? 'ESTABLISHED'
+                                : normalizedState === 'LISTEN' ? 'LISTEN'
+                                : normalizedState === 'TIME_WAIT' ? 'TIME_WAIT'
+                                : normalizedState === 'CLOSE_WAIT' ? 'CLOSE_WAIT'
+                                : normalizedState,
+                            pid,
+                            process_name: processName,
+                            executable_path: null,
+                            command_line: null,
+                        });
+                    }
+
+                    entries.sort((a, b) => a.local_port - b.local_port || a.protocol.localeCompare(b.protocol));
+                    resolve(entries);
+                });
+            } else {
+                // Linux: Use ss
+                exec('ss -tunap', { maxBuffer: 50 * 1024 * 1024 }, (error, stdout) => {
+                    if (error && !stdout) return resolve([]);
+                    const lines = (stdout || '').split('\n').slice(1);
+                    const entries = [];
+
+                    for (const line of lines) {
+                        if (!line.trim()) continue;
+                        const parts = line.split(/\s+/);
+                        if (parts.length < 5) continue;
+
+                        const proto = parts[0].toUpperCase();
+                        const protocol = (proto === 'TCP' || proto === 'TCP6') ? 'TCP' : 'UDP';
+
+                        const stateMap = {
+                            'LISTEN': 'LISTEN', 'ESTAB': 'ESTABLISHED', 'TIME-WAIT': 'TIME_WAIT',
+                            'CLOSE-WAIT': 'CLOSE_WAIT', 'SYN-SENT': 'SYN_SENT', 'SYN-RECV': 'SYN_RECV',
+                            'FIN-WAIT-1': 'FIN_WAIT_1', 'FIN-WAIT-2': 'FIN_WAIT_2', 'UNCONN': 'LISTEN',
+                        };
+                        const state = stateMap[parts[1]] || parts[1].toUpperCase();
+
+                        const localEp = parseSsEndpoint(parts[4]);
+                        const remoteEp = parts.length > 5 ? parseSsEndpoint(parts[5]) : { address: null, port: null };
+
+                        if (!localEp.port) continue;
+
+                        let pid = null, processName = null;
+                        const usersField = parts.find(p => p.startsWith('users:'));
+                        if (usersField) {
+                            const match = usersField.match(/\("([^"]+)",pid=(\d+)/);
+                            if (match) {
+                                processName = match[1];
+                                pid = parseInt(match[2]) || null;
+                            }
+                        }
+
+                        let executablePath = null, commandLine = null;
+                        if (pid) {
+                            try { executablePath = fs.readlinkSync(`/proc/${pid}/exe`); } catch (_) {}
+                            try { commandLine = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf-8').replace(/\0/g, ' ').trim(); } catch (_) {}
+                        }
+
+                        entries.push({
+                            protocol,
+                            local_address: localEp.address,
+                            local_port: localEp.port,
+                            remote_address: remoteEp.address && remoteEp.address !== '*' ? remoteEp.address : null,
+                            remote_port: remoteEp.port,
+                            state,
+                            pid,
+                            process_name: processName,
+                            executable_path: executablePath,
+                            command_line: commandLine,
+                        });
+                    }
+
+                    entries.sort((a, b) => a.local_port - b.local_port || a.protocol.localeCompare(b.protocol));
+                    resolve(entries);
+                });
+            }
+        });
+    },
+
+    terminateProcessByPid: async (pid) => {
+        return new Promise((resolve, reject) => {
+            if (!pid || typeof pid !== 'number') {
+                return reject(new Error('Invalid PID'));
+            }
+            if (process.platform === 'win32') {
+                exec(`taskkill /PID ${pid} /T /F`, { windowsHide: true }, (error) => {
+                    if (error) reject(error);
+                    else resolve();
+                });
+            } else {
+                exec(`kill -9 ${pid}`, (error) => {
+                    if (error) reject(error);
+                    else resolve();
+                });
+            }
+        });
     },
 
     // ─── Git ─────────────────────────────────────────────────────────────────

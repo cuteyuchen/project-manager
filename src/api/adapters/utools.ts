@@ -159,10 +159,16 @@ export class UToolsAdapter implements PlatformAPI {
   }
 
   async listUsedPorts(): Promise<PortEntry[]> {
+      if (this.service.listUsedPorts) {
+          return this.service.listUsedPorts();
+      }
       return Promise.reject(new Error('Port management is not supported in plugin mode'));
   }
 
-  async terminateProcessByPid(_pid: number): Promise<void> {
+  async terminateProcessByPid(pid: number): Promise<void> {
+      if ((this.service as any).terminateProcessByPid) {
+          return (this.service as any).terminateProcessByPid(pid);
+      }
       return Promise.reject(new Error('Port management is not supported in plugin mode'));
   }
 

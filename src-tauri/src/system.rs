@@ -495,18 +495,392 @@ fn list_used_ports_windows() -> Result<Vec<PortEntry>, String> {
     Ok(entries)
 }
 
-#[cfg(not(target_os = "windows"))]
-fn list_used_ports_windows() -> Result<Vec<PortEntry>, String> {
-    Err("Port management is currently supported on Windows only".to_string())
+#[cfg(target_os = "linux")]
+fn list_used_ports_linux() -> Result<Vec<PortEntry>, String> {
+    // Use `ss` command: ss -tunap
+    let output = Command::new("ss")
+        .args(["-tunap"])
+        .output()
+        .map_err(|e| format!("Failed to run ss: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("ss command failed: {}", stderr));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut entries: Vec<PortEntry> = Vec::new();
+
+    for line in stdout.lines().skip(1) {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 5 {
+            continue;
+        }
+
+        let protocol = match parts[0].to_uppercase().as_str() {
+            "tcp" | "tcp6" => "TCP".to_string(),
+            "udp" | "udp6" => "UDP".to_string(),
+            _ => continue,
+        };
+
+        let state = match parts[1] {
+            "LISTEN" => "LISTEN".to_string(),
+            "ESTAB" => "ESTABLISHED".to_string(),
+            "TIME-WAIT" => "TIME_WAIT".to_string(),
+            "CLOSE-WAIT" => "CLOSE_WAIT".to_string(),
+            "SYN-SENT" => "SYN_SENT".to_string(),
+            "SYN-RECV" => "SYN_RECV".to_string(),
+            "FIN-WAIT-1" => "FIN_WAIT_1".to_string(),
+            "FIN-WAIT-2" => "FIN_WAIT_2".to_string(),
+            "LAST-ACK" => "LAST_ACK".to_string(),
+            "CLOSING" => "CLOSING".to_string(),
+            "UNCONN" => "LISTEN".to_string(),
+            other => other.to_uppercase(),
+        };
+
+        let (local_address, local_port) = parse_ss_endpoint(parts[4]);
+        let (remote_address, remote_port) = if parts.len() > 5 {
+            let (addr, port) = parse_ss_endpoint(parts[5]);
+            (Some(addr).filter(|a| !a.is_empty() && a != "*"), port)
+        } else {
+            (None, None)
+        };
+
+        // Parse process info from the last field, e.g. users:(("node",pid=1234,fd=5))
+        let (pid, process_name) = if let Some(users_field) = parts.iter().find(|p| p.starts_with("users:")) {
+            parse_ss_users(users_field)
+        } else {
+            (None, None)
+        };
+
+        let executable_path = pid.and_then(|p| {
+            std::fs::read_link(format!("/proc/{}/exe", p))
+                .ok()
+                .map(|pb| pb.to_string_lossy().to_string())
+        });
+
+        let command_line = pid.and_then(|p| {
+            std::fs::read_to_string(format!("/proc/{}/cmdline", p))
+                .ok()
+                .map(|s| s.replace('\0', " ").trim().to_string())
+        });
+
+        entries.push(PortEntry {
+            protocol,
+            local_address,
+            local_port: local_port.unwrap_or(0),
+            remote_address,
+            remote_port,
+            state,
+            pid,
+            process_name,
+            executable_path,
+            command_line,
+        });
+    }
+
+    entries.sort_by(|a, b| {
+        a.local_port.cmp(&b.local_port)
+            .then(a.protocol.cmp(&b.protocol))
+            .then(a.pid.unwrap_or(0).cmp(&b.pid.unwrap_or(0)))
+    });
+
+    Ok(entries)
+}
+
+#[cfg(target_os = "linux")]
+fn parse_ss_endpoint(s: &str) -> (String, Option<u16>) {
+    // Format: addr:port or [::1]:port or *:*
+    if s == "*:*" {
+        return ("*".to_string(), None);
+    }
+    if let Some(bracket_end) = s.rfind("]:") {
+        let addr = &s[1..bracket_end];
+        let port = s[bracket_end + 2..].parse::<u16>().ok();
+        (addr.to_string(), port)
+    } else if let Some(colon) = s.rfind(':') {
+        let addr = &s[..colon];
+        let port_str = &s[colon + 1..];
+        if port_str == "*" {
+            (addr.to_string(), None)
+        } else {
+            let port = port_str.parse::<u16>().ok();
+            (addr.to_string(), port)
+        }
+    } else {
+        (s.to_string(), None)
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn parse_ss_users(field: &str) -> (Option<u32>, Option<String>) {
+    // Format: users:(("name",pid=123,fd=4))
+    let mut pid = None;
+    let mut name = None;
+
+    if let Some(start) = field.find("((") {
+        let inner = &field[start + 2..];
+        if let Some(end) = inner.find("))") {
+            let content = &inner[..end];
+            let parts: Vec<&str> = content.split(',').collect();
+            if !parts.is_empty() {
+                name = Some(parts[0].trim_matches('"').to_string());
+            }
+            for part in &parts {
+                let trimmed = part.trim();
+                if let Some(pid_str) = trimmed.strip_prefix("pid=") {
+                    pid = pid_str.parse::<u32>().ok();
+                }
+            }
+        }
+    }
+
+    (pid, name)
+}
+
+#[cfg(target_os = "macos")]
+fn list_used_ports_macos() -> Result<Vec<PortEntry>, String> {
+    // Use lsof -i -n -P on macOS
+    let output = Command::new("lsof")
+        .args(["-i", "-n", "-P", "-F", "pcnPtTf"])
+        .output()
+        .map_err(|e| format!("Failed to run lsof: {}", e))?;
+
+    if !output.status.success() {
+        // lsof may return 1 if no files found, which is ok
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !stderr.is_empty() && !output.stdout.is_empty() {
+            // partial success
+        } else if output.stdout.is_empty() {
+            return Ok(Vec::new());
+        }
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut entries: Vec<PortEntry> = Vec::new();
+
+    let mut current_pid: Option<u32> = None;
+    let mut current_process_name: Option<String> = None;
+    let mut current_protocol: Option<String> = None;
+    let mut current_state: Option<String> = None;
+    let mut current_name: Option<String> = None;
+
+    for line in stdout.lines() {
+        if line.is_empty() {
+            continue;
+        }
+
+        let field_type = &line[..1];
+        let value = &line[1..];
+
+        match field_type {
+            "p" => {
+                current_pid = value.parse::<u32>().ok();
+                current_process_name = None;
+                current_protocol = None;
+                current_state = None;
+                current_name = None;
+            }
+            "c" => {
+                current_process_name = Some(value.to_string());
+            }
+            "P" => {
+                current_protocol = Some(value.to_uppercase());
+            }
+            "t" => {
+                current_protocol = Some(value.to_uppercase());
+            }
+            "T" => {
+                // TST=LISTEN etc.
+                if let Some(st) = value.strip_prefix("ST=") {
+                    current_state = Some(match st {
+                        "LISTEN" => "LISTEN".to_string(),
+                        "ESTABLISHED" => "ESTABLISHED".to_string(),
+                        "TIME_WAIT" => "TIME_WAIT".to_string(),
+                        "CLOSE_WAIT" => "CLOSE_WAIT".to_string(),
+                        "SYN_SENT" => "SYN_SENT".to_string(),
+                        "SYN_RECEIVED" => "SYN_RECV".to_string(),
+                        "FIN_WAIT_1" => "FIN_WAIT_1".to_string(),
+                        "FIN_WAIT_2" => "FIN_WAIT_2".to_string(),
+                        "LAST_ACK" => "LAST_ACK".to_string(),
+                        "CLOSING" => "CLOSING".to_string(),
+                        other => other.to_uppercase(),
+                    });
+                }
+            }
+            "n" => {
+                current_name = Some(value.to_string());
+            }
+            "f" => {
+                // A new file descriptor line: emit previous entry if we have a valid name
+                if let Some(ref name_str) = current_name {
+                    if name_str.contains("->") || name_str.contains(':') {
+                        if let Some(entry) = build_lsof_entry(
+                            name_str,
+                            &current_protocol,
+                            &current_state,
+                            current_pid,
+                            &current_process_name,
+                        ) {
+                            entries.push(entry);
+                        }
+                    }
+                }
+                // Reset per-fd fields
+                current_protocol = None;
+                current_state = None;
+                current_name = None;
+            }
+            _ => {}
+        }
+    }
+
+    // Emit last entry
+    if let Some(ref name_str) = current_name {
+        if name_str.contains("->") || name_str.contains(':') {
+            if let Some(entry) = build_lsof_entry(
+                name_str,
+                &current_protocol,
+                &current_state,
+                current_pid,
+                &current_process_name,
+            ) {
+                entries.push(entry);
+            }
+        }
+    }
+
+    // Get executable paths for all unique PIDs
+    let unique_pids: Vec<u32> = entries.iter().filter_map(|e| e.pid).collect::<std::collections::HashSet<_>>().into_iter().collect();
+    let mut exe_map: HashMap<u32, (Option<String>, Option<String>)> = HashMap::new();
+
+    for pid in unique_pids {
+        let exe_path = Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "comm="])
+            .output()
+            .ok()
+            .and_then(|o| {
+                if o.status.success() {
+                    let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                    if s.is_empty() { None } else { Some(s) }
+                } else {
+                    None
+                }
+            });
+        let cmd_line = Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "command="])
+            .output()
+            .ok()
+            .and_then(|o| {
+                if o.status.success() {
+                    let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                    if s.is_empty() { None } else { Some(s) }
+                } else {
+                    None
+                }
+            });
+        exe_map.insert(pid, (exe_path, cmd_line));
+    }
+
+    for entry in &mut entries {
+        if let Some(pid) = entry.pid {
+            if let Some((exe, cmd)) = exe_map.get(&pid) {
+                entry.executable_path = exe.clone();
+                entry.command_line = cmd.clone();
+            }
+        }
+    }
+
+    entries.sort_by(|a, b| {
+        a.local_port.cmp(&b.local_port)
+            .then(a.protocol.cmp(&b.protocol))
+            .then(a.pid.unwrap_or(0).cmp(&b.pid.unwrap_or(0)))
+    });
+
+    Ok(entries)
+}
+
+#[cfg(target_os = "macos")]
+fn build_lsof_entry(
+    name: &str,
+    protocol: &Option<String>,
+    state: &Option<String>,
+    pid: Option<u32>,
+    process_name: &Option<String>,
+) -> Option<PortEntry> {
+    let proto = protocol.as_deref().unwrap_or("TCP").to_string();
+    let default_state = if proto == "UDP" { "LISTEN" } else { "UNKNOWN" };
+
+    // name format: "local_addr:port->remote_addr:port" or "local_addr:port" or "*:port"
+    if let Some(arrow_pos) = name.find("->") {
+        let local = &name[..arrow_pos];
+        let remote = &name[arrow_pos + 2..];
+        let (local_addr, local_port) = parse_lsof_endpoint(local)?;
+        let (remote_addr, remote_port) = parse_lsof_endpoint(remote)
+            .map(|(a, p)| (Some(a), Some(p)))
+            .unwrap_or((None, None));
+
+        Some(PortEntry {
+            protocol: proto,
+            local_address: local_addr,
+            local_port,
+            remote_address: remote_addr,
+            remote_port,
+            state: state.clone().unwrap_or_else(|| default_state.to_string()),
+            pid,
+            process_name: process_name.clone(),
+            executable_path: None,
+            command_line: None,
+        })
+    } else {
+        let (local_addr, local_port) = parse_lsof_endpoint(name)?;
+        Some(PortEntry {
+            protocol: proto,
+            local_address: local_addr,
+            local_port,
+            remote_address: None,
+            remote_port: None,
+            state: state.clone().unwrap_or_else(|| default_state.to_string()),
+            pid,
+            process_name: process_name.clone(),
+            executable_path: None,
+            command_line: None,
+        })
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn parse_lsof_endpoint(s: &str) -> Option<(String, u16)> {
+    // Format: addr:port, [::1]:port, *:port
+    if let Some(bracket_end) = s.rfind("]:") {
+        let addr = &s[1..bracket_end];
+        let port = s[bracket_end + 2..].parse::<u16>().ok()?;
+        Some((addr.to_string(), port))
+    } else if let Some(colon) = s.rfind(':') {
+        let addr = &s[..colon];
+        let port = s[colon + 1..].parse::<u16>().ok()?;
+        Some((addr.to_string(), port))
+    } else {
+        None
+    }
 }
 
 #[tauri::command]
 pub async fn list_used_ports() -> Result<Vec<PortEntry>, String> {
-    run_system_task(move || list_used_ports_windows()).await?
+    run_system_task(move || {
+        #[cfg(target_os = "windows")]
+        { list_used_ports_windows() }
+        #[cfg(target_os = "linux")]
+        { list_used_ports_linux() }
+        #[cfg(target_os = "macos")]
+        { list_used_ports_macos() }
+        #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+        { Err("Port management is not supported on this platform".to_string()) }
+    }).await?
 }
 
 #[cfg(target_os = "windows")]
-fn terminate_process_by_pid_windows(pid: u32) -> Result<(), String> {
+fn terminate_process_by_pid_impl(pid: u32) -> Result<(), String> {
     let output = Command::new("taskkill")
         .args(["/PID", &pid.to_string(), "/T", "/F"])
         .creation_flags(CREATE_NO_WINDOW)
@@ -517,11 +891,21 @@ fn terminate_process_by_pid_windows(pid: u32) -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "windows"))]
-fn terminate_process_by_pid_windows(_pid: u32) -> Result<(), String> {
-    Err("Port management is currently supported on Windows only".to_string())
+fn terminate_process_by_pid_impl(pid: u32) -> Result<(), String> {
+    let output = Command::new("kill")
+        .args(["-9", &pid.to_string()])
+        .output()
+        .map_err(|e| format!("Failed to terminate process {}: {}", pid, e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("Failed to terminate process {}: {}", pid, stderr))
+    }
 }
 
 #[tauri::command]
 pub async fn terminate_process_by_pid(pid: u32) -> Result<(), String> {
-    run_system_task(move || terminate_process_by_pid_windows(pid)).await?
+    run_system_task(move || terminate_process_by_pid_impl(pid)).await?
 }
