@@ -220,26 +220,20 @@ async function checkUpdate(manual = false) {
           let fileName = '';
 
           if (os === 'windows') {
-            // Windows: project-manager_0.1.10_x64-setup.exe
+            // Windows: Project.Manager_1.1.1_x64-setup.exe
             const archStr = arch === 'x86_64' ? 'x64' : arch;
-            fileName = `project-manager_${versionNoV}_${archStr}-setup.exe`;
+            fileName = `Project.Manager_${versionNoV}_${archStr}-setup.exe`;
           } else if (os === 'macos') {
-            // macOS: project-manager_0.1.10_x64.dmg or aarch64.dmg
-            // Tauri bundle naming for mac usually uses target triple or just arch? 
-            // Standard tauri bundle is {productName}_{version}_{arch}.dmg
-            // x86_64 -> x64, aarch64 -> aarch64
+            // macOS: Project.Manager_1.1.1_x64.dmg or aarch64.dmg
             const archStr = arch === 'x86_64' ? 'x64' : arch;
-            fileName = `project-manager_${versionNoV}_${archStr}.dmg`;
+            fileName = `Project.Manager_${versionNoV}_${archStr}.dmg`;
           } else if (os === 'linux') {
-            // Linux: project-manager_0.1.10_amd64.AppImage
-            // x86_64 -> amd64
+            // Linux: Project.Manager_1.1.1_amd64.AppImage
             const archStr = arch === 'x86_64' ? 'amd64' : arch;
-            fileName = `project-manager_${versionNoV}_${archStr}.AppImage`;
+            fileName = `Project.Manager_${versionNoV}_${archStr}.AppImage`;
           } else {
-             // Fallback or error? defaulting to windows x64 if unknown is risky.
-             // But for now let's assume one of these 3.
              const archStr = arch === 'x86_64' ? 'x64' : arch;
-             fileName = `project-manager_${versionNoV}_${archStr}-setup.exe`;
+             fileName = `Project.Manager_${versionNoV}_${archStr}-setup.exe`;
           }
 
           const downloadUrl = `https://github.com/cuteyuchen/project-manager/releases/download/${latestTag}/${fileName}`;
