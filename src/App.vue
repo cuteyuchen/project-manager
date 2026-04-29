@@ -20,6 +20,7 @@ import type { Project } from './types';
 import { normalizeNvmVersion, findInstalledNodeVersion } from './utils/nvm';
 import { DEFAULT_NETWORK_TIMEOUT_MS, fetchWithTimeout, isAbortError } from './utils/network';
 import { ensureNodeInstallCommand } from './utils/projectCommands';
+import { selectReleaseAsset } from './utils/updateReleaseAsset';
 
 const target = import.meta.env.VITE_TARGET;
 const isPlugin = target === 'utools' || target === 'ztools';
@@ -216,28 +217,17 @@ async function checkUpdate(manual = false) {
           });
 
           const { os, arch } = await api.getPlatformInfo();
-          const versionNoV = latestTag.replace(/^v/, '');
-          let fileName = '';
+          /***********************更新安装包选择*********************/
+          const matchedAsset = selectReleaseAsset(
+            { os, arch },
+            Array.isArray(latestRelease.assets) ? latestRelease.assets : [],
+          );
 
-          if (os === 'windows') {
-            // Windows: Project.Manager_1.1.1_x64-setup.exe
-            const archStr = arch === 'x86_64' ? 'x64' : arch;
-            fileName = `Project.Manager_${versionNoV}_${archStr}-setup.exe`;
-          } else if (os === 'macos') {
-            // macOS: Project.Manager_1.1.1_x64.dmg or aarch64.dmg
-            const archStr = arch === 'x86_64' ? 'x64' : arch;
-            fileName = `Project.Manager_${versionNoV}_${archStr}.dmg`;
-          } else if (os === 'linux') {
-            // Linux: Project.Manager_1.1.1_amd64.AppImage
-            const archStr = arch === 'x86_64' ? 'amd64' : arch;
-            fileName = `Project.Manager_${versionNoV}_${archStr}.AppImage`;
-          } else {
-             const archStr = arch === 'x86_64' ? 'x64' : arch;
-             fileName = `Project.Manager_${versionNoV}_${archStr}-setup.exe`;
+          if (!matchedAsset?.browser_download_url) {
+            throw new Error(`No release asset found for ${os}/${arch}`);
           }
 
-          const downloadUrl = `https://github.com/cuteyuchen/project-manager/releases/download/${latestTag}/${fileName}`;
-          await api.installUpdate(downloadUrl);
+          await api.installUpdate(matchedAsset.browser_download_url);
         } catch (error: any) {
           if (error && error.toString().includes('cancelled')) {
              ElMessage.info(t('update.cancelled') || 'Update cancelled');
