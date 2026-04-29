@@ -3,7 +3,6 @@ import { ref, computed } from 'vue';
 import { useNodeStore } from '../stores/node';
 import { useI18n } from 'vue-i18n';
 import { ElMessage } from 'element-plus';
-import { api } from '../api';
 
 const { t } = useI18n();
 const props = defineProps<{ modelValue: boolean }>();
@@ -28,35 +27,17 @@ async function submit() {
   
   try {
     loading.value = true;
-    // Use nvm use
-    await api.useNode(selectedVersion.value);
-    
-    // After switching, we should update system node path detection
-    // Wait a bit for nvm to switch symlink
-    setTimeout(async () => {
-        const savedPath = localStorage.getItem('system_node_path');
-        // If we are using "System Default" (which means auto-detect), we should force re-detect
-        if (!savedPath || savedPath === 'System Default') {
-             const realPath = await api.getSystemNodePath();
-             if (realPath !== 'System Default') {
-                 // Update store directly to reflect change immediately
-                 const idx = nodeStore.versions.findIndex(v => v.source === 'system');
-                 if (idx !== -1) {
-                     nodeStore.versions[idx].path = realPath;
-                     nodeStore.versions[idx].version = selectedVersion.value;
-                 }
-             }
-        }
-        ElMessage.success(t('common.success'));
-        visible.value = false;
-        loading.value = false;
-        
-        // Refresh entire list
-        nodeStore.loadNvmNodes();
-    }, 1000);
-    
+    const targetNode = nodeStore.versions.find(v => v.source === 'nvm' && v.version === selectedVersion.value);
+    if (!targetNode) {
+      throw new Error(t('nodes.noNodes'));
+    }
+
+    await nodeStore.setDefaultNode(targetNode);
+    ElMessage.success(t('common.success'));
+    visible.value = false;
   } catch (e: any) {
     ElMessage.error(e.message || t('common.error'));
+  } finally {
     loading.value = false;
   }
 }

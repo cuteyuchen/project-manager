@@ -11,6 +11,12 @@ export interface EditorConfig {
   path: string;
 }
 
+export interface TerminalConfig {
+  id: string;
+  name: string;
+  path: string;
+}
+
 export interface ProjectFileEntry {
   id: string;
   name: string;
@@ -52,7 +58,7 @@ export interface Settings {
   editors?: EditorConfig[];
   defaultEditorId?: string;
   defaultTerminal: string;
-  customTerminals?: { id: string; name: string }[];
+  customTerminals?: TerminalConfig[];
   layoutState?: Record<string, number>;
   locale: 'zh' | 'en';
   themeMode: 'dark' | 'light' | 'auto';

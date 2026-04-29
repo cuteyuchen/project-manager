@@ -10,6 +10,7 @@ import { useI18n } from 'vue-i18n';
 import { getCustomCommandDisplayName } from '../utils/projectCommands';
 import { resolveNodePathFromVersion, resolveProjectNodePath, isExplicitNodeVersion } from '../utils/nodeRuntime';
 import { normalizeNvmVersion } from '../utils/nvm';
+import { resolveTerminalCommand } from '../utils/terminalConfig';
 
 const { t } = useI18n();
 const props = defineProps<{ project: Project }>();
@@ -127,7 +128,12 @@ async function openTerminal() {
             }
         }
 
-        await api.openInTerminal(props.project.path, settingsStore.settings.defaultTerminal, nodePath);
+        const terminalCommand = resolveTerminalCommand(
+            settingsStore.settings.defaultTerminal,
+            settingsStore.settings.customTerminals,
+        );
+
+        await api.openInTerminal(props.project.path, terminalCommand, nodePath);
     } catch (e) {
         console.error(e);
         ElMessage.error(`${t('common.error')}: ${e}`);

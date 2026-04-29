@@ -881,6 +881,32 @@ pub async fn git_diff(path: String, file: Option<String>, staged: Option<bool>) 
     .await
 }
 
+fn list_staged_files(path: &str) -> Result<Vec<String>, String> {
+    let output = run_git_relaxed(path, &["diff", "--cached", "--name-only", "-z"])?;
+    Ok(output
+        .split('\0')
+        .filter(|item| !item.trim().is_empty())
+        .map(|item| item.to_string())
+        .collect())
+}
+
+fn git_diff_for_ai_sync(path: &str) -> Result<String, String> {
+    let staged_files = list_staged_files(path)?;
+    if staged_files.is_empty() {
+        return Ok(String::new());
+    }
+
+    let mut args = vec!["diff", "--cached", "--"];
+    let staged_refs: Vec<&str> = staged_files.iter().map(|item| item.as_str()).collect();
+    args.extend(staged_refs);
+    run_git_relaxed(path, &args)
+}
+
+#[tauri::command]
+pub async fn git_diff_for_ai(path: String) -> Result<String, String> {
+    run_git_task(move || git_diff_for_ai_sync(&path)).await
+}
+
 #[tauri::command]
 pub async fn git_diff_commit(path: String, hash: String) -> Result<String, String> {
     run_git_task(move || run_git_relaxed(&path, &["show", "--format=", "--patch", &hash])).await
@@ -1415,4 +1441,91 @@ pub async fn git_revert_hunk(path: String, patch: String, staged: Option<bool>) 
         }
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::git_diff_for_ai_sync;
+    use super::run_git;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    /***********************测试仓库辅助函数*********************/
+
+    fn create_temp_repo_dir() -> PathBuf {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be valid")
+            .as_nanos();
+        let repo_dir = std::env::temp_dir().join(format!(
+            "project-manager-git-tests-{}-{}",
+            std::process::id(),
+            timestamp,
+        ));
+        fs::create_dir_all(&repo_dir).expect("temp repo dir should be created");
+        repo_dir
+    }
+
+    fn write_file(repo_dir: &PathBuf, relative_path: &str, content: &str) {
+        fs::write(repo_dir.join(relative_path), content).expect("file should be written");
+    }
+
+    fn setup_repo(repo_dir: &PathBuf) {
+        let repo_path = repo_dir.to_string_lossy().to_string();
+        run_git(&repo_path, &["init"]).expect("git init should succeed");
+        run_git(&repo_path, &["config", "user.name", "Project Manager Test"]).expect("git config user.name should succeed");
+        run_git(&repo_path, &["config", "user.email", "test@example.com"]).expect("git config user.email should succeed");
+    }
+
+    /***********************AI diff 只包含暂存改动*********************/
+
+    #[test]
+    fn git_diff_for_ai_excludes_unstaged_changes() {
+        let repo_dir = create_temp_repo_dir();
+        let repo_path = repo_dir.to_string_lossy().to_string();
+
+        setup_repo(&repo_dir);
+        write_file(&repo_dir, "tracked.txt", "line-1\n");
+        write_file(&repo_dir, "other.txt", "base\n");
+        run_git(&repo_path, &["add", "."]).expect("git add should succeed");
+        run_git(&repo_path, &["commit", "-m", "init"]).expect("git commit should succeed");
+
+        write_file(&repo_dir, "tracked.txt", "line-1\nstaged-line\n");
+        run_git(&repo_path, &["add", "tracked.txt"]).expect("git add tracked.txt should succeed");
+
+        write_file(&repo_dir, "tracked.txt", "line-1\nstaged-line\nunstaged-same-file\n");
+        write_file(&repo_dir, "other.txt", "base\nunstaged-only-file\n");
+        write_file(&repo_dir, "new.txt", "untracked-file\n");
+
+        let diff = git_diff_for_ai_sync(&repo_path).expect("ai diff should be generated");
+
+        assert!(diff.contains("tracked.txt"));
+        assert!(diff.contains("staged-line"));
+        assert!(!diff.contains("unstaged-same-file"));
+        assert!(!diff.contains("other.txt"));
+        assert!(!diff.contains("unstaged-only-file"));
+        assert!(!diff.contains("new.txt"));
+
+        let _ = fs::remove_dir_all(&repo_dir);
+    }
+
+    #[test]
+    fn git_diff_for_ai_returns_empty_when_nothing_is_staged() {
+        let repo_dir = create_temp_repo_dir();
+        let repo_path = repo_dir.to_string_lossy().to_string();
+
+        setup_repo(&repo_dir);
+        write_file(&repo_dir, "tracked.txt", "line-1\n");
+        run_git(&repo_path, &["add", "."]).expect("git add should succeed");
+        run_git(&repo_path, &["commit", "-m", "init"]).expect("git commit should succeed");
+
+        write_file(&repo_dir, "tracked.txt", "line-1\nunstaged-only\n");
+
+        let diff = git_diff_for_ai_sync(&repo_path).expect("ai diff should be generated");
+
+        assert!(diff.is_empty());
+
+        let _ = fs::remove_dir_all(&repo_dir);
+    }
 }

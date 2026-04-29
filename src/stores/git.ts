@@ -617,7 +617,8 @@ export const useGitStore = defineStore('git', () => {
       stream?: boolean;
     }
   ): Promise<string> {
-    const diff = await api.gitDiff(path, undefined, true);
+    /***********************AI 提交信息仅使用已暂存内容*********************/
+    const diff = await api.gitDiffForAi(path);
     if (!diff.trim()) {
       throw new Error('no_staged');
     }

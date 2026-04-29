@@ -107,7 +107,8 @@
     uninstall: '卸载',
     uninstallConfirm: '确定要卸载 Node {version} 吗？',
     setPath: '设置路径',
-    setSystemPath: '设置默认版本'
+    setSystemPath: '设置默认版本',
+    setDefault: '设为默认'
   },
   settings: {
     title: '设置',
@@ -129,6 +130,9 @@
     setAsDefault: '设为默认',
     defaultTerminal: '默认终端',
     terminalHint: '脚本执行时的包装器。',
+    terminalName: '终端名称',
+    terminalPath: '终端路径',
+    terminalPathPlaceholder: '例如 powershell.exe',
     terminalNotInstalled: '未安装',
     terminalAlreadyExists: '该终端已存在',
     addTerminal: '添加自定义终端',

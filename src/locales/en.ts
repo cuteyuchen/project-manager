@@ -108,7 +108,8 @@ export default {
     uninstall: 'Uninstall',
     uninstallConfirm: 'Are you sure you want to uninstall Node {version}?',
     setPath: 'Set Path',
-    setSystemPath: 'Set System Node'
+    setSystemPath: 'Set System Node',
+    setDefault: 'Set Default'
   },
   settings: {
     title: 'Settings',
@@ -130,6 +131,9 @@ export default {
     setAsDefault: 'Set Default',
     defaultTerminal: 'Default Terminal',
     terminalHint: 'Wrapper for script execution.',
+    terminalName: 'Terminal Name',
+    terminalPath: 'Terminal Path',
+    terminalPathPlaceholder: 'e.g. powershell.exe',
     terminalNotInstalled: 'Not Installed',
     terminalAlreadyExists: 'This terminal already exists',
     addTerminal: 'Add custom terminal',

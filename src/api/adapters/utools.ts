@@ -186,6 +186,12 @@ export class UToolsAdapter implements PlatformAPI {
   async gitPush(path: string, remote?: string, branch?: string, force?: boolean, setUpstream?: boolean, operationId?: string): Promise<string> { return this.service.gitPush(path, remote, branch, force, setUpstream, operationId); }
   async gitFetch(path: string, remote?: string, operationId?: string): Promise<string> { return this.service.gitFetch(path, remote, operationId); }
   async gitDiff(path: string, file?: string, staged?: boolean): Promise<string> { return this.service.gitDiff(path, file, staged); }
+  async gitDiffForAi(path: string): Promise<string> {
+      if ((this.service as any).gitDiffForAi) {
+          return (this.service as any).gitDiffForAi(path);
+      }
+      return this.service.gitDiff(path, undefined, true);
+  }
   async gitDiffCommit(path: string, hash: string): Promise<string> { return this.service.gitDiffCommit(path, hash); }
   async gitDiscard(path: string, files: string[]): Promise<string> { return this.service.gitDiscard(path, files); }
   async gitDiscardUntracked(path: string, files: string[]): Promise<string> { return this.service.gitDiscardUntracked(path, files); }

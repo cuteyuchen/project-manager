@@ -116,6 +116,7 @@ pub fn run() {
             git::git_push,
             git::git_fetch,
             git::git_diff,
+            git::git_diff_for_ai,
             git::git_diff_commit,
             git::git_discard,
             git::git_discard_untracked,

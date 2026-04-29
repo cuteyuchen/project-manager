@@ -1043,7 +1043,8 @@ window.services = {
     
     //************* 终端打开 *************
     openInTerminal: async (projectPath, terminal, nodePath) => {
-        const term = (terminal || 'cmd').trim().toLowerCase();
+        const termRaw = (terminal || 'cmd').trim();
+        const term = termRaw.toLowerCase();
         const spawnOptions = getTerminalSpawnOptions(nodePath);
         
         if (process.platform === 'win32') {
@@ -1090,18 +1091,27 @@ window.services = {
                         spawn('cmd', ['/K', startupCommand], spawnOptions);
                     }
                 } else {
-                    // CMD (Default)
-                    const startupCommand = pathEnvCmd
-                        ? `set "PATH=${pathEnvCmd}" && cd /d "${winPathCmd}" && node -v`
-                        : `cd /d "${winPathCmd}" && node -v`;
-                    spawn('cmd', ['/C', 'start', '', 'cmd', '/K', startupCommand], spawnOptions);
+                    if (termRaw.includes('\\') || termRaw.includes('/') || term.endsWith('.exe')) {
+                        const customOptions = { ...spawnOptions, cwd: winPath };
+                        spawn(termRaw, [], customOptions);
+                    } else {
+                        // CMD (Default)
+                        const startupCommand = pathEnvCmd
+                            ? `set "PATH=${pathEnvCmd}" && cd /d "${winPathCmd}" && node -v`
+                            : `cd /d "${winPathCmd}" && node -v`;
+                        spawn('cmd', ['/C', 'start', '', 'cmd', '/K', startupCommand], spawnOptions);
+                    }
                 }
             } catch (e) {
                 console.error('Failed to open terminal', e);
             }
         } else if (process.platform === 'darwin') {
              try {
-                spawn('open', ['-a', 'Terminal', projectPath], spawnOptions);
+                if (termRaw.includes('/')) {
+                    spawn(termRaw, [], { ...spawnOptions, cwd: projectPath });
+                } else {
+                    spawn('open', ['-a', 'Terminal', projectPath], spawnOptions);
+                }
              } catch (e) {
                 console.error(e);
              }
@@ -1118,6 +1128,10 @@ window.services = {
             if (target) {
                  spawn(target.cmd, target.args, spawnOptions).unref();
             } else {
+                if (termRaw.includes('/')) {
+                    spawn(termRaw, [], { ...spawnOptions, cwd: projectPath }).unref();
+                    return;
+                }
                 // Fallback attempt
                 for (const t of terms) {
                     try {
@@ -1553,6 +1567,24 @@ $result | ConvertTo-Json -Compress`;
         if (file) { args.push('--'); args.push(file); }
         try {
             return execFileSync('git', args, {
+                cwd: projectPath, windowsHide: true, maxBuffer: 10 * 1024 * 1024
+            }).toString();
+        } catch (e) {
+            return e.stdout ? e.stdout.toString() : '';
+        }
+    },
+
+    gitDiffForAi: async (projectPath) => {
+        try {
+            const stagedFilesOutput = execFileSync('git', ['diff', '--cached', '--name-only', '-z'], {
+                cwd: projectPath, windowsHide: true, maxBuffer: 10 * 1024 * 1024
+            }).toString();
+            const stagedFiles = stagedFilesOutput.split('\0').filter(Boolean);
+            if (stagedFiles.length === 0) {
+                return '';
+            }
+
+            return execFileSync('git', ['diff', '--cached', '--'].concat(stagedFiles), {
                 cwd: projectPath, windowsHide: true, maxBuffer: 10 * 1024 * 1024
             }).toString();
         } catch (e) {

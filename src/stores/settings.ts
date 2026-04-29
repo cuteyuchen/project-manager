@@ -4,6 +4,7 @@ import type { AiServiceConfig, Settings } from '../types';
 import type { TerminalInfo } from '../api/types';
 import { api } from '../api';
 import i18n from '../i18n';
+import { normalizeTerminalConfigs } from '../utils/terminalConfig';
 
 function createDefaultAiService(overrides: Partial<AiServiceConfig> = {}): AiServiceConfig {
   return {
@@ -91,6 +92,7 @@ export const useSettingsStore = defineStore('settings', () => {
       if (!parsed.layoutState || typeof parsed.layoutState !== 'object' || Array.isArray(parsed.layoutState)) {
         parsed.layoutState = {};
       }
+      parsed.customTerminals = normalizeTerminalConfigs(parsed.customTerminals);
       parsed.gitAiPrimaryService = normalizeAiService(parsed.gitAiPrimaryService, createDefaultAiService());
       if (typeof parsed.gitAiStream !== 'boolean') {
         parsed.gitAiStream = true;
@@ -104,6 +106,7 @@ export const useSettingsStore = defineStore('settings', () => {
   if (typeof settings.value.gitAiStream !== 'boolean') {
     settings.value.gitAiStream = true;
   }
+  settings.value.customTerminals = normalizeTerminalConfigs(settings.value.customTerminals);
   // Ensure at least one editor exists
   if (!settings.value.editors || settings.value.editors.length === 0) {
     settings.value.editors = [{ id: crypto.randomUUID(), name: 'VS Code', path: settings.value.editorPath || 'code' }];

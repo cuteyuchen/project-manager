@@ -281,6 +281,10 @@ export class TauriAdapter implements PlatformAPI {
         return invoke('git_diff', { path, file, staged });
     }
 
+    async gitDiffForAi(path: string): Promise<string> {
+        return invoke('git_diff_for_ai', { path });
+    }
+
     async gitDiffCommit(path: string, hash: string): Promise<string> {
         return invoke('git_diff_commit', { path, hash });
     }

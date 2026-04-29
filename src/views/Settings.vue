@@ -10,6 +10,7 @@ import type { AiServiceConfig, NodeVersion, Project, Settings } from '../types';
 import { isAiServiceConfigured, normalizeAiApiType, requestAiText } from '../utils/ai';
 import { isAbortError } from '../utils/network';
 import { ensureNodeInstallCommand } from '../utils/projectCommands';
+import { createTerminalConfig, getTerminalDuplicateKey, normalizeTerminalConfigs } from '../utils/terminalConfig';
 
 type ImportChoice = 'keep' | 'incoming';
 type ImportDiff = { key: string; label: string; current: string; incoming: string };
@@ -78,7 +79,7 @@ const importPlan = ref<ImportPlan | null>(null);
 const importSourceName = ref('');
 
 const deepClone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
-const draft = ref<Settings>(normalizeAiSettings(deepClone(toRaw(settingsStore.settings))));
+const draft = ref<Settings>(normalizeDefaultTerminalId(normalizeAiSettings(deepClone(toRaw(settingsStore.settings)))));
 const isDirty = computed(() => JSON.stringify(draft.value) !== JSON.stringify(settingsStore.settings));
 
 const importSummary = computed(() => {
@@ -93,11 +94,11 @@ const importSummary = computed(() => {
 });
 
 function resetDraft() {
-  draft.value = normalizeAiSettings(deepClone(toRaw(settingsStore.settings)));
+  draft.value = normalizeDefaultTerminalId(normalizeAiSettings(deepClone(toRaw(settingsStore.settings))));
 }
 
 function handleSave() {
-  Object.assign(settingsStore.settings, normalizeAiSettings(deepClone(toRaw(draft.value))));
+  Object.assign(settingsStore.settings, normalizeDefaultTerminalId(normalizeAiSettings(deepClone(toRaw(draft.value)))));
   ElMessage.success(t('common.success'));
 }
 
@@ -191,22 +192,46 @@ async function browseEditorPath(index: number) {
   }
 }
 
+/***********************自定义终端配置*********************/
+
+function isDuplicateCustomTerminalPath(path: string, currentId?: string) {
+  const duplicateKey = getTerminalDuplicateKey(path);
+  return (draft.value.customTerminals || []).some(item =>
+    item.id !== currentId && getTerminalDuplicateKey(item.path) === duplicateKey,
+  );
+}
+
 async function addCustomTerminal() {
   const selected = await selectExecutable();
   if (!selected) return;
   if (!draft.value.customTerminals) draft.value.customTerminals = [];
-  if (draft.value.customTerminals.some(item => item.id === selected)) {
+  if (isDuplicateCustomTerminalPath(selected)) {
     ElMessage.warning(t('settings.terminalAlreadyExists'));
     return;
   }
-  draft.value.customTerminals.push({ id: selected, name: selected.split(/[/\\]/).pop() || selected });
+  draft.value.customTerminals.push(createTerminalConfig(selected));
+}
+
+async function browseCustomTerminalPath(index: number) {
+  const selected = await selectExecutable();
+  const terminal = draft.value.customTerminals?.[index];
+  if (!selected || !terminal) return;
+  if (isDuplicateCustomTerminalPath(selected, terminal.id)) {
+    ElMessage.warning(t('settings.terminalAlreadyExists'));
+    return;
+  }
+
+  terminal.path = selected;
+  if (!terminal.name) {
+    terminal.name = selected.split(/[/\\]/).pop()?.replace(/\.\w+$/, '') || '';
+  }
 }
 
 function removeCustomTerminal(id: string) {
   if (!draft.value.customTerminals) return;
   draft.value.customTerminals = draft.value.customTerminals.filter(item => item.id !== id);
   if (draft.value.defaultTerminal === id) {
-    draft.value.defaultTerminal = settingsStore.allTerminals[0]?.id || 'cmd';
+    draft.value.defaultTerminal = settingsStore.availableTerminals[0]?.id || draft.value.customTerminals[0]?.id || 'cmd';
   }
 }
 
@@ -257,7 +282,14 @@ function normalizeProject(project: any): Project | null {
 }
 
 function normalizeSettingsPayload(settings: any): Settings {
-  return normalizeAiSettings({ ...deepClone(toRaw(settingsStore.settings)), ...settings });
+  const hasCustomTerminals = Boolean(settings) && Object.prototype.hasOwnProperty.call(settings, 'customTerminals');
+  return normalizeDefaultTerminalId(normalizeAiSettings({
+    ...deepClone(toRaw(settingsStore.settings)),
+    ...settings,
+    customTerminals: hasCustomTerminals
+      ? normalizeTerminalConfigs(settings?.customTerminals)
+      : deepClone(toRaw(settingsStore.settings.customTerminals || [])),
+  }));
 }
 
 function normalizeCustomNode(node: any): NodeVersion | null {
@@ -386,6 +418,24 @@ function normalizeDefaultEditorId(settings: Settings): Settings {
     settings.defaultEditorId = editors[0].id;
   }
 
+  return settings;
+}
+
+function normalizeDefaultTerminalId(settings: Settings): Settings {
+  const customTerminals = settings.customTerminals || [];
+  const customTerminalIds = new Set(customTerminals.map(item => item.id));
+  const defaultTerminal = settings.defaultTerminal?.trim();
+
+  if (!defaultTerminal) {
+    settings.defaultTerminal = settingsStore.allTerminals[0]?.id || 'cmd';
+    return settings;
+  }
+
+  if (customTerminalIds.has(defaultTerminal)) {
+    return settings;
+  }
+
+  settings.defaultTerminal = defaultTerminal;
   return settings;
 }
 
@@ -728,15 +778,25 @@ async function testAiConnection() {
               <div class="flex gap-2">
                 <el-select v-model="draft.defaultTerminal" class="flex-1">
                   <el-option-group :label="t('settings.detectedTerminals')"><el-option v-for="term in settingsStore.availableTerminals" :key="term.id" :label="term.name" :value="term.id" /></el-option-group>
-                  <el-option-group v-if="draft.customTerminals?.length" :label="t('settings.customTerminals')"><el-option v-for="term in draft.customTerminals" :key="term.id" :label="term.name" :value="term.id" /></el-option-group>
+                  <el-option-group v-if="draft.customTerminals?.length" :label="t('settings.customTerminals')"><el-option v-for="term in draft.customTerminals" :key="term.id" :label="term.name || term.path" :value="term.id" /></el-option-group>
                 </el-select>
                 <el-button @click="addCustomTerminal"><div class="i-mdi-plus text-sm" /></el-button>
               </div>
               <div v-if="draft.customTerminals?.length" class="mt-3 space-y-2">
-                <div v-for="term in draft.customTerminals" :key="term.id" class="flex items-center gap-2 rounded-lg bg-white dark:bg-slate-800 px-3 py-2 text-sm border border-slate-200 dark:border-slate-700/60">
-                  <div class="i-mdi-console text-slate-400" />
-                  <span class="flex-1 truncate">{{ term.name }}</span>
-                  <button class="text-red-400 hover:text-red-500 cursor-pointer" @click="removeCustomTerminal(term.id)"><div class="i-mdi-close text-sm" /></button>
+                <div v-for="(term, index) in draft.customTerminals" :key="term.id" class="panel">
+                  <div class="flex items-center gap-2">
+                    <el-tag v-if="draft.defaultTerminal === term.id" type="primary" effect="light" round>
+                      {{ t('settings.defaultEditorCurrent') }}
+                    </el-tag>
+                    <el-button v-else text type="primary" @click="draft.defaultTerminal = term.id">
+                      {{ t('settings.setAsDefault') }}
+                    </el-button>
+                    <el-input v-model="term.name" :placeholder="t('settings.terminalName')" class="!w-36" />
+                    <el-input v-model="term.path" readonly :placeholder="t('settings.terminalPathPlaceholder')" class="flex-1">
+                      <template #append><el-button @click="browseCustomTerminalPath(index)">{{ t('settings.selectFile') }}</el-button></template>
+                    </el-input>
+                    <el-button type="danger" text @click="removeCustomTerminal(term.id)"><el-icon><div class="i-mdi-close" /></el-icon></el-button>
+                  </div>
                 </div>
               </div>
             </div>

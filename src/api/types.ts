@@ -118,6 +118,7 @@ export interface PlatformAPI {
     gitPush(path: string, remote?: string, branch?: string, force?: boolean, setUpstream?: boolean, operationId?: string): Promise<string>;
     gitFetch(path: string, remote?: string, operationId?: string): Promise<string>;
     gitDiff(path: string, file?: string, staged?: boolean): Promise<string>;
+    gitDiffForAi(path: string): Promise<string>;
     gitDiffCommit(path: string, hash: string): Promise<string>;
     gitDiscard(path: string, files: string[]): Promise<string>;
     gitDiscardUntracked(path: string, files: string[]): Promise<string>;

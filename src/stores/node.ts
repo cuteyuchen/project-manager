@@ -2,6 +2,9 @@ import { defineStore } from 'pinia';
 import { ref, onMounted } from 'vue';
 import { api } from '../api';
 import type { NodeVersion } from '../types';
+import { sortNodeVersions, upsertSystemNodeVersion } from '../utils/nodeDefaultState';
+
+const SYSTEM_NODE_PLACEHOLDER = 'System Default';
 
 export const useNodeStore = defineStore('node', () => {
   const versions = ref<NodeVersion[]>([]);
@@ -38,21 +41,7 @@ export const useNodeStore = defineStore('node', () => {
   };
 
   const sortVersions = () => {
-    versions.value.sort((a, b) => {
-      // Prioritize system
-      if (a.source === 'system') return -1;
-      if (b.source === 'system') return 1;
-
-      // Then version descending
-      const parse = (v: string) => v.replace(/^v/, '').split('.').map(Number);
-      const va = parse(a.version);
-      const vb = parse(b.version);
-
-      for (let i = 0; i < 3; i++) {
-        if (va[i] !== vb[i]) return (vb[i] || 0) - (va[i] || 0);
-      }
-      return 0;
-    });
+    versions.value = sortNodeVersions(versions.value);
   };
 
   const addCustomNode = (node: NodeVersion) => {
@@ -66,31 +55,76 @@ export const useNodeStore = defineStore('node', () => {
     saveCustomNodes();
   };
 
-  const updateSystemNode = async (newPath: string) => {
-    const idx = versions.value.findIndex(v => v.source === 'system');
-    if (idx !== -1) {
-      versions.value[idx].path = newPath;
-      localStorage.setItem('system_node_path', newPath);
+  /***********************默认 Node 维护*********************/
 
-      // Try to detect version
+  const syncSystemNode = async (options: {
+    preferredVersion?: string;
+    preferredPath?: string;
+    persistPath?: boolean;
+  } = {}) => {
+    const persistPath = options.persistPath ?? true;
+    let resolvedPath = options.preferredPath || localStorage.getItem('system_node_path') || '';
+
+    if (!resolvedPath || resolvedPath === SYSTEM_NODE_PLACEHOLDER || options.preferredVersion) {
       try {
-        // We can invoke a command to check version, or just assume user knows.
-        // But let's try to be smart.
-        // Actually, for now let's just keep 'System Default' or update if we can.
-        // But the user request is to show the version instead of "Default".
-        // Since we don't have a backend command to get version from arbitrary path easily without spawning,
-        // let's try to execute `node -v` using that path.
-
-        if (newPath && newPath !== 'System Default') {
-          const ver = await api.getNodeVersion(newPath);
-          if (ver) {
-            versions.value[idx].version = ver;
-          }
+        const detectedPath = await api.getSystemNodePath();
+        if (detectedPath) {
+          resolvedPath = detectedPath;
         }
-      } catch (e) {
-        console.error('Failed to detect system node version', e);
+      } catch (error) {
+        console.error('Failed to detect system node path', error);
       }
     }
+
+    if (!resolvedPath) {
+      resolvedPath = SYSTEM_NODE_PLACEHOLDER;
+    }
+
+    let resolvedVersion = options.preferredVersion || '默认';
+    if (resolvedPath !== SYSTEM_NODE_PLACEHOLDER) {
+      try {
+        const detectedVersion = await api.getNodeVersion(resolvedPath);
+        if (detectedVersion) {
+          resolvedVersion = detectedVersion;
+        }
+      } catch (error) {
+        console.error('Failed to detect system node version', error);
+      }
+    }
+
+    versions.value = upsertSystemNodeVersion(versions.value, {
+      version: resolvedVersion,
+      path: resolvedPath,
+    });
+
+    if (!persistPath) {
+      return;
+    }
+
+    if (resolvedPath === SYSTEM_NODE_PLACEHOLDER) {
+      localStorage.removeItem('system_node_path');
+      return;
+    }
+
+    localStorage.setItem('system_node_path', resolvedPath);
+  };
+
+  const updateSystemNode = async (newPath: string, preferredVersion?: string) => {
+    await syncSystemNode({
+      preferredPath: newPath,
+      preferredVersion,
+    });
+  };
+
+  const setDefaultNode = async (node: NodeVersion) => {
+    if (node.source === 'nvm') {
+      await api.useNode(node.version);
+      await syncSystemNode({ preferredVersion: node.version });
+      await loadNvmNodes();
+      return;
+    }
+
+    await updateSystemNode(node.path, node.version);
   };
 
   const saveCustomNodes = () => {
@@ -158,41 +192,7 @@ export const useNodeStore = defineStore('node', () => {
   };
 
   onMounted(async () => {
-    // Add default system node placeholder
-    if (!versions.value.some(v => v.source === 'system')) {
-      let savedPath = localStorage.getItem('system_node_path');
-
-      // If no saved path, try to resolve it automatically
-      if (!savedPath || savedPath === 'System Default') {
-        try {
-          const realPath = await api.getSystemNodePath();
-          // Don't save it to localStorage yet, just use it for display
-          // Or maybe saving it is better? 
-          // Let's save it if it's not "System Default"
-          if (realPath !== 'System Default') {
-            savedPath = realPath;
-            localStorage.setItem('system_node_path', realPath);
-          } else {
-            savedPath = 'System Default';
-          }
-        } catch (e) {
-          savedPath = 'System Default';
-        }
-      }
-
-      let version = '默认';
-
-      try {
-        const v = await api.getNodeVersion(savedPath!);
-        if (v) version = v;
-      } catch (e) { }
-
-      versions.value.push({
-        version,
-        path: savedPath!,
-        source: 'system'
-      });
-    }
+    await syncSystemNode();
     loadCustomNodes();
     loadNvmNodes();
   });
@@ -204,6 +204,8 @@ export const useNodeStore = defineStore('node', () => {
     addCustomNode,
     removeNode,
     updateSystemNode,
+    syncSystemNode,
+    setDefaultNode,
     installNode,
     uninstallNode
   };

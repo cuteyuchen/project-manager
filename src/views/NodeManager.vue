@@ -7,6 +7,7 @@ import SetDefaultNodeModal from '../components/SetDefaultNodeModal.vue';
 import { ElMessageBox, ElMessage } from 'element-plus';
 import { useI18n } from 'vue-i18n';
 import { api } from '../api';
+import type { NodeVersion } from '../types';
 
 const { t } = useI18n();
 const nodeStore = useNodeStore();
@@ -25,6 +26,15 @@ function openFolder(path: string) {
 function refresh() {
     nodeStore.loadNvmNodes();
     ElMessage.success(t('common.success'));
+}
+
+async function handleSetDefault(row: NodeVersion) {
+    try {
+        await nodeStore.setDefaultNode(row);
+        ElMessage.success(t('common.success'));
+    } catch (error: any) {
+        ElMessage.error(error?.message || t('common.error'));
+    }
 }
 
 function handleRemove(path: string, source: string, version?: string) {
@@ -110,12 +120,15 @@ function handleRemove(path: string, source: string, version?: string) {
                 </el-table-column>
                 <el-table-column prop="source" :label="t('nodes.source')">
                     <template #default="{ row }">
-                        <el-tag v-if="row.source === 'system'" type="info" effect="light"
-                            class="!border-slate-300 dark:!bg-slate-700/50 dark:!border-slate-600 dark:text-white">System</el-tag>
-                        <el-tag v-else-if="row.source === 'nvm'" effect="light"
-                            class="!text-purple-600 !border-purple-300 dark:!bg-purple-500/20 dark:!text-purple-300 dark:!border-purple-500/30">NVM</el-tag>
-                        <el-tag v-else effect="light"
-                            class="!text-amber-600 !border-amber-300 dark:!bg-amber-500/20 dark:!text-amber-300 dark:!border-amber-500/30">Custom</el-tag>
+                        <div class="flex items-center gap-2">
+                            <el-tag v-if="row.source === 'system'" type="info" effect="light"
+                                class="!border-slate-300 dark:!bg-slate-700/50 dark:!border-slate-600 dark:text-white">System</el-tag>
+                            <el-tag v-else-if="row.source === 'nvm'" effect="light"
+                                class="!text-purple-600 !border-purple-300 dark:!bg-purple-500/20 dark:!text-purple-300 dark:!border-purple-500/30">NVM</el-tag>
+                            <el-tag v-else effect="light"
+                                class="!text-amber-600 !border-amber-300 dark:!bg-amber-500/20 dark:!text-amber-300 dark:!border-amber-500/30">Custom</el-tag>
+                            <el-tag v-if="row.source === 'system'" type="success" effect="light">{{ t('nodes.current') }}</el-tag>
+                        </div>
                     </template>
                 </el-table-column>
                 <el-table-column prop="path" :label="t('nodes.path')" show-overflow-tooltip>
@@ -129,11 +142,15 @@ function handleRemove(path: string, source: string, version?: string) {
                         </div>
                     </template>
                 </el-table-column>
-                <el-table-column :label="t('nodes.action')" width="120" align="center">
+                <el-table-column :label="t('nodes.action')" width="220" align="center">
                     <template #default="{ row }">
-                        <el-button v-if="row.source === 'custom' || row.source === 'nvm'" type="danger" size="small"
-                            plain @click="handleRemove(row.path, row.source, row.version)" class="!rounded-md">{{
-                                row.source === 'nvm' ? t('nodes.uninstall') : t('common.delete') }}</el-button>
+                        <div class="flex items-center justify-center gap-2">
+                            <el-button v-if="row.source !== 'system'" type="primary" size="small"
+                                plain @click="handleSetDefault(row)" class="!rounded-md">{{ t('nodes.setDefault') }}</el-button>
+                            <el-button v-if="row.source === 'custom' || row.source === 'nvm'" type="danger" size="small"
+                                plain @click="handleRemove(row.path, row.source, row.version)" class="!rounded-md">{{
+                                    row.source === 'nvm' ? t('nodes.uninstall') : t('common.delete') }}</el-button>
+                        </div>
                     </template>
                 </el-table-column>
             </el-table>

@@ -1008,7 +1008,8 @@ fn escape_for_powershell_single_quotes(value: &str) -> String {
 
 #[tauri::command]
 pub fn open_in_terminal(path: String, terminal: String, node_path: String) -> Result<(), String> {
-    let terminal = terminal.trim().to_lowercase();
+    let terminal = terminal.trim().to_string();
+    let terminal_key = terminal.to_lowercase();
     let terminal_path_env = build_terminal_path_env(&node_path);
 
     #[cfg(target_os = "windows")]
@@ -1023,7 +1024,7 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String) -> Re
             .as_ref()
             .map(|value| escape_for_powershell_single_quotes(value));
 
-        match terminal.as_str() {
+        match terminal_key.as_str() {
             "powershell" => {
                 let startup_script = if let Some(path_env) = &path_env_ps {
                     format!("$env:PATH='{}'; Set-Location '{}'; node -v", path_env, win_path_ps)
@@ -1086,7 +1087,7 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String) -> Re
             }
             _ => {
                 // Check if terminal is a custom executable path
-                if terminal.contains('\\') || terminal.contains('/') || terminal.ends_with(".exe") {
+                if terminal.contains('\\') || terminal.contains('/') || terminal_key.ends_with(".exe") {
                     let mut command = Command::new(&terminal);
                     command.current_dir(&win_path);
                     if let Some(path_env) = &terminal_path_env {
@@ -1112,7 +1113,7 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String) -> Re
 
     #[cfg(target_os = "macos")]
     {
-        match terminal.as_str() {
+        match terminal_key.as_str() {
             "iterm2" => {
                 let mut command = Command::new("open");
                 command.args(&["-a", "iTerm", &path]);
@@ -1146,7 +1147,7 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String) -> Re
     #[cfg(target_os = "linux")]
     {
         let shell_command = format!("cd '{}' ; node -v ; exec bash", path.replace('\'', "'\\''"));
-        match terminal.as_str() {
+        match terminal_key.as_str() {
             "gnome-terminal" => {
                 let mut command = Command::new("gnome-terminal");
                 command.args(&["--working-directory", &path, "--", "bash", "-c", "node -v; exec bash"]);
