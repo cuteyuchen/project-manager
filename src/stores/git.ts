@@ -231,6 +231,19 @@ export const useGitStore = defineStore('git', () => {
     try {
       status.value[projectId] = await api.gitStatus(path);
       statusLoadedAt(projectId);
+      // Clear diff if the selected file no longer exists in the status
+      if (selectedDiffFile.value) {
+        const s = status.value[projectId];
+        const fileStillExists = s && [
+          ...s.staged,
+          ...s.unstaged,
+          ...s.untracked,
+          ...s.conflicted,
+        ].some(f => f.path === selectedDiffFile.value);
+        if (!fileStillExists) {
+          clearDiff();
+        }
+      }
     } catch (e) {
       console.error('Failed to get git status:', e);
     }

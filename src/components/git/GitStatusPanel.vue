@@ -30,6 +30,12 @@ const hasChanges = computed(() =>
   stagedFiles.value.length > 0 || unstagedFiles.value.length > 0 || conflictedFiles.value.length > 0
 );
 
+const selectedFilePath = computed(() => gitStore.selectedDiffFile);
+
+function isSelected(file: GitFileStatus): boolean {
+  return selectedFilePath.value === file.path;
+}
+
 function statusIcon(status: string): string {
   switch (status) {
     case 'modified': return 'M';
@@ -127,12 +133,13 @@ async function handleUnstageAll() {
           </div>
           <div v-for="file in stagedFiles" :key="'s:' + file.path"
             @click="viewDiff(file)"
-            class="flex items-center gap-1 px-2 py-1 hover:bg-slate-100/60 dark:hover:bg-slate-800/30 cursor-pointer group">
+            class="flex items-center gap-1 px-2 py-1 cursor-pointer group"
+            :class="isSelected(file) ? 'bg-blue-500/10 dark:bg-blue-500/15' : 'hover:bg-slate-100/60 dark:hover:bg-slate-800/30'">
             <span class="w-4 text-center font-mono font-bold text-[10px] shrink-0" :class="statusColor(file.status)">{{ statusIcon(file.status) }}</span>
             <span class="flex-1 truncate text-slate-700 dark:text-slate-300">
               <span class="text-slate-400 dark:text-slate-500">{{ fileDir(file.path) }}</span>{{ fileName(file.path) }}
             </span>
-            <button @click.stop="unstageFile(file)" class="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-orange-500 transition-opacity cursor-pointer" :title="t('git.unstage')">
+            <button @click.stop="unstageFile(file)" class="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-orange-500 transition-opacity cursor-pointer" :class="isSelected(file) ? '!opacity-100' : ''" :title="t('git.unstage')">
               <div class="i-mdi-minus text-xs" />
             </button>
           </div>
@@ -159,12 +166,13 @@ async function handleUnstageAll() {
           <div class="max-h-[100px] overflow-auto shrink-0">
             <div v-for="file in conflictedFiles" :key="'c:' + file.path"
               @click="viewDiff(file)"
-              class="flex items-center gap-1 px-2 py-1 hover:bg-slate-100/60 dark:hover:bg-slate-800/30 cursor-pointer group">
+              class="flex items-center gap-1 px-2 py-1 cursor-pointer group"
+              :class="isSelected(file) ? 'bg-blue-500/10 dark:bg-blue-500/15' : 'hover:bg-slate-100/60 dark:hover:bg-slate-800/30'">
               <span class="w-4 text-center font-mono font-bold text-[10px] text-orange-500 shrink-0">C</span>
               <span class="flex-1 truncate text-slate-700 dark:text-slate-300">
                 <span class="text-slate-400 dark:text-slate-500">{{ fileDir(file.path) }}</span>{{ fileName(file.path) }}
               </span>
-              <button @click.stop="stageFile(file)" class="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-green-500 transition-opacity cursor-pointer" :title="t('git.stage')">
+              <button @click.stop="stageFile(file)" class="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-green-500 transition-opacity cursor-pointer" :class="isSelected(file) ? '!opacity-100' : ''" :title="t('git.stage')">
                 <div class="i-mdi-plus text-xs" />
               </button>
             </div>
@@ -185,12 +193,13 @@ async function handleUnstageAll() {
           </div>
           <div v-for="file in unstagedFiles" :key="'u:' + file.path"
             @click="viewDiff(file)"
-            class="flex items-center gap-1 px-2 py-1 hover:bg-slate-100/60 dark:hover:bg-slate-800/30 cursor-pointer group">
+            class="flex items-center gap-1 px-2 py-1 cursor-pointer group"
+            :class="isSelected(file) ? 'bg-blue-500/10 dark:bg-blue-500/15' : 'hover:bg-slate-100/60 dark:hover:bg-slate-800/30'">
             <span class="w-4 text-center font-mono font-bold text-[10px] shrink-0" :class="statusColor(file.status)">{{ statusIcon(file.status) }}</span>
             <span class="flex-1 truncate text-slate-700 dark:text-slate-300">
               <span class="text-slate-400 dark:text-slate-500">{{ fileDir(file.path) }}</span>{{ fileName(file.path) }}
             </span>
-            <div class="opacity-0 group-hover:opacity-100 flex gap-0.5 transition-opacity shrink-0">
+            <div class="opacity-0 group-hover:opacity-100 flex gap-0.5 transition-opacity shrink-0" :class="isSelected(file) ? '!opacity-100' : ''">
               <button @click.stop="stageFile(file)" class="text-slate-400 hover:text-green-500 cursor-pointer" :title="t('git.stage')">
                 <div class="i-mdi-plus text-xs" />
               </button>

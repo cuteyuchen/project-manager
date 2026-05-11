@@ -49,10 +49,12 @@ function persistLayoutNumber(storageKey: string, value: number) {
   settingsStore.settings.layoutState[storageKey] = value;
 }
 
+const leftPaneContainerRef = ref<HTMLElement | null>(null);
+const leftPaneMax = computed(() => leftPaneContainerRef.value ? leftPaneContainerRef.value.clientWidth * 0.5 : 500);
 const leftPane = useSplitPane({
   initial: 280,
   min: 180,
-  max: 500,
+  max: leftPaneMax,
   direction: 'horizontal',
   storageKey: 'git.changes.leftPane',
 });
@@ -326,7 +328,7 @@ async function copyText(value: string, successMessage: string) {
       <!-- ===== CHANGES TAB: SourceTree-style layout ===== -->
       <div v-if="activeTab === 'changes'" class="flex-1 flex flex-col min-h-0">
         <!-- Top area: status panel (left) + diff view (right) -->
-        <div class="flex-1 flex min-h-0">
+        <div ref="leftPaneContainerRef" class="flex-1 flex min-h-0">
           <!-- Left: file status panel (staged top / unstaged bottom) -->
           <div class="flex flex-col shrink-0 border-r border-slate-200/40 dark:border-slate-700/30" :style="{ width: leftPane.size.value + 'px' }">
             <div ref="statusPanelRef" class="flex-1 flex flex-col min-h-0 overflow-hidden">

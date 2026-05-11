@@ -1,4 +1,4 @@
-import { ref, onUnmounted } from 'vue';
+import { ref, onUnmounted, type MaybeRefOrGetter, toValue } from 'vue';
 import { useSettingsStore } from '../stores/settings';
 
 export interface SplitPaneOptions {
@@ -6,8 +6,8 @@ export interface SplitPaneOptions {
   initial: number;
   /** Minimum size in pixels */
   min: number;
-  /** Maximum size in pixels */
-  max: number;
+  /** Maximum size in pixels, or a getter for dynamic value */
+  max: MaybeRefOrGetter<number>;
   /** Drag direction */
   direction: 'horizontal' | 'vertical';
   /** If true, dragging in the positive direction decreases size (e.g. bottom panel: drag down = shrink) */
@@ -22,7 +22,7 @@ export function useSplitPane(options: SplitPaneOptions) {
     ? settingsStore.settings.layoutState?.[options.storageKey]
     : undefined;
   const initialSize = typeof savedSize === 'number'
-    ? Math.min(options.max, Math.max(options.min, savedSize))
+    ? Math.min(toValue(options.max), Math.max(options.min, savedSize))
     : options.initial;
   const size = ref(initialSize);
   const isDragging = ref(false);
@@ -51,7 +51,8 @@ export function useSplitPane(options: SplitPaneOptions) {
   function onMouseMove(e: MouseEvent) {
     const currentPos = options.direction === 'horizontal' ? e.clientX : e.clientY;
     const delta = currentPos - startPos;
-    const newSize = Math.min(options.max, Math.max(options.min, startSize + (options.reverse ? -delta : delta)));
+    const max = toValue(options.max);
+    const newSize = Math.min(max, Math.max(options.min, startSize + (options.reverse ? -delta : delta)));
     size.value = newSize;
   }
 

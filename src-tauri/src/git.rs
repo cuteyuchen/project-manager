@@ -104,6 +104,8 @@ pub struct GitSummary {
 fn run_git(path: &str, args: &[&str]) -> Result<String, String> {
     let mut cmd = Command::new("git");
     cmd.current_dir(path)
+        .arg("-c")
+        .arg("core.quotePath=false")
         .args(args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -131,6 +133,8 @@ fn run_git(path: &str, args: &[&str]) -> Result<String, String> {
 fn run_git_relaxed(path: &str, args: &[&str]) -> Result<String, String> {
     let mut cmd = Command::new("git");
     cmd.current_dir(path)
+        .arg("-c")
+        .arg("core.quotePath=false")
         .args(args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
@@ -868,6 +872,26 @@ pub fn git_log(path: String, max_count: Option<i32>, all: Option<bool>) -> Resul
 #[tauri::command]
 pub async fn git_diff(path: String, file: Option<String>, staged: Option<bool>) -> Result<String, String> {
     run_git_task(move || {
+        if let Some(ref f) = file {
+            if !staged.unwrap_or(false) {
+                let ls_output = run_git_relaxed(&path, &["ls-files", "--error-unmatch", "--", f]);
+                if ls_output.is_err() {
+                    let full_path = std::path::Path::new(&path).join(f);
+                    if let Ok(content) = std::fs::read_to_string(&full_path) {
+                        let clean = content.replace("\r\n", "\n").replace('\r', "\n");
+                        let lines: Vec<&str> = clean.split('\n').collect();
+                        let total = if clean.ends_with('\n') && !lines.is_empty() { lines.len() - 1 } else { lines.len() };
+                        let mut result = format!("diff --git a/{} b/{}\nnew file mode 100644\n--- /dev/null\n+++ b/{}\n@@ -0,0 +1,{} @@\n", f, f, f, total);
+                        for line in &lines[..total] {
+                            result.push('+');
+                            result.push_str(line);
+                            result.push('\n');
+                        }
+                        return Ok(result);
+                    }
+                }
+            }
+        }
         let mut args = vec!["diff"];
         if staged.unwrap_or(false) {
             args.push("--cached");
