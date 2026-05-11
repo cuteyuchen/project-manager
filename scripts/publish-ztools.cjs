@@ -121,12 +121,12 @@ try {
     );
 
     run('git init', { cwd: ztoolsPublishRepoDir });
-    run('git add .', { cwd: ztoolsPublishRepoDir });
     fs.writeFileSync(
         path.join(ztoolsPublishRepoDir, '.release-commit-message.txt'),
         commitMessage,
         'utf8'
     );
+    run('git add .', { cwd: ztoolsPublishRepoDir });
     run('git commit -F .release-commit-message.txt', { cwd: ztoolsPublishRepoDir });
 
     if (isDryRun) {
