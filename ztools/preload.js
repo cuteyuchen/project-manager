@@ -982,7 +982,7 @@ window.services = {
     },
     
     getAppVersion: async () => {
-        return "1.1.3";
+        return "1.2.0";
     },
     
     installUpdate: async (url) => {
