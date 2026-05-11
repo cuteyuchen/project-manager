@@ -74,12 +74,32 @@ export interface Settings {
   gitAiApiKey?: string;
   gitAiModel?: string;
   gitAiPromptTemplate?: string;
+  // Usage weight sorting
+  usageWeightEnabled?: boolean;
 }
 
 export interface NodeVersion {
   version: string;
   path: string;
   source: 'nvm' | 'custom' | 'system';
+}
+
+// ─── Usage Weight Types ──────────────────────────────────────────────────────
+
+export interface UsageEvent {
+  date: string;    // 'YYYY-MM-DD'
+  count: number;
+}
+
+export interface ProjectUsage {
+  projectId: string;
+  events: UsageEvent[];
+  addedAt: string; // 'YYYY-MM-DD'
+}
+
+export interface UsageData {
+  records: Record<string, ProjectUsage>;
+  lastWeeklyNormalization: string; // 'YYYY-MM-DD'
 }
 
 // ─── Git Types ───────────────────────────────────────────────────────────────

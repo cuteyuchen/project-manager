@@ -38,11 +38,21 @@ function handleClick() {
 }
 
 function handleRun(script: string) {
-    store.runProject(props.project, script);
+    const runId = `${props.project.id}:${script}`;
+    if (store.runningStatus[runId]) {
+        store.stopProject(props.project, script);
+    } else {
+        store.runProject(props.project, script);
+    }
 }
 
 function handleRunCustom(commandId: string) {
-    store.runCustomCommand(props.project, commandId);
+    const runId = `${props.project.id}:${commandId}`;
+    if (store.runningStatus[runId]) {
+        store.stopProject(props.project, commandId);
+    } else {
+        store.runCustomCommand(props.project, commandId);
+    }
 }
 
 function getCommandLabel(name: string, builtinId?: 'install_dependencies') {
@@ -213,19 +223,22 @@ async function openFolder() {
                 <!-- Custom commands (shown first) -->
                 <template v-if="project.customCommands && project.customCommands.length">
                     <button v-for="cmd in project.customCommands" :key="cmd.id" @click.stop="handleRunCustom(cmd.id)"
-                        :disabled="store.runningStatus[`${project.id}:${cmd.id}`]"
-                        class="px-2 py-0.5 text-[10px] rounded border border-dashed transition-all duration-150 uppercase tracking-wider font-medium bg-blue-500/8 text-blue-600 dark:text-blue-400 border-blue-500/15 hover:bg-blue-500/15 disabled:opacity-40 disabled:cursor-not-allowed">
+                        class="px-2 py-0.5 text-[10px] rounded border border-dashed transition-all duration-150 uppercase tracking-wider font-medium cursor-pointer"
+                        :class="store.runningStatus[`${project.id}:${cmd.id}`]
+                            ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 animate-pulse'
+                            : 'bg-blue-500/8 text-blue-600 dark:text-blue-400 border-blue-500/15 hover:bg-blue-500/15'">
                         {{ getCommandLabel(cmd.name, cmd.builtinId) }}
                     </button>
                 </template>
                 <!-- Node scripts -->
                 <template v-if="project.type === 'node' && displayScripts.length">
                     <button v-for="script in displayScripts" :key="script" @click.stop="handleRun(script)"
-                        :disabled="store.runningStatus[`${project.id}:${script}`]"
-                        class="px-2 py-0.5 text-[10px] rounded border transition-all duration-150 uppercase tracking-wider font-medium"
-                        :class="script === 'dev' || script === 'start' || script === 'serve'
-                            ? 'bg-emerald-500/8 text-emerald-600 dark:text-emerald-400 border-emerald-500/15 hover:bg-emerald-500/15 disabled:opacity-40 disabled:cursor-not-allowed'
-                            : 'bg-slate-100 dark:bg-slate-700/40 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-600/40 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-700 dark:hover:text-slate-200 disabled:opacity-40 disabled:cursor-not-allowed'">
+                        class="px-2 py-0.5 text-[10px] rounded border transition-all duration-150 uppercase tracking-wider font-medium cursor-pointer"
+                        :class="store.runningStatus[`${project.id}:${script}`]
+                            ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 animate-pulse'
+                            : (script === 'dev' || script === 'start' || script === 'serve'
+                                ? 'bg-emerald-500/8 text-emerald-600 dark:text-emerald-400 border-emerald-500/15 hover:bg-emerald-500/15'
+                                : 'bg-slate-100 dark:bg-slate-700/40 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-600/40 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-700 dark:hover:text-slate-200')">
                         {{ script }}
                     </button>
                 </template>

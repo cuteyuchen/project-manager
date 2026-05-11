@@ -4,6 +4,7 @@ import { api } from '../api';
 import type { Project } from '../types';
 import { useNodeStore } from './node';
 import { useSettingsStore } from './settings';
+import { useUsageStore } from './usage';
 import { getCustomCommandDisplayNameByLocale } from '../utils/projectCommands';
 import { resolveNodePathFromVersion, resolveProjectNodePath, isExplicitNodeVersion } from '../utils/nodeRuntime';
 import { normalizeNvmVersion } from '../utils/nvm';
@@ -91,7 +92,8 @@ export const useProjectStore = defineStore('project', () => {
   });
 
   function addProject(project: Project) {
-    projects.value.push(project);
+    projects.value.unshift(project);
+    try { useUsageStore().markAdded(project.id); } catch {}
   }
 
   function updateProject(project: Project) {
@@ -104,6 +106,7 @@ export const useProjectStore = defineStore('project', () => {
   function removeProject(id: string) {
     projects.value = projects.value.filter((p) => p.id !== id);
     if (activeProjectId.value === id) activeProjectId.value = null;
+    try { useUsageStore().cleanupRemovedProjects(projects.value.map(p => p.id)); } catch {}
   }
 
   function requestRightTab(tab: WorkspaceTab) {
@@ -157,6 +160,7 @@ export const useProjectStore = defineStore('project', () => {
       activeProjectId.value = project.id;
       requestRightTab('console');
       setRunningState(runId, true);
+      try { useUsageStore().recordUsage(project.id); } catch {}
 
       logs.value[runId].push(`[Runner] Starting script: ${script}`);
       logs.value[runId].push(`[Runner] Project: ${project.name}`);
@@ -192,6 +196,7 @@ export const useProjectStore = defineStore('project', () => {
       activeProjectId.value = project.id;
       requestRightTab('console');
       setRunningState(runId, true);
+      try { useUsageStore().recordUsage(project.id); } catch {}
 
       logs.value[runId].push(
         `[Runner] Starting custom command: ${getCustomCommandDisplayNameByLocale(cmd, settingsStore.settings.locale)}`
@@ -241,12 +246,14 @@ export const useProjectStore = defineStore('project', () => {
   function pinProject(id: string) {
     const project = projects.value.find((p) => p.id === id);
     if (!project) return;
+    // Bump all existing pinned projects down by 1
+    for (const p of projects.value) {
+      if (p.pinned && p.id !== id) {
+        p.pinOrder = (p.pinOrder ?? 0) + 1;
+      }
+    }
     project.pinned = true;
-    // Set pinOrder to be the max + 1 among pinned projects
-    const maxOrder = projects.value
-      .filter((p) => p.pinned && p.id !== id)
-      .reduce((max, p) => Math.max(max, p.pinOrder ?? 0), 0);
-    project.pinOrder = maxOrder + 1;
+    project.pinOrder = 0; // Top position
   }
 
   function unpinProject(id: string) {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onActivated, onDeactivated, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted, onActivated, onDeactivated, onUnmounted } from 'vue';
 import { useProjectStore } from '../../stores/project';
 import { useGitStore } from '../../stores/git';
 import { useSettingsStore } from '../../stores/settings';
@@ -50,7 +50,23 @@ function persistLayoutNumber(storageKey: string, value: number) {
 }
 
 const leftPaneContainerRef = ref<HTMLElement | null>(null);
-const leftPaneMax = computed(() => leftPaneContainerRef.value ? leftPaneContainerRef.value.clientWidth * 0.5 : 500);
+const leftContainerWidth = ref(0);
+let leftResizeObserver: ResizeObserver | null = null;
+
+onMounted(() => {
+  if (!leftPaneContainerRef.value) return;
+  leftResizeObserver = new ResizeObserver((entries) => {
+    const entry = entries[0];
+    if (entry) leftContainerWidth.value = entry.contentRect.width;
+  });
+  leftResizeObserver.observe(leftPaneContainerRef.value);
+});
+
+onUnmounted(() => {
+  leftResizeObserver?.disconnect();
+});
+
+const leftPaneMax = computed(() => leftContainerWidth.value > 0 ? leftContainerWidth.value * 0.5 : 500);
 const leftPane = useSplitPane({
   initial: 280,
   min: 180,

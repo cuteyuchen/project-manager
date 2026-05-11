@@ -117,10 +117,10 @@ const activeRunningTabs = computed(() => {
 
 watch(activeRunningTabs, (runningTabs) => {
     for (const script of runningTabs) {
-        if (!openTabs.value.has(script)) {
-            openTabs.value.add(script);
-            activeScript.value = script;
-        }
+        openTabs.value.add(script);
+    }
+    if (runningTabs.length > 0) {
+        activeScript.value = runningTabs[runningTabs.length - 1];
     }
 }, { immediate: true });
 

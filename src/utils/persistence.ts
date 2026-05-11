@@ -2,7 +2,8 @@ import { api } from '../api';
 import { useProjectStore } from '../stores/project';
 import { useSettingsStore } from '../stores/settings';
 import { useNodeStore } from '../stores/node';
-import type { NodeVersion, Project, Settings } from '../types';
+import { useUsageStore } from '../stores/usage';
+import type { NodeVersion, Project, Settings, UsageData } from '../types';
 import { ensureNodeInstallCommand } from './projectCommands';
 
 const FILE_NAME = 'data.json';
@@ -13,6 +14,7 @@ type PersistedData = {
   projects: Project[];
   settings: Settings;
   customNodes: NodeVersion[];
+  usageData?: UsageData;
 };
 
 type IdleCallbackHandle = number;
@@ -28,11 +30,13 @@ function buildPersistedData(): PersistedData {
   const projectStore = useProjectStore();
   const settingsStore = useSettingsStore();
   const nodeStore = useNodeStore();
+  const usageStore = useUsageStore();
 
   return {
     projects: projectStore.projects,
     settings: settingsStore.settings,
     customNodes: nodeStore.versions.filter(v => v.source === 'custom'),
+    usageData: usageStore.usageData,
   };
 }
 
@@ -171,6 +175,10 @@ export async function loadData() {
               nodeStore.versions.push(n);
           }
       });
+    }
+    if (data.usageData) {
+      const usageStore = useUsageStore();
+      usageStore.loadData(data.usageData);
     }
     console.log('Data loaded');
     lastSerializedData = serializePersistedData();

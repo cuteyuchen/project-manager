@@ -485,7 +485,7 @@ function buildImportPlan(payload: any): ImportPlan {
       currentEditors,
       incomingEditors,
     });
-    if (diffs.length) plan.projectConflicts.push({ existingIndex, existing: existingProject, incoming: incomingProject, choice: 'keep', diffs });
+    if (diffs.length) plan.projectConflicts.push({ existingIndex, existing: existingProject, incoming: incomingProject, choice: 'incoming', diffs });
   });
 
   if (normalizedSettings) {
@@ -501,7 +501,7 @@ function buildImportPlan(payload: any): ImportPlan {
         label: field.label,
         current: formatImportValue(String(field.key), currentValue, 'current', { currentEditors, incomingEditors }),
         incoming: formatImportValue(String(field.key), incomingValue, 'incoming', { currentEditors, incomingEditors }),
-        choice: 'keep',
+        choice: 'incoming',
         incomingValue,
       });
     });
@@ -516,7 +516,7 @@ function buildImportPlan(payload: any): ImportPlan {
       { key: 'version', label: t('nodes.version') },
       { key: 'source', label: t('nodes.source') },
     ]);
-    if (diffs.length) plan.nodeConflicts.push({ existingIndex, existing: existingNode, incoming: incomingNode, choice: 'keep', diffs });
+    if (diffs.length) plan.nodeConflicts.push({ existingIndex, existing: existingNode, incoming: incomingNode, choice: 'incoming', diffs });
   });
 
   return plan;
@@ -580,6 +580,22 @@ function cancelImportPreview() {
   importDialogVisible.value = false;
   importPlan.value = null;
   importSourceName.value = '';
+}
+
+function applyAllKeep() {
+  const plan = importPlan.value;
+  if (!plan) return;
+  plan.projectConflicts.forEach(c => c.choice = 'keep');
+  plan.nodeConflicts.forEach(c => c.choice = 'keep');
+  plan.settingsConflicts.forEach(c => c.choice = 'keep');
+}
+
+function applyAllIncoming() {
+  const plan = importPlan.value;
+  if (!plan) return;
+  plan.projectConflicts.forEach(c => c.choice = 'incoming');
+  plan.nodeConflicts.forEach(c => c.choice = 'incoming');
+  plan.settingsConflicts.forEach(c => c.choice = 'incoming');
 }
 
 function openReleases() {
@@ -896,6 +912,11 @@ async function testAiConnection() {
           <div class="summary-tile"><div class="summary-label">{{ t('settings.importNodesAdded') }}</div><div class="summary-value">{{ importSummary.addedNodes }}</div></div>
           <div class="summary-tile"><div class="summary-label">{{ t('settings.importNodesConflict') }}</div><div class="summary-value">{{ importSummary.conflictedNodes }}</div></div>
           <div class="summary-tile"><div class="summary-label">{{ t('settings.importSettingsConflict') }}</div><div class="summary-value">{{ importSummary.conflictedSettings }}</div></div>
+        </div>
+        <div v-if="importSummary.conflictedProjects + importSummary.conflictedNodes + importSummary.conflictedSettings > 0" class="flex items-center gap-2">
+          <span class="text-xs text-slate-500 dark:text-slate-400">{{ t('settings.importBatchApply') }}</span>
+          <el-button size="small" @click="applyAllKeep">{{ t('settings.importApplyAllCurrent') }}</el-button>
+          <el-button size="small" type="primary" @click="applyAllIncoming">{{ t('settings.importApplyAllIncoming') }}</el-button>
         </div>
         <div v-if="importPlan.projectConflicts.length" class="space-y-3">
           <div class="text-sm font-semibold text-slate-700 dark:text-slate-200">{{ t('settings.importProjectConflictTitle') }}</div>

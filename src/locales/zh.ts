@@ -91,7 +91,9 @@
     unpin: '取消置顶',
     selectProjectHint: '请选择一个项目',
     selectProjectDesc: '选择左侧项目后可查看命令运行与 Git 管理',
-    locateProject: '定位到当前项目'
+    locateProject: '定位到当前项目',
+    weightSort: '智能排序',
+    weightSortHint: '根据项目使用频率自动排序，最近使用的项目排在前面。权重基于最近7天的打开、运行和Git操作计算，新添加的项目会优先显示。每周自动衰减历史权重，防止权重无限增长。'
   },
   nodes: {
     title: 'Node 版本管理',
@@ -192,6 +194,9 @@
     importProjectConflictTitle: '项目冲突明细',
     importNodeConflictTitle: 'Node 冲突明细',
     importSettingsConflictTitle: '设置差异明细',
+    importBatchApply: '一键应用：',
+    importApplyAllCurrent: '全部保留当前',
+    importApplyAllIncoming: '全部使用导入',
     update: '更新设置',
     autoUpdate: '自动检查更新',
     autoUpdateHint: '应用启动时自动检查新版本。',
@@ -494,5 +499,11 @@
     aiConfigMissing: '请先在设置中配置 API Key',
     // Commit file list
     selectCommitToView: '选择一个提交以查看文件',
+    // Batch operations
+    selectedCount: '已选择 {count} 个文件',
+    batchStage: '批量暂存',
+    batchUnstage: '批量取消暂存',
+    batchDiscard: '批量丢弃',
+    clearSelection: '清除选择',
   }
 }

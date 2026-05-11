@@ -2,6 +2,8 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { useProjectStore } from '../stores/project';
 import { useGitStore } from '../stores/git';
+import { useUsageStore } from '../stores/usage';
+import { useSettingsStore } from '../stores/settings';
 import ProjectListItem from '../components/ProjectListItem.vue';
 import ConsoleView from '../components/ConsoleView.vue';
 import GitView from '../components/git/GitView.vue';
@@ -18,6 +20,8 @@ import { pinyin } from 'pinyin-pro';
 const { t } = useI18n();
 const projectStore = useProjectStore();
 const gitStore = useGitStore();
+const usageStore = useUsageStore();
+const settingsStore = useSettingsStore();
 const showModal = ref(false);
 const editingProject = ref<Project | null>(null);
 const refreshing = ref(false);
@@ -235,6 +239,18 @@ function getCachedPinyinSearchText(text: string) {
 }
 
 const sortedProjects = computed(() => {
+    if (settingsStore.settings.usageWeightEnabled) {
+        const weights = usageStore.calculateAllWeights();
+        return [...projectStore.projects].sort((a, b) => {
+            if (a.pinned && !b.pinned) return -1;
+            if (!a.pinned && b.pinned) return 1;
+            const wa = weights[a.id] ?? 0;
+            const wb = weights[b.id] ?? 0;
+            if (wa !== wb) return wb - wa;
+            if (a.pinned && b.pinned) return (a.pinOrder ?? 0) - (b.pinOrder ?? 0);
+            return 0;
+        });
+    }
     return [...projectStore.projects].sort((a, b) => {
         if (a.pinned && !b.pinned) return -1;
         if (!a.pinned && b.pinned) return 1;
@@ -509,6 +525,12 @@ async function batchAddProjects() {
                     <el-icon><div class="i-mdi-magnify" /></el-icon>
                 </template>
             </el-input>
+            <div class="flex items-center justify-between mt-1.5">
+                <span class="text-[10px] text-slate-400 dark:text-slate-500">{{ t('dashboard.weightSort') }}</span>
+                <el-tooltip :content="t('dashboard.weightSortHint')" placement="top" :show-after="300">
+                    <el-switch v-model="settingsStore.settings.usageWeightEnabled" size="small" style="--el-switch-on-color: #3b82f6" />
+                </el-tooltip>
+            </div>
         </div>
         
         <div class="flex-1 overflow-y-auto p-3 custom-scrollbar" ref="projectListContainer" @scroll="handleProjectListScroll">

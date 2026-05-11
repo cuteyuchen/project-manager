@@ -16,6 +16,7 @@ import { useProjectStore } from './stores/project';
 import { useSettingsStore } from './stores/settings';
 import { useNodeStore } from './stores/node';
 import { useGitStore } from './stores/git';
+import { useUsageStore } from './stores/usage';
 import type { Project } from './types';
 import { normalizeNvmVersion, findInstalledNodeVersion } from './utils/nvm';
 import { DEFAULT_NETWORK_TIMEOUT_MS, fetchWithTimeout, isAbortError } from './utils/network';
@@ -550,6 +551,7 @@ onUnmounted(() => {
 const projectStore = useProjectStore();
 const settingsStore = useSettingsStore();
 const nodeStore = useNodeStore();
+const usageStore = useUsageStore();
 
 const triggerSave = () => {
   scheduleSaveData();
@@ -558,6 +560,7 @@ const triggerSave = () => {
 watch(() => projectStore.projects, triggerSave, { deep: true });
 watch(() => settingsStore.settings, triggerSave, { deep: true });
 watch(() => nodeStore.versions, triggerSave, { deep: true });
+watch(() => usageStore.usageData, triggerSave, { deep: true });
 
 watch(
   () => [loaded.value, settingsStore.settings.trayEnabled, settingsStore.settings.locale],

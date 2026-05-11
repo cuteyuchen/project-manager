@@ -1,4 +1,4 @@
-import { ref, onUnmounted, type MaybeRefOrGetter, toValue } from 'vue';
+import { ref, computed, watch, onUnmounted, toValue, type MaybeRefOrGetter } from 'vue';
 import { useSettingsStore } from '../stores/settings';
 
 export interface SplitPaneOptions {
@@ -18,25 +18,74 @@ export interface SplitPaneOptions {
 
 export function useSplitPane(options: SplitPaneOptions) {
   const settingsStore = useSettingsStore();
-  const savedSize = options.storageKey
+  const max = computed(() => toValue(options.max));
+
+  // ---- Restore stored value ----
+  const stored = options.storageKey
     ? settingsStore.settings.layoutState?.[options.storageKey]
     : undefined;
-  const initialSize = typeof savedSize === 'number'
-    ? Math.min(toValue(options.max), Math.max(options.min, savedSize))
-    : options.initial;
+
+  // Detect format: ratio (0-1) vs legacy pixels (>1)
+  const isRatio = typeof stored === 'number' && stored > 0 && stored <= 1;
+  const storedRatio = ref(isRatio ? stored : null);
+
+  // If legacy pixels, convert to ratio once max is available
+  let legacyPixelValue: number | null = (!isRatio && typeof stored === 'number') ? stored : null;
+
+  // Initial size
+  let initialSize: number;
+  if (storedRatio.value !== null && max.value > 0) {
+    initialSize = Math.round(storedRatio.value * max.value);
+  } else if (legacyPixelValue !== null) {
+    initialSize = legacyPixelValue;
+  } else {
+    initialSize = options.initial;
+  }
+  initialSize = Math.min(max.value || initialSize, Math.max(options.min, initialSize));
+
   const size = ref(initialSize);
   const isDragging = ref(false);
   let startPos = 0;
   let startSize = 0;
 
+  // ---- Re-apply ratio when max changes ----
+  // This fires when the caller's reactive max changes (e.g. ResizeObserver updates containerWidth → max recomputes)
+  watch(max, (newMax, oldMax) => {
+    if (newMax <= 0) return;
+
+    // Legacy pixel → ratio conversion (one-time)
+    if (legacyPixelValue !== null) {
+      const oldMaxForConversion = oldMax > 0 ? oldMax : newMax;
+      const convertedRatio = Math.min(1, legacyPixelValue / oldMaxForConversion);
+      storedRatio.value = Math.round(convertedRatio * 1000) / 1000;
+      legacyPixelValue = null;
+      persistSize();
+    }
+
+    if (!isDragging.value && storedRatio.value !== null) {
+      size.value = Math.max(options.min, Math.min(newMax, Math.round(storedRatio.value * newMax)));
+    } else if (!isDragging.value) {
+      size.value = Math.min(newMax, Math.max(options.min, size.value));
+    }
+  });
+
+  // ---- Persist as ratio ----
   function persistSize() {
     if (!options.storageKey) return;
     if (!settingsStore.settings.layoutState) {
       settingsStore.settings.layoutState = {};
     }
-    settingsStore.settings.layoutState[options.storageKey] = size.value;
+    const currentMax = max.value;
+    if (currentMax > 0) {
+      const ratio = Math.round((size.value / currentMax) * 1000) / 1000;
+      storedRatio.value = ratio;
+      settingsStore.settings.layoutState[options.storageKey] = ratio;
+    } else if (storedRatio.value !== null) {
+      settingsStore.settings.layoutState[options.storageKey] = storedRatio.value;
+    }
   }
 
+  // ---- Drag handlers ----
   function onMouseDown(e: MouseEvent) {
     e.preventDefault();
     isDragging.value = true;
@@ -51,8 +100,8 @@ export function useSplitPane(options: SplitPaneOptions) {
   function onMouseMove(e: MouseEvent) {
     const currentPos = options.direction === 'horizontal' ? e.clientX : e.clientY;
     const delta = currentPos - startPos;
-    const max = toValue(options.max);
-    const newSize = Math.min(max, Math.max(options.min, startSize + (options.reverse ? -delta : delta)));
+    const currentMax = max.value;
+    const newSize = Math.min(currentMax, Math.max(options.min, startSize + (options.reverse ? -delta : delta)));
     size.value = newSize;
   }
 
