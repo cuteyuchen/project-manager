@@ -93,7 +93,12 @@
     selectProjectDesc: '选择左侧项目后可查看命令运行与 Git 管理',
     locateProject: '定位到当前项目',
     weightSort: '智能排序',
-    weightSortHint: '根据项目使用频率自动排序，最近使用的项目排在前面。权重基于最近7天的打开、运行和Git操作计算，新添加的项目会优先显示。每周自动衰减历史权重，防止权重无限增长。'
+    weightSortHint: '根据项目使用频率自动排序，最近使用的项目排在前面。权重基于最近7天的打开、运行和Git操作计算，新添加的项目会优先显示。每周自动衰减历史权重，防止权重无限增长。',
+    sortMode: '排序方式',
+    sortModeDefault: '默认排序',
+    sortModeSmart: '智能排序',
+    sortModeDefaultHint: '手动拖拽排序项目，可自定义排列顺序',
+    sortModeSmartHint: '根据使用频率自动排序，最近使用的项目排在前面'
   },
   nodes: {
     title: 'Node 版本管理',

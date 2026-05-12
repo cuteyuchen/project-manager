@@ -41,6 +41,7 @@ export interface Project {
   memo?: string;
   pinned?: boolean;
   pinOrder?: number;
+  sortOrder?: number;
   editorId?: string;
 }
 
@@ -76,6 +77,8 @@ export interface Settings {
   gitAiPromptTemplate?: string;
   // Usage weight sorting
   usageWeightEnabled?: boolean;
+  // Sort mode: 'default' (manual drag), 'smart' (usage weight)
+  sortMode?: 'default' | 'smart';
 }
 
 export interface NodeVersion {

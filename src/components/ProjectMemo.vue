@@ -4,6 +4,7 @@ import type { Project } from '../types';
 import { useProjectStore } from '../stores/project';
 import { useI18n } from 'vue-i18n';
 import { marked } from 'marked';
+import { api } from '../api';
 
 const { t } = useI18n();
 const props = defineProps<{ project: Project }>();
@@ -95,6 +96,17 @@ onBeforeUnmount(() => {
         window.clearTimeout(renderTimer);
     }
 });
+
+function handleMarkdownClick(e: MouseEvent) {
+    const anchor = (e.target as HTMLElement).closest('a');
+    if (!anchor) return;
+    const href = anchor.getAttribute('href');
+    if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+        e.preventDefault();
+        e.stopPropagation();
+        api.openUrl(href);
+    }
+}
 </script>
 
 <template>
@@ -164,7 +176,7 @@ onBeforeUnmount(() => {
                         {{ t('memo.startEditing') }}
                     </button>
                 </div>
-                <div v-else class="p-4 markdown-body" v-html="renderedHtml" />
+                <div v-else class="p-4 markdown-body" v-html="renderedHtml" @click="handleMarkdownClick" />
             </div>
 
             <!-- Split mode: editor + preview side by side -->
@@ -179,7 +191,7 @@ onBeforeUnmount(() => {
                     />
                 </div>
                 <div class="flex-1 overflow-y-auto">
-                    <div class="p-4 markdown-body" v-html="renderedHtml" />
+                    <div class="p-4 markdown-body" v-html="renderedHtml" @click="handleMarkdownClick" />
                 </div>
             </template>
         </div>

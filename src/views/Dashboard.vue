@@ -15,6 +15,7 @@ import { useI18n } from 'vue-i18n';
 import { api } from '../api';
 import { ElMessage } from 'element-plus';
 import { normalizeNvmVersion, findInstalledNodeVersion } from '../utils/nvm';
+import { calculateDraggedItemCenterY, calculateDraggedItemTranslateY, calculateFlipTransforms } from '../utils/dragPosition';
 import { pinyin } from 'pinyin-pro';
 
 const { t } = useI18n();
@@ -238,8 +239,18 @@ function getCachedPinyinSearchText(text: string) {
     return next;
 }
 
+const sortMode = computed(() => settingsStore.settings.sortMode ?? 'default');
+
+const sortOptions = computed(() => [
+    { label: t('dashboard.sortModeDefault'), value: 'default' },
+    { label: t('dashboard.sortModeSmart'), value: 'smart' },
+]);
+
+// Whether drag is allowed (default mode + no active search)
+const isDraggable = computed(() => sortMode.value === 'default' && !searchQuery.value.trim());
+
 const sortedProjects = computed(() => {
-    if (settingsStore.settings.usageWeightEnabled) {
+    if (sortMode.value === 'smart') {
         const weights = usageStore.calculateAllWeights();
         return [...projectStore.projects].sort((a, b) => {
             if (a.pinned && !b.pinned) return -1;
@@ -251,10 +262,15 @@ const sortedProjects = computed(() => {
             return 0;
         });
     }
+    // Default sort: pinned first, then by sortOrder (manual), then by original array order
     return [...projectStore.projects].sort((a, b) => {
         if (a.pinned && !b.pinned) return -1;
         if (!a.pinned && b.pinned) return 1;
         if (a.pinned && b.pinned) return (a.pinOrder ?? 0) - (b.pinOrder ?? 0);
+        // For unpinned: use sortOrder if available, otherwise maintain original order
+        const oa = a.sortOrder ?? Infinity;
+        const ob = b.sortOrder ?? Infinity;
+        if (oa !== ob) return oa - ob;
         return 0;
     });
 });
@@ -290,6 +306,179 @@ const filteredProjects = computed(() => {
         })
         .map(item => item.project);
 });
+
+/***********************项目列表手动拖拽排序*********************/
+const draggableList = ref<Project[]>([]);
+const dragState = ref({
+    dragging: false,
+    projectId: null as string | null,
+    pointerOffsetY: 0,
+    dragDelta: 0,
+    fromIndex: -1,
+    currentFromIndex: -1,
+    containerEl: null as HTMLElement | null,
+});
+let flipAnimating = false;
+
+watch(() => sortedProjects.value, (newSorted) => {
+    if (!dragState.value.dragging) {
+        draggableList.value = [...newSorted];
+    }
+}, { immediate: true });
+
+function onDragMouseDown(e: MouseEvent, projectId: string) {
+    e.preventDefault();
+    const handleEl = e.currentTarget as HTMLElement;
+    const itemEl = handleEl.closest('.draggable-item') as HTMLElement;
+    const listEl = handleEl.closest('.draggable-list') as HTMLElement;
+    if (!itemEl || !listEl) return;
+
+    const startIndex = draggableList.value.findIndex(p => p.id === projectId);
+    if (startIndex < 0) return;
+
+    const itemRect = itemEl.getBoundingClientRect();
+
+    dragState.value = {
+        dragging: true,
+        projectId,
+        pointerOffsetY: e.clientY - itemRect.top,
+        dragDelta: 0,
+        fromIndex: startIndex,
+        currentFromIndex: startIndex,
+        containerEl: listEl,
+    };
+
+    document.addEventListener('mousemove', onDragMouseMove);
+    document.addEventListener('mouseup', onDragMouseUp);
+}
+
+function onDragMouseMove(e: MouseEvent) {
+    const state = dragState.value;
+    if (!state.dragging || !state.containerEl) return;
+
+    // 按当前 DOM 基准位置计算位移，避免换位后叠加初始位移导致元素远离鼠标。
+    const items = Array.from(state.containerEl.children) as HTMLElement[];
+    const draggedItem = items[state.currentFromIndex];
+    if (!draggedItem) return;
+
+    state.dragDelta = calculateDraggedItemTranslateY({
+        pointerClientY: e.clientY,
+        listClientTop: state.containerEl.getBoundingClientRect().top,
+        pointerOffsetY: state.pointerOffsetY,
+        itemOffsetTop: draggedItem.offsetTop,
+    });
+
+    let targetIndex = state.currentFromIndex;
+    const draggedCenter = calculateDraggedItemCenterY({
+        itemOffsetTop: draggedItem.offsetTop,
+        itemHeight: draggedItem.offsetHeight,
+        translateY: state.dragDelta,
+    });
+
+    for (let i = 0; i < items.length; i++) {
+        if (i === state.currentFromIndex) continue;
+        const itemTop = items[i].offsetTop;
+        const itemHeight = items[i].offsetHeight;
+        const itemCenter = itemTop + itemHeight / 2;
+
+        if (state.currentFromIndex < i && draggedCenter > itemCenter) {
+            targetIndex = i;
+        } else if (state.currentFromIndex > i && draggedCenter < itemCenter) {
+            targetIndex = i;
+        }
+    }
+
+    if (targetIndex !== state.currentFromIndex && !flipAnimating) {
+        animateReorder(state.currentFromIndex, targetIndex);
+        state.currentFromIndex = targetIndex;
+    }
+}
+
+function animateReorder(fromIdx: number, toIdx: number) {
+    const listEl = dragState.value.containerEl;
+    if (!listEl) return;
+    flipAnimating = true;
+
+    // 按项目 ID 记录换位前位置，用于 FLIP 动画。
+    const children = Array.from(listEl.children) as HTMLElement[];
+    const oldPositions = children
+        .map(el => ({ id: el.dataset.projectId ?? '', top: el.offsetTop }))
+        .filter(item => item.id);
+
+    // 更新列表顺序，让 DOM 进入换位后的真实布局。
+    const [moved] = draggableList.value.splice(fromIdx, 1);
+    draggableList.value.splice(toIdx, 0, moved);
+
+    // DOM 更新后，让非拖拽元素从旧位置平滑移动到新位置。
+    nextTick(() => {
+        const newChildren = Array.from(listEl.children) as HTMLElement[];
+        const transforms = calculateFlipTransforms({
+            oldPositions,
+            newPositions: newChildren
+                .map(el => ({ id: el.dataset.projectId ?? '', top: el.offsetTop }))
+                .filter(item => item.id),
+            excludedId: dragState.value.projectId,
+        });
+
+        newChildren.forEach((el) => {
+            const translateY = transforms.get(el.dataset.projectId ?? '');
+            if (translateY !== undefined) {
+                el.style.transition = 'none';
+                el.style.transform = `translateY(${translateY}px)`;
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                        el.style.transition = 'transform 0.18s ease';
+                        el.style.transform = '';
+                        el.addEventListener('transitionend', () => {
+                            el.style.transition = '';
+                            el.style.transform = '';
+                        }, { once: true });
+                    });
+                });
+            }
+        });
+
+        setTimeout(() => { flipAnimating = false; }, 200);
+    });
+}
+
+function onDragMouseUp() {
+    document.removeEventListener('mousemove', onDragMouseMove);
+    document.removeEventListener('mouseup', onDragMouseUp);
+
+    const state = dragState.value;
+    if (state.dragging && state.currentFromIndex !== state.fromIndex) {
+        syncDraggableOrder();
+    }
+
+    dragState.value = {
+        dragging: false,
+        projectId: null,
+        pointerOffsetY: 0,
+        dragDelta: 0,
+        fromIndex: -1,
+        currentFromIndex: -1,
+        containerEl: null,
+    };
+}
+
+function syncDraggableOrder() {
+    const projects = projectStore.projects;
+    draggableList.value.forEach((p, i) => {
+        const proj = projects.find(pp => pp.id === p.id);
+        if (!proj) return;
+        if (p.pinned) {
+            proj.pinOrder = i;
+        }
+    });
+    let unpinnedIndex = 0;
+    draggableList.value.forEach(p => {
+        if (!p.pinned) {
+            const proj = projects.find(pp => pp.id === p.id);
+            if (proj) proj.sortOrder = unpinnedIndex++;
+        }
+    });
+}
 
 const projectListMetrics = computed(() => {
     let offset = 0;
@@ -525,16 +714,42 @@ async function batchAddProjects() {
                     <el-icon><div class="i-mdi-magnify" /></el-icon>
                 </template>
             </el-input>
-            <div class="flex items-center justify-between mt-1.5">
-                <span class="text-[10px] text-slate-400 dark:text-slate-500">{{ t('dashboard.weightSort') }}</span>
-                <el-tooltip :content="t('dashboard.weightSortHint')" placement="top" :show-after="300">
-                    <el-switch v-model="settingsStore.settings.usageWeightEnabled" size="small" style="--el-switch-on-color: #3b82f6" />
+            <div class="flex items-center justify-between mt-1.5 sort-mode-control">
+                <span class="text-[10px] text-slate-400 dark:text-slate-500">{{ t('dashboard.sortMode') }}</span>
+                <el-tooltip :content="sortMode === 'smart' ? t('dashboard.sortModeSmartHint') : t('dashboard.sortModeDefaultHint')" placement="top" :show-after="300">
+                    <el-segmented v-model="settingsStore.settings.sortMode" :options="sortOptions" size="small" />
                 </el-tooltip>
             </div>
         </div>
         
         <div class="flex-1 overflow-y-auto p-3 custom-scrollbar" ref="projectListContainer" @scroll="handleProjectListScroll">
-             <div v-if="filteredProjects.length > 0" class="relative min-h-full" :style="{ height: `${totalProjectListHeight}px` }">
+             <!-- Draggable list (default sort mode, no search) -->
+             <div v-if="isDraggable && draggableList.length > 0" class="draggable-list">
+                 <div
+                     v-for="project in draggableList"
+                     :key="project.id"
+                     :data-project-id="project.id"
+                     class="draggable-item group/item"
+                     :class="{ 'draggable-item-active': dragState.dragging && dragState.projectId === project.id }"
+                     :style="dragState.dragging && dragState.projectId === project.id
+                         ? `transform: translateY(${dragState.dragDelta}px); z-index: 50; transition: none;`
+                         : ''"
+                 >
+                     <div
+                         class="drag-handle"
+                         @mousedown.prevent="onDragMouseDown($event, project.id)"
+                     >
+                         <div class="i-mdi-drag text-[11px] text-slate-300 dark:text-slate-600 group-hover/item:text-slate-400 dark:group-hover/item:text-slate-500 transition-colors" />
+                     </div>
+                     <ProjectListItem
+                         :project="project"
+                         @edit="openEditModal(project)"
+                     />
+                 </div>
+             </div>
+
+             <!-- Virtual scroll list (smart sort mode or searching) -->
+             <div v-else-if="filteredProjects.length > 0" class="relative min-h-full" :style="{ height: `${totalProjectListHeight}px` }">
                 <div
                     v-for="item in visibleProjectMetrics"
                     :key="item.project.id"
@@ -545,19 +760,18 @@ async function batchAddProjects() {
                     <div :style="{ paddingBottom: `${PROJECT_LIST_ITEM_GAP}px` }">
                         <ProjectListItem
                             :project="item.project"
-                            :data-project-id="item.project.id"
                             @edit="openEditModal(item.project)"
                         />
                     </div>
                 </div>
              </div>
-             
+
              <div v-if="filteredProjects.length === 0 && projectStore.projects.length > 0" class="text-center mt-10 text-slate-400 dark:text-slate-500">
                 <div class="i-mdi-magnify text-4xl mb-3 opacity-20 mx-auto" />
                 <p class="text-sm font-medium">{{ t('common.search') }}</p>
                 <p class="text-xs opacity-50 mt-1">{{ t('dashboard.searchPlaceholder') }}</p>
              </div>
-             
+
              <div v-else-if="projectStore.projects.length === 0" class="text-center mt-20 text-slate-400 dark:text-slate-500">
                 <div class="i-mdi-folder-open-outline text-5xl mb-3 opacity-20 mx-auto" />
                 <p class="text-sm font-medium">{{ t('dashboard.noProjects') }}</p>
@@ -933,5 +1147,64 @@ async function batchAddProjects() {
 :global(html.dark) .workspace-tab-badge {
   background: rgba(249, 115, 22, 0.16);
   color: rgb(251 146 60);
+}
+
+/* Draggable list items */
+.draggable-list {
+  position: relative;
+}
+
+.draggable-item {
+  position: relative;
+  margin-bottom: 8px;
+}
+
+.draggable-item-active {
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
+  border-radius: 8px;
+  opacity: 0.92;
+}
+
+.dark .draggable-item-active {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+/* Drag handle - inside item top-left corner, no space taken */
+.drag-handle {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  width: 16px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  z-index: 30;
+}
+
+.draggable-item:hover .drag-handle {
+  opacity: 1;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}
+
+/* Sort mode segmented control font size */
+.sort-mode-control :deep(.el-segmented) {
+  font-size: 10px;
+}
+
+.sort-mode-control :deep(.el-segmented__item) {
+  padding: 2px 8px;
+  min-height: 22px;
+}
+
+.sort-mode-control :deep(.el-segmented__item-label) {
+  font-size: 10px;
+  line-height: 1.2;
 }
 </style>

@@ -97,6 +97,10 @@ export const useSettingsStore = defineStore('settings', () => {
       if (typeof parsed.gitAiStream !== 'boolean') {
         parsed.gitAiStream = true;
       }
+      // Migrate usageWeightEnabled to sortMode
+      if (!parsed.sortMode) {
+        parsed.sortMode = parsed.usageWeightEnabled ? 'smart' : 'default';
+      }
       settings.value = { ...settings.value, ...parsed };
     } catch (e) {
       console.error(e);

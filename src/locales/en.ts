@@ -94,7 +94,12 @@ export default {
     selectProjectDesc: 'Choose a project from the left to view console and Git management',
     locateProject: 'Locate project',
     weightSort: 'Smart Sort',
-    weightSortHint: 'Auto-sort projects by usage frequency. Weight is calculated from opens, command runs, and Git operations over the past 7 days. Newly added projects are shown first. Historical weights decay weekly.'
+    weightSortHint: 'Auto-sort projects by usage frequency. Weight is calculated from opens, command runs, and Git operations over the past 7 days. Newly added projects are shown first. Historical weights decay weekly.',
+    sortMode: 'Sort Mode',
+    sortModeDefault: 'Default',
+    sortModeSmart: 'Smart',
+    sortModeDefaultHint: 'Drag and drop to reorder projects manually',
+    sortModeSmartHint: 'Auto-sort by usage frequency, most recently used first'
   },
   nodes: {
     title: 'Node Version Manager',
