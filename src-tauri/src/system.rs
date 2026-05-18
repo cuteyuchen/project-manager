@@ -223,6 +223,13 @@ pub async fn detect_available_terminals() -> Result<Vec<TerminalInfo>, String> {
                     name: "PowerShell".to_string(),
                 });
             }
+
+            if check_command_exists("pwsh") {
+                terminals.push(TerminalInfo {
+                    id: "pwsh".to_string(),
+                    name: "PowerShell 7 (pwsh)".to_string(),
+                });
+            }
         }
 
         #[cfg(target_os = "macos")]

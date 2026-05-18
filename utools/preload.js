@@ -3,6 +3,10 @@ const path = require('path');
 const { spawn, exec, execFile, execSync, execFileSync } = require('child_process');
 const { TextDecoder } = require('util');
 
+// Force UTF-8 encoding for git commands to support non-ASCII filenames
+process.env.LANG = 'en_US.UTF-8';
+process.env.LC_ALL = 'en_US.UTF-8';
+
 // Validate version string to prevent command injection
 function isValidVersion(version) {
     return /^[a-zA-Z0-9._\-\/]+$/.test(version);
@@ -261,11 +265,9 @@ function parseSsEndpoint(str) {
     return { address, port: portStr === '*' ? null : (parseInt(portStr) || null) };
 }
 
-// Cleanup on exit
-platform.onPluginOut(() => {
-    cleanupAllProcesses();
-});
-
+// Cleanup on process-level signals only (not plugin UI close)
+// platform.onPluginOut is intentionally NOT cleaning up processes,
+// so running commands continue when the plugin UI is closed.
 process.once('beforeExit', () => cleanupAllProcesses({ synchronous: true }));
 process.once('exit', () => cleanupAllProcesses({ synchronous: true }));
 process.once('SIGINT', () => {
@@ -1026,6 +1028,14 @@ window.services = {
                 });
             } catch (e) {}
 
+            try {
+                execSync('where pwsh', { stdio: 'ignore' });
+                terminals.push({
+                    id: 'pwsh',
+                    name: 'PowerShell 7 (pwsh)'
+                });
+            } catch (e) {}
+
         } else if (process.platform === 'darwin') {
             terminals.push({
                 id: 'terminal',
@@ -1046,7 +1056,7 @@ window.services = {
         const termRaw = (terminal || 'cmd').trim();
         const term = termRaw.toLowerCase();
         const spawnOptions = getTerminalSpawnOptions(nodePath);
-        
+
         if (process.platform === 'win32') {
             try {
                 const winPath = projectPath.replace(/\//g, "\\");
@@ -1054,17 +1064,25 @@ window.services = {
                 const pathEnvCmd = spawnOptions.env?.PATH ? escapeCmdDoubleQuotes(spawnOptions.env.PATH) : '';
                 const winPathPs = escapePowerShellSingleQuotes(winPath);
                 const pathEnvPs = spawnOptions.env?.PATH ? escapePowerShellSingleQuotes(spawnOptions.env.PATH) : '';
-                
-                if (term === 'powershell') {
+
+                // Detect terminal type by name or executable path
+                const terminalBaseName = path.basename(termRaw).toLowerCase();
+                const isCustomExecutable = termRaw.includes('\\') || termRaw.includes('/') || term.endsWith('.exe');
+                const isWindowsPowerShell = term === 'powershell' || term === 'powershell.exe' || terminalBaseName === 'powershell.exe';
+                const isPwsh = term === 'pwsh' || term === 'pwsh.exe' || terminalBaseName === 'pwsh.exe';
+
+                if (isWindowsPowerShell) {
                      const startupScript = pathEnvPs
                         ? `$env:PATH='${pathEnvPs}'; Set-Location '${winPathPs}'; node -v`
                         : `Set-Location '${winPathPs}'; node -v`;
-                     spawn('cmd', ['/C', 'start', '', 'powershell', '-NoExit', '-Command', startupScript], spawnOptions);
-                } else if (term === 'pwsh') {
+                     const executable = isCustomExecutable ? termRaw : 'powershell';
+                     spawn('cmd', ['/C', 'start', '', executable, '-NoExit', '-Command', startupScript], spawnOptions);
+                } else if (isPwsh) {
                      const startupScript = pathEnvPs
                         ? `$env:PATH='${pathEnvPs}'; Set-Location '${winPathPs}'; node -v`
                         : `Set-Location '${winPathPs}'; node -v`;
-                     spawn('cmd', ['/C', 'start', '', 'pwsh', '-NoExit', '-Command', startupScript], spawnOptions);
+                     const executable = isCustomExecutable ? termRaw : 'pwsh';
+                     spawn('cmd', ['/C', 'start', '', executable, '-NoExit', '-Command', startupScript], spawnOptions);
                 } else if (term === 'windows-terminal') {
                     const startupCommand = pathEnvCmd
                         ? `set "PATH=${pathEnvCmd}" && cd /d "${winPathCmd}" && node -v`
@@ -1562,6 +1580,32 @@ $result | ConvertTo-Json -Compress`;
     },
 
     gitDiff: async (projectPath, file, staged) => {
+        // For unstaged files, check if it's an untracked file
+        if (file && !staged) {
+            try {
+                execFileSync('git', ['ls-files', '--error-unmatch', '--', file], {
+                    cwd: projectPath, windowsHide: true, stdio: 'pipe'
+                });
+            } catch {
+                // File is untracked, generate synthetic diff
+                const fs = require('fs');
+                const path = require('path');
+                const fullPath = path.join(projectPath, file);
+                try {
+                    const content = fs.readFileSync(fullPath, 'utf-8');
+                    const clean = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+                    const lines = clean.split('\n');
+                    const total = clean.endsWith('\n') && lines.length > 0 ? lines.length - 1 : lines.length;
+                    let result = `diff --git a/${file} b/${file}\nnew file mode 100644\n--- /dev/null\n+++ b/${file}\n@@ -0,0 +1,${total} @@\n`;
+                    for (let i = 0; i < total; i++) {
+                        result += '+' + lines[i] + '\n';
+                    }
+                    return result;
+                } catch {
+                    return '';
+                }
+            }
+        }
         const args = ['diff'];
         if (staged) args.push('--cached');
         if (file) { args.push('--'); args.push(file); }

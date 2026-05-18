@@ -1024,25 +1024,40 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String) -> Re
             .as_ref()
             .map(|value| escape_for_powershell_single_quotes(value));
 
+        let terminal_executable_name = std::path::Path::new(&terminal)
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or(&terminal)
+            .to_lowercase();
+        let is_custom_executable = terminal.contains('\\') || terminal.contains('/') || terminal_key.ends_with(".exe");
+        let is_windows_powershell = terminal_key == "powershell"
+            || terminal_key == "powershell.exe"
+            || terminal_executable_name == "powershell.exe";
+        let is_pwsh = terminal_key == "pwsh"
+            || terminal_key == "pwsh.exe"
+            || terminal_executable_name == "pwsh.exe";
+
         match terminal_key.as_str() {
-            "powershell" => {
+            _ if is_windows_powershell => {
                 let startup_script = if let Some(path_env) = &path_env_ps {
                     format!("$env:PATH='{}'; Set-Location '{}'; node -v", path_env, win_path_ps)
                 } else {
                     format!("Set-Location '{}'; node -v", win_path_ps)
                 };
+                let executable = if is_custom_executable { terminal.as_str() } else { "powershell" };
                 let mut command = Command::new("cmd");
-                command.args(["/C", "start", "", "powershell", "-NoExit", "-Command", &startup_script]);
+                command.args(["/C", "start", "", executable, "-NoExit", "-Command", &startup_script]);
                 command.spawn().map_err(|e| e.to_string())?;
             }
-            "pwsh" => {
+            _ if is_pwsh => {
                 let startup_script = if let Some(path_env) = &path_env_ps {
                     format!("$env:PATH='{}'; Set-Location '{}'; node -v", path_env, win_path_ps)
                 } else {
                     format!("Set-Location '{}'; node -v", win_path_ps)
                 };
+                let executable = if is_custom_executable { terminal.as_str() } else { "pwsh" };
                 let mut command = Command::new("cmd");
-                command.args(["/C", "start", "", "pwsh", "-NoExit", "-Command", &startup_script]);
+                command.args(["/C", "start", "", executable, "-NoExit", "-Command", &startup_script]);
                 command.spawn().map_err(|e| e.to_string())?;
             }
             "windows-terminal" => {

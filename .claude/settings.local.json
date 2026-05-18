@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(node *)",
-      "Bash(npx vue-tsc *)"
+      "Bash(npx vue-tsc *)",
+      "WebFetch(domain:github.com)"
     ]
   }
 }

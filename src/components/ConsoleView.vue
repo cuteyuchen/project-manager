@@ -119,7 +119,14 @@ watch(activeRunningTabs, (runningTabs) => {
     for (const script of runningTabs) {
         openTabs.value.add(script);
     }
-    if (runningTabs.length > 0) {
+    // Only switch when the currently viewed command has ended
+    if (activeScript.value && !runningTabs.includes(activeScript.value)) {
+        if (runningTabs.length > 0) {
+            activeScript.value = runningTabs[runningTabs.length - 1];
+        }
+    }
+    // Initialize activeScript if not set
+    if (!activeScript.value && runningTabs.length > 0) {
         activeScript.value = runningTabs[runningTabs.length - 1];
     }
 }, { immediate: true });

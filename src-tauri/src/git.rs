@@ -107,6 +107,8 @@ fn run_git(path: &str, args: &[&str]) -> Result<String, String> {
         .arg("-c")
         .arg("core.quotePath=false")
         .args(args)
+        .env("LANG", "en_US.UTF-8")
+        .env("LC_ALL", "en_US.UTF-8")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
@@ -136,6 +138,8 @@ fn run_git_relaxed(path: &str, args: &[&str]) -> Result<String, String> {
         .arg("-c")
         .arg("core.quotePath=false")
         .args(args)
+        .env("LANG", "en_US.UTF-8")
+        .env("LC_ALL", "en_US.UTF-8")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
@@ -150,6 +154,8 @@ fn run_git_global(args: &[&str]) -> Result<String, String> {
     let mut cmd = Command::new("git");
     cmd.args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env("LANG", "en_US.UTF-8")
+        .env("LC_ALL", "en_US.UTF-8")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
 
@@ -239,6 +245,8 @@ fn run_git_cancellable(
     }
     cmd.args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env("LANG", "en_US.UTF-8")
+        .env("LC_ALL", "en_US.UTF-8")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -631,6 +639,8 @@ pub async fn git_fetch(
             let mut cmd = Command::new("git");
             cmd.current_dir(&path)
                 .args(&args)
+                .env("LANG", "en_US.UTF-8")
+                .env("LC_ALL", "en_US.UTF-8")
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped());
 
@@ -790,6 +800,8 @@ pub fn git_apply_patch(path: String, patch: String, cached: Option<bool>, revers
     let mut child = std::process::Command::new("git")
         .args(&args)
         .current_dir(&path)
+        .env("LANG", "en_US.UTF-8")
+        .env("LC_ALL", "en_US.UTF-8")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -874,7 +886,7 @@ pub async fn git_diff(path: String, file: Option<String>, staged: Option<bool>) 
     run_git_task(move || {
         if let Some(ref f) = file {
             if !staged.unwrap_or(false) {
-                let ls_output = run_git_relaxed(&path, &["ls-files", "--error-unmatch", "--", f]);
+                let ls_output = run_git(&path, &["ls-files", "--error-unmatch", "--", f]);
                 if ls_output.is_err() {
                     let full_path = std::path::Path::new(&path).join(f);
                     if let Ok(content) = std::fs::read_to_string(&full_path) {
@@ -1432,6 +1444,8 @@ pub async fn git_revert_hunk(path: String, patch: String, staged: Option<bool>) 
         let mut cmd = Command::new("git");
         cmd.current_dir(&path)
             .args(args)
+            .env("LANG", "en_US.UTF-8")
+            .env("LC_ALL", "en_US.UTF-8")
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());

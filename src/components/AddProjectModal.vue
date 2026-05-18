@@ -415,6 +415,13 @@ function buildProjectPayload(): Project {
     project.editorId = form.value.editorId;
   }
 
+  // Preserve pin and sort state when editing
+  if (isEdit.value && props.editProject) {
+    project.pinned = props.editProject.pinned;
+    project.pinOrder = props.editProject.pinOrder;
+    project.sortOrder = props.editProject.sortOrder;
+  }
+
   return ensureNodeInstallCommand(project, t('project.installDependencies'));
 }
 
