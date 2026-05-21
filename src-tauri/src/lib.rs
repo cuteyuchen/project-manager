@@ -88,6 +88,8 @@ pub fn run() {
             runner::stop_project_command,
             runner::open_in_editor,
             runner::open_in_terminal,
+            runner::install_pm,
+            runner::resolve_pm,
             runner::open_folder,
             runner::open_url,
             updater::install_update,

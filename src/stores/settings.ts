@@ -41,6 +41,7 @@ export const useSettingsStore = defineStore('settings', () => {
     autoUpdate: true,
     trayEnabled: true,
     closeAction: 'ask',
+    autoLaunch: false,
     gitAiEnabled: false,
     gitAiPrimaryService: createDefaultAiService(),
     gitAiStream: true,

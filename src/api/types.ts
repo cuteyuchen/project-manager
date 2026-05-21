@@ -1,5 +1,15 @@
 import type { NodeVersion, GitStatusResult, GitBranch, GitCommit, GitSummary, GitCommitFile } from '../types';
 
+/** 包管理器解析结果 */
+export interface PackageManagerResolveResult {
+    /** 包管理器是否可用 */
+    available: boolean;
+    /** 实际可执行的命令路径/命令字符串（仅 available=true 时有值） */
+    commandPath?: string;
+    /** 不可用原因（仅 available=false 时有值） */
+    reason?: string;
+}
+
 export interface ProjectInfo {
     name: string;
     scripts: string[];
@@ -43,13 +53,23 @@ export interface PlatformAPI {
     gitCancelOperation(operationId: string): Promise<void>;
 
     // Runner
-    runProjectCommand(id: string, path: string, script: string, packageManager: string, nodePath: string): Promise<void>;
+    runProjectCommand(id: string, path: string, script: string, packageManager: string, nodePath: string, commandPath?: string, pmNodePath?: string): Promise<void>;
     runCustomCommand(id: string, path: string, command: string): Promise<void>;
     stopProjectCommand(id: string): Promise<void>;
+    installPm(nodePath: string, pmName: string): Promise<void>;
+
+    /**
+     * 解析包管理器可用性
+     * @param nodePath 项目 Node 路径
+     * @param defaultNodePath 默认 Node 路径
+     * @param packageManager 包管理器名称
+     * @param source 来源：'project' 使用项目 Node，'default' 借用默认 Node 的 PM
+     */
+    resolvePackageManager(nodePath: string, defaultNodePath: string, packageManager: string, source: 'project' | 'default'): Promise<PackageManagerResolveResult>;
 
     // System / Shell
     openInEditor(path: string, editor?: string): Promise<void>;
-    openInTerminal(path: string, terminal?: string, nodePath?: string): Promise<void>;
+    openInTerminal(path: string, terminal?: string, nodePath?: string, packageManager?: string): Promise<void>;
     openFolder(path: string): Promise<void>;
     openUrl(url: string): Promise<void>;
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import { useI18n } from 'vue-i18n';
 import { api } from '../api';
 import type { Project, CustomCommand } from '../types';
@@ -8,6 +8,7 @@ import type { ProjectInfo } from '../api/types';
 import { normalizeNvmVersion, findInstalledNodeVersion } from '../utils/nvm';
 import { ensureNodeInstallCommand, getInstallDependenciesCommand } from '../utils/projectCommands';
 import { useSettingsStore } from '../stores/settings';
+import type { PackageManagerResolveResult } from '../api/types';
 
 type ProjectForm = {
   id: string;
@@ -19,6 +20,7 @@ type ProjectForm = {
   gitBranch: string;
   nodeVersion: string;
   packageManager: 'npm' | 'yarn' | 'pnpm' | 'cnpm';
+  packageManagerSource: 'project' | 'default';
   scripts: string[];
   visibleScripts: string[];
   customCommands: CustomCommand[];
@@ -56,6 +58,10 @@ const editorHint = computed(() => defaultEditor.value
 
 const nodeVersions = ref<string[]>([]);
 const loading = ref(false);
+/** 各 PM 的可用性状态 { pmName: PackageManagerResolveResult } */
+const pmAvailability = ref<Record<string, PackageManagerResolveResult>>({});
+/** PM 可用性检查是否进行中 */
+const pmChecking = ref(false);
 const pathIsGitRepo = ref(false);
 const pathEntryCount = ref(0);
 const remoteBranches = ref<string[]>([]);
@@ -73,6 +79,7 @@ const form = ref<ProjectForm>({
   gitBranch: '',
   nodeVersion: '',
   packageManager: 'npm',
+  packageManagerSource: 'project',
   scripts: [],
   visibleScripts: [],
   customCommands: [],
@@ -94,6 +101,7 @@ function buildEmptyForm(): ProjectForm {
     gitBranch: '',
     nodeVersion: nodeVersions.value[0] || '',
     packageManager: 'npm',
+    packageManagerSource: 'project',
     scripts: [],
     visibleScripts: [],
     customCommands: [],
@@ -202,6 +210,7 @@ function hydrateFormFromProject(project: Project) {
     gitBranch: project.gitBranch || '',
     nodeVersion: project.nodeVersion || '',
     packageManager: project.packageManager || 'npm',
+    packageManagerSource: project.packageManagerSource || 'project',
     scripts: project.scripts || [],
     visibleScripts: project.visibleScripts || [...(project.scripts || [])],
     customCommands: project.customCommands
@@ -237,13 +246,16 @@ watch(() => props.modelValue, async (opened) => {
     } catch (error) {
       console.error('Failed to inspect existing project path', error);
     }
+    // 刷新 PM 可用性状态
+    await refreshPmAvailability();
     return;
   }
 
   form.value = buildEmptyForm();
+  await refreshPmAvailability();
 });
 
-// When package manager changes, update the install command and check PM availability
+// When package manager changes, update the install command and refresh PM availability
 watch(() => form.value.packageManager, (newPm, oldPm) => {
   if (!newPm || newPm === oldPm) return;
 
@@ -255,39 +267,105 @@ watch(() => form.value.packageManager, (newPm, oldPm) => {
     }
   }
 
-  // Check if the selected Node version has this PM
-  checkPackageManagerAvailability(newPm, form.value.nodeVersion);
+  refreshPmAvailability();
 });
 
-// When Node version changes, check PM availability
-watch(() => form.value.nodeVersion, (newVersion, oldVersion) => {
-  if (!newVersion || newVersion === oldVersion) return;
-  checkPackageManagerAvailability(form.value.packageManager, newVersion);
+// When Node version changes, refresh PM availability
+watch(() => form.value.nodeVersion, () => {
+  refreshPmAvailability();
 });
 
-async function checkPackageManagerAvailability(pm: string, nodeVersion: string) {
-  if (!nodeVersion || pm === 'npm') return; // npm is always bundled with Node
+// When PM source changes, refresh PM availability
+watch(() => form.value.packageManagerSource, () => {
+  refreshPmAvailability();
+});
 
-  const nvmVersionEntry = nodeVersions.value.find((v) => v === nodeVersion);
-  if (!nvmVersionEntry) return;
+/**
+ * 获取所有 4 个 PM 选项的可用性状态。
+ * 用于下拉列表中显示每个 PM 的可用状态后缀。
+ */
+async function refreshPmAvailability() {
+  const pm = form.value.packageManager;
+  const source = form.value.packageManagerSource;
+  pmChecking.value = true;
 
   try {
-    const list = await api.getNvmList();
-    const versionInfo = list.find((v) => v.version === nodeVersion);
-    if (!versionInfo) return;
+    // 解析项目 Node 路径
+    const nvmList = await api.getNvmList().catch(() => []);
+    const projectNodeEntry = nvmList.find((v) => v.version === form.value.nodeVersion);
+    const nodePath = projectNodeEntry?.path || '';
 
-    const entries = await api.readDir(versionInfo.path);
-    const hasPm = entries.some((e) =>
-      e.name === pm || e.name === `${pm}.cmd` || e.name === `${pm}.exe`
-    );
+    // 解析默认 Node 路径
+    let defaultNodePath = '';
+    try {
+      defaultNodePath = await api.getSystemNodePath();
+    } catch (_) {}
 
-    if (!hasPm) {
-      ElMessage.warning(
-        t('project.pmNotInstalled', { pm, version: nodeVersion }),
-      );
+    const allPms: Array<'npm' | 'yarn' | 'pnpm' | 'cnpm'> = ['npm', 'yarn', 'pnpm', 'cnpm'];
+    const results: Record<string, PackageManagerResolveResult> = {};
+
+    for (const p of allPms) {
+      try {
+        results[p] = await api.resolvePackageManager(nodePath, defaultNodePath, p, source);
+      } catch (_) {
+        results[p] = { available: false, reason: 'unknown' };
+      }
+    }
+
+    pmAvailability.value = results;
+
+    // 检查当前选中的 PM 是否不可用，提示安装
+    // 仅当来源为当前 Node 环境时，才提示安装到当前 Node
+    const currentResult = results[pm];
+    if (source === 'project' && currentResult && !currentResult.available && pm !== 'npm' && nodePath) {
+      await promptInstallPm(pm, form.value.nodeVersion, nodePath);
     }
   } catch (error) {
-    console.error('Failed to check PM availability', error);
+    console.error('Failed to refresh PM availability', error);
+  } finally {
+    pmChecking.value = false;
+  }
+}
+
+/** 提示用户安装缺失的 PM */
+async function promptInstallPm(pm: string, nodeVersion: string, nodePath: string) {
+  try {
+    await ElMessageBox.confirm(
+      t('project.pmNotInstalledMessage', { pm, version: nodeVersion }),
+      t('project.pmNotInstalledTitle'),
+      {
+        confirmButtonText: t('project.pmInstall'),
+        cancelButtonText: t('common.cancel'),
+        type: 'warning',
+      },
+    );
+    await installPMForNode(pm, nodeVersion, nodePath);
+    // 安装后刷新可用性
+    await refreshPmAvailability();
+  } catch {
+    // User cancelled
+  }
+}
+
+async function installPMForNode(pm: string, nodeVersion: string, nodePath: string) {
+  try {
+    ElMessage.info(t('project.pmInstalling', { pm, version: nodeVersion }));
+    await api.installPm(nodePath, pm);
+    ElMessage.success(t('project.pmInstallSuccess', { pm, version: nodeVersion }));
+  } catch (error) {
+    console.error('Failed to install PM for selected node:', error);
+    // Fallback: try to install using default node version's npm
+    try {
+      const defaultNodePath = await api.getSystemNodePath();
+      if (defaultNodePath) {
+        await api.installPm(defaultNodePath, pm);
+        ElMessage.warning(t('project.pmInstallFallback', { pm, version: nodeVersion }));
+        return;
+      }
+    } catch (fallbackError) {
+      console.error('Failed to install PM via default node:', fallbackError);
+    }
+    ElMessage.error(t('project.pmInstallFailed', { pm, version: nodeVersion }));
   }
 }
 
@@ -405,6 +483,7 @@ function buildProjectPayload(): Project {
   if (form.value.type === 'node') {
     project.nodeVersion = form.value.nodeVersion;
     project.packageManager = form.value.packageManager;
+    project.packageManagerSource = form.value.packageManagerSource;
     project.scripts = form.value.scripts;
     project.visibleScripts = form.value.visibleScripts;
   }
@@ -491,7 +570,7 @@ async function cancelClone() {
   <el-dialog
     v-model="visible"
     :title="isEdit ? t('project.editProject') : t('dashboard.addProject')"
-    width="680px"
+    width="750px"
     :close-on-click-modal="false"
     :close-on-press-escape="!loading"
     :show-close="!loading"
@@ -576,7 +655,7 @@ async function cancelClone() {
       </el-form-item>
 
       <template v-if="form.type === 'node'">
-        <div class="grid gap-4 md:grid-cols-2">
+        <div class="grid gap-4 grid-cols-3">
           <div class="min-w-0">
             <el-form-item :label="t('project.nodeVersion')">
               <el-select v-model="form.nodeVersion">
@@ -586,12 +665,29 @@ async function cancelClone() {
             </el-form-item>
           </div>
           <div class="min-w-0">
+            <el-form-item :label="t('project.pmSource')">
+              <el-radio-group v-model="form.packageManagerSource" size="small">
+                <el-radio-button value="project">{{ t('project.pmSourceProject') }}</el-radio-button>
+                <el-radio-button value="default">{{ t('project.pmSourceDefault') }}</el-radio-button>
+              </el-radio-group>
+            </el-form-item>
+          </div>
+          <div class="min-w-0">
             <el-form-item :label="t('project.packageManager')">
               <el-select v-model="form.packageManager">
-                <el-option label="npm" value="npm" />
-                <el-option label="yarn" value="yarn" />
-                <el-option label="pnpm" value="pnpm" />
-                <el-option label="cnpm" value="cnpm" />
+                <el-option
+                  v-for="pm in (['npm', 'yarn', 'pnpm', 'cnpm'] as const)"
+                  :key="pm"
+                  :value="pm"
+                >
+                  <span>{{ pm }}</span>
+                  <span v-if="pmAvailability[pm]" class="ml-1 text-[10px]" :class="pmAvailability[pm].available ? 'text-emerald-500' : 'text-red-400'">
+                    {{ pmAvailability[pm].available
+                      ? (form.packageManagerSource === 'default' ? t('project.pmDefaultAvailable') : t('project.pmProjectAvailable'))
+                      : t('project.pmNotAvailable')
+                    }}
+                  </span>
+                </el-option>
               </el-select>
             </el-form-item>
           </div>
@@ -729,7 +825,7 @@ async function cancelClone() {
 
 .project-modal {
   display: flex;
-  width: min(680px, calc(100vw - 32px));
+  width: min(700px, calc(100vw - 32px));
   max-height: 90vh;
   flex-direction: column;
   overflow: hidden;

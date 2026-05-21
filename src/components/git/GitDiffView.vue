@@ -15,6 +15,12 @@ const diffContent = computed(() => gitStore.selectedDiff);
 const diffFile = computed(() => gitStore.selectedDiffFile);
 const reverting = ref(false);
 
+const DIFF_BINARY_MARKER = '__BINARY_FILE__';
+const DIFF_TOO_LARGE_MARKER = '__FILE_TOO_LARGE__';
+const isBinaryFile = computed(() => diffContent.value === DIFF_BINARY_MARKER);
+const isTooLargeFile = computed(() => diffContent.value === DIFF_TOO_LARGE_MARKER);
+const isUnsupported = computed(() => isBinaryFile.value || isTooLargeFile.value);
+
 interface DiffLine {
   type: 'add' | 'del' | 'context';
   content: string;
@@ -129,12 +135,18 @@ async function rollbackHunk(hunk: DiffHunk) {
       <!-- Header -->
       <div class="flex items-center gap-2 px-3 py-1.5 border-b border-slate-200/40 dark:border-slate-700/30 shrink-0 text-[11px]">
         <span class="font-medium text-slate-700 dark:text-slate-300 truncate flex-1">{{ diffFile || t('git.commitDetail') }}</span>
-        <span class="text-green-500 font-mono">+{{ stats.adds }}</span>
-        <span class="text-red-500 font-mono">-{{ stats.dels }}</span>
+        <span v-if="!isUnsupported" class="text-green-500 font-mono">+{{ stats.adds }}</span>
+        <span v-if="!isUnsupported" class="text-red-500 font-mono">-{{ stats.dels }}</span>
+      </div>
+
+      <!-- Binary / Too large message -->
+      <div v-if="isUnsupported" class="flex-1 flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 gap-2">
+        <div :class="isBinaryFile ? 'i-mdi-file-question-outline' : 'i-mdi-file-alert-outline'" class="text-3xl" />
+        <span class="text-[12px]">{{ isBinaryFile ? t('git.binaryFileNoDiff') : t('git.fileTooLargeNoDiff') }}</span>
       </div>
 
       <!-- Diff content -->
-      <div class="flex-1 overflow-auto font-mono text-[11px] leading-[18px] p-2 space-y-2 select-text cursor-text">
+      <div v-if="!isUnsupported" class="flex-1 overflow-auto font-mono text-[11px] leading-[18px] p-2 space-y-2 select-text cursor-text">
         <div
           v-for="(hunk, hunkIndex) in parsedHunks"
           :key="hunkIndex"

@@ -881,14 +881,41 @@ pub fn git_log(path: String, max_count: Option<i32>, all: Option<bool>) -> Resul
     Ok(commits)
 }
 
+const DIFF_BINARY_MARKER: &str = "__BINARY_FILE__";
+const DIFF_TOO_LARGE_MARKER: &str = "__FILE_TOO_LARGE__";
+const DIFF_MAX_FILE_SIZE: u64 = 5 * 1024 * 1024; // 5MB
+
+fn is_binary_file(path: &std::path::Path) -> bool {
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut buf = [0u8; 8192];
+    let Ok(n) = std::io::Read::read(&mut file, &mut buf) else {
+        return false;
+    };
+    buf[..n].contains(&0)
+}
+
 #[tauri::command]
 pub async fn git_diff(path: String, file: Option<String>, staged: Option<bool>) -> Result<String, String> {
     run_git_task(move || {
         if let Some(ref f) = file {
+            let full_path = std::path::Path::new(&path).join(f);
+
+            // Check file size for all files
+            if let Ok(meta) = std::fs::metadata(&full_path) {
+                if meta.len() > DIFF_MAX_FILE_SIZE {
+                    return Ok(DIFF_TOO_LARGE_MARKER.to_string());
+                }
+            }
+
             if !staged.unwrap_or(false) {
                 let ls_output = run_git(&path, &["ls-files", "--error-unmatch", "--", f]);
                 if ls_output.is_err() {
-                    let full_path = std::path::Path::new(&path).join(f);
+                    // Untracked file: check binary before reading
+                    if is_binary_file(&full_path) {
+                        return Ok(DIFF_BINARY_MARKER.to_string());
+                    }
                     if let Ok(content) = std::fs::read_to_string(&full_path) {
                         let clean = content.replace("\r\n", "\n").replace('\r', "\n");
                         let lines: Vec<&str> = clean.split('\n').collect();
@@ -912,7 +939,14 @@ pub async fn git_diff(path: String, file: Option<String>, staged: Option<bool>) 
             args.push("--");
             args.push(f.as_str());
         }
-        run_git_relaxed(&path, &args)
+        let result = run_git_relaxed(&path, &args)?;
+
+        // Check if git reports binary file
+        if result.contains("Binary files") && result.contains("differ") {
+            return Ok(DIFF_BINARY_MARKER.to_string());
+        }
+
+        Ok(result)
     })
     .await
 }

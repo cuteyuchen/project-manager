@@ -6,6 +6,15 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+/// 包管理器解析结果
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PmResolveResult {
+    pub available: bool,
+    pub command_path: Option<String>,
+    pub reason: Option<String>,
+}
+
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
@@ -245,6 +254,8 @@ pub fn run_project_command(
     script: String,
     package_manager: String,
     node_path: String,
+    command_path: Option<String>,
+    pm_node_path: Option<String>,
 ) -> Result<(), String> {
     let processes = state.processes.clone();
     let mut processes_lock = processes.lock().map_err(|e| e.to_string())?;
@@ -328,40 +339,80 @@ pub fn run_project_command(
             ensure_node_exe_in_dir(std::path::Path::new(&node_dir_str));
         }
 
-        let new_path = if !node_dir_str.is_empty() {
+        // 构建 PATH：项目 Node 目录优先，其次 PM 所在 Node 目录（source='default' 时）
+        let mut new_path = if !node_dir_str.is_empty() {
             format!("{};{}", node_dir_str, current_path)
         } else {
-            current_path
+            current_path.clone()
         };
 
-        // Try to resolve absolute path to package manager if node_path is provided
-        let pm_cmd = if !node_dir_str.is_empty() {
+        // 如果 PM 来自不同的 Node 目录（default source），将其也加入 PATH
+        if let Some(ref pm_np) = pm_node_path {
+            if !pm_np.is_empty() && pm_np != &node_dir_str {
+                new_path = if !node_dir_str.is_empty() {
+                    format!("{};{};{}", node_dir_str, pm_np, current_path)
+                } else {
+                    format!("{};{}", pm_np, current_path)
+                };
+            }
+        }
+
+        // 包管理器路径由前端解析结果明确传入；后端只检查当前 Node 目录，不扫描其它 NVM 版本兜底。
+        let node_executable = if !node_dir_str.is_empty() {
+            let p = std::path::Path::new(&node_dir_str).join("node.exe");
+            format!("\"{}\"", p.to_string_lossy())
+        } else {
+            "node".to_string()
+        };
+
+        let pm_cmd = if let Some(ref cp) = command_path {
+            if !cp.is_empty() {
+                if package_manager == "npm" && cp.to_ascii_lowercase().ends_with("npm-cli.js") {
+                    format!("{} \"{}\"", node_executable, cp)
+                } else {
+                    cp.clone()
+                }
+            } else if !node_dir_str.is_empty() {
+                let node_dir = std::path::Path::new(&node_dir_str);
+                let node_exe_path = node_dir.join("node.exe");
+                let npm_cli_js = node_dir
+                    .join("node_modules")
+                    .join("npm")
+                    .join("bin")
+                    .join("npm-cli.js");
+                if npm_cli_js.exists() {
+                    format!("\"{}\" \"{}\"", node_exe_path.to_string_lossy(), npm_cli_js.to_string_lossy())
+                } else {
+                    let pm_path_cmd = node_dir.join(format!("{}.cmd", package_manager));
+                    if pm_path_cmd.exists() {
+                        format!("\"{}\"", pm_path_cmd.to_string_lossy())
+                    } else {
+                        package_manager.clone()
+                    }
+                }
+            } else {
+                if package_manager == "npm" || package_manager == "pnpm" || package_manager == "yarn" {
+                    format!("{}.cmd", package_manager)
+                } else {
+                    package_manager.clone()
+                }
+            }
+        } else if !node_dir_str.is_empty() {
             let node_dir = std::path::Path::new(&node_dir_str);
             let node_exe_path = node_dir.join("node.exe");
-
-            // 1. Check node_dir/node_modules/npm/bin/npm-cli.js
             let npm_cli_js = node_dir
                 .join("node_modules")
                 .join("npm")
                 .join("bin")
                 .join("npm-cli.js");
-
             if npm_cli_js.exists() {
-                format!(
-                    "\"{}\" \"{}\"",
-                    node_exe_path.to_string_lossy(),
-                    npm_cli_js.to_string_lossy()
-                )
+                format!("\"{}\" \"{}\"", node_exe_path.to_string_lossy(), npm_cli_js.to_string_lossy())
             } else {
-                // 2. Check node_dir/{pm}.cmd
                 let pm_path_cmd = node_dir.join(format!("{}.cmd", package_manager));
                 if pm_path_cmd.exists() {
                     format!("\"{}\"", pm_path_cmd.to_string_lossy())
                 } else {
-                    // 3. Fallback: search NVM directories for npm-cli.js / {pm}.cmd
-                    //    (handles broken nvm-windows installs where node_modules is empty)
-                    find_pm_from_nvm(&node_exe_path, &package_manager)
-                        .unwrap_or_else(|| package_manager.clone())
+                    package_manager.clone()
                 }
             }
         } else {
@@ -370,13 +421,6 @@ pub fn run_project_command(
             } else {
                 package_manager.clone()
             }
-        };
-
-        let node_executable = if !node_dir_str.is_empty() {
-            let p = std::path::Path::new(&node_dir_str).join("node.exe");
-            format!("\"{}\"", p.to_string_lossy())
-        } else {
-            "node".to_string()
         };
 
         // Quote the script name to handle special characters (e.g. "build:prod")
@@ -410,56 +454,80 @@ pub fn run_project_command(
              }
         }
 
-        let new_path = if !node_dir_str.is_empty() {
+        // 构建 PATH：项目 Node 目录优先，其次 PM 所在 Node 目录（source='default' 时）
+        let mut new_path = if !node_dir_str.is_empty() {
             format!("{}:{}", node_dir_str, current_path)
         } else {
-            current_path
+            current_path.clone()
         };
 
-        let pm_cmd = if !node_dir_str.is_empty() {
-            let node_dir = std::path::Path::new(&node_dir_str);
-            // Check for node_modules/npm/bin/npm-cli.js pattern (common in nvm installs)
-            // Note: on Unix nvm, sometimes it's lib/node_modules/npm/bin/npm-cli.js
-            // But if node_path is the bin dir, we might need to go up.
-            // Let's assume standard nvm structure:
-            // bin/node
-            // lib/node_modules/npm/bin/npm-cli.js
-            
-            let npm_cli_js_bin = node_dir
-                .join("node_modules")
-                .join("npm")
-                .join("bin")
-                .join("npm-cli.js");
-                
-            let npm_cli_js_lib = node_dir
-                .parent() // up from bin
-                .map(|p| p.join("lib").join("node_modules").join("npm").join("bin").join("npm-cli.js"))
-                .unwrap_or_else(|| std::path::PathBuf::from(""));
-
-            if npm_cli_js_bin.exists() {
-                 format!(
-                    "\"{}\" \"{}\"",
-                    node_dir.join("node").to_string_lossy(),
-                    npm_cli_js_bin.to_string_lossy()
-                )
-            } else if npm_cli_js_lib.exists() {
-                 format!(
-                    "\"{}\" \"{}\"",
-                    node_dir.join("node").to_string_lossy(),
-                    npm_cli_js_lib.to_string_lossy()
-                )
-            } else {
-                package_manager.clone()
+        // 如果 PM 来自不同的 Node 目录（default source），将其也加入 PATH
+        if let Some(ref pm_np) = pm_node_path {
+            if !pm_np.is_empty() && pm_np != &node_dir_str {
+                new_path = if !node_dir_str.is_empty() {
+                    format!("{}:{}:{}", node_dir_str, pm_np, current_path)
+                } else {
+                    format!("{}:{}", pm_np, current_path)
+                };
             }
-        } else {
-            package_manager.clone()
-        };
+        }
 
+        // If command_path is explicitly provided (from frontend PM resolution), use it directly
         let node_executable = if !node_dir_str.is_empty() {
             let p = std::path::Path::new(&node_dir_str).join("node");
             format!("\"{}\"", p.to_string_lossy())
         } else {
             "node".to_string()
+        };
+
+        let pm_cmd = if let Some(ref cp) = command_path {
+            if !cp.is_empty() {
+                if package_manager == "npm" && cp.ends_with("npm-cli.js") {
+                    format!("{} \"{}\"", node_executable, cp)
+                } else {
+                    cp.clone()
+                }
+            } else if !node_dir_str.is_empty() {
+                let node_dir = std::path::Path::new(&node_dir_str);
+                let npm_cli_js_bin = node_dir
+                    .join("node_modules")
+                    .join("npm")
+                    .join("bin")
+                    .join("npm-cli.js");
+                let npm_cli_js_lib = node_dir
+                    .parent()
+                    .map(|p| p.join("lib").join("node_modules").join("npm").join("bin").join("npm-cli.js"))
+                    .unwrap_or_else(|| std::path::PathBuf::from(""));
+                if npm_cli_js_bin.exists() {
+                    format!("\"{}\" \"{}\"", node_dir.join("node").to_string_lossy(), npm_cli_js_bin.to_string_lossy())
+                } else if npm_cli_js_lib.exists() {
+                    format!("\"{}\" \"{}\"", node_dir.join("node").to_string_lossy(), npm_cli_js_lib.to_string_lossy())
+                } else {
+                    package_manager.clone()
+                }
+            } else {
+                package_manager.clone()
+            }
+        } else if !node_dir_str.is_empty() {
+            let node_dir = std::path::Path::new(&node_dir_str);
+            let npm_cli_js_bin = node_dir
+                .join("node_modules")
+                .join("npm")
+                .join("bin")
+                .join("npm-cli.js");
+            let npm_cli_js_lib = node_dir
+                .parent()
+                .map(|p| p.join("lib").join("node_modules").join("npm").join("bin").join("npm-cli.js"))
+                .unwrap_or_else(|| std::path::PathBuf::from(""));
+            if npm_cli_js_bin.exists() {
+                format!("\"{}\" \"{}\"", node_dir.join("node").to_string_lossy(), npm_cli_js_bin.to_string_lossy())
+            } else if npm_cli_js_lib.exists() {
+                format!("\"{}\" \"{}\"", node_dir.join("node").to_string_lossy(), npm_cli_js_lib.to_string_lossy())
+            } else {
+                package_manager.clone()
+            }
+        } else {
+            package_manager.clone()
         };
 
         full_cmd_str = format!("{} -v && {} run \"{}\"", node_executable, pm_cmd, script);
@@ -884,57 +952,6 @@ fn ensure_node_exe_in_dir(dir: &std::path::Path) {
     }
 }
 
-/// When a Node version directory lacks npm (empty node_modules), search other
-/// NVM directories for a usable npm-cli.js or {pm}.cmd and pair it with the
-/// project's own node.exe so the correct Node version is still used.
-#[cfg(target_os = "windows")]
-fn find_pm_from_nvm(node_exe: &std::path::Path, package_manager: &str) -> Option<String> {
-    let node_exe_str = node_exe.to_string_lossy();
-
-    // Check NVM_SYMLINK first (usually has npm for the active version)
-    if let Ok(nvm_symlink) = std::env::var("NVM_SYMLINK") {
-        let symlink_dir = std::path::Path::new(&nvm_symlink);
-        let cli = symlink_dir
-            .join("node_modules")
-            .join("npm")
-            .join("bin")
-            .join("npm-cli.js");
-        if cli.exists() {
-            return Some(format!("\"{}\" \"{}\"", node_exe_str, cli.to_string_lossy()));
-        }
-        let cmd = symlink_dir.join(format!("{}.cmd", package_manager));
-        if cmd.exists() {
-            return Some(format!("\"{}\"", cmd.to_string_lossy()));
-        }
-    }
-
-    // Scan NVM_HOME version directories
-    if let Ok(nvm_home) = std::env::var("NVM_HOME") {
-        if let Ok(entries) = std::fs::read_dir(&nvm_home) {
-            for entry in entries.flatten() {
-                let dir = entry.path();
-                if !dir.is_dir() {
-                    continue;
-                }
-                let cli = dir
-                    .join("node_modules")
-                    .join("npm")
-                    .join("bin")
-                    .join("npm-cli.js");
-                if cli.exists() {
-                    return Some(format!("\"{}\" \"{}\"", node_exe_str, cli.to_string_lossy()));
-                }
-                let cmd = dir.join(format!("{}.cmd", package_manager));
-                if cmd.exists() {
-                    return Some(format!("\"{}\"", cmd.to_string_lossy()));
-                }
-            }
-        }
-    }
-
-    None
-}
-
 fn resolve_terminal_node_dir(node_path: &str) -> Option<String> {
     let trimmed = node_path.trim();
     if trimmed.is_empty() {
@@ -980,6 +997,76 @@ fn resolve_terminal_node_dir(node_path: &str) -> Option<String> {
     Some(trimmed.to_string())
 }
 
+/// 判断某个 PATH 目录是否包含 Node/npm 相关工具入口。
+/// 用于过滤原始 PATH 中其它 Node 版本的目录，防止 npm/npx 等命中错误的 Node。
+fn dir_has_node_tools(dir: &str) -> bool {
+    let p = std::path::Path::new(dir);
+    if !p.is_dir() {
+        return false;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // Windows: 检查 node.exe / npm.cmd / npm.exe / npx.cmd / pnpm.cmd / yarn.cmd / cnpm.cmd
+        let names = [
+            "node.exe", "npm.cmd", "npm.exe", "npx.cmd",
+            "pnpm.cmd", "yarn.cmd", "cnpm.cmd",
+        ];
+        names.iter().any(|n| p.join(n).exists())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        // Unix: 检查 node / npm / npx / pnpm / yarn / cnpm
+        let names = ["node", "npm", "npx", "pnpm", "yarn", "cnpm"];
+        names.iter().any(|n| p.join(n).exists())
+    }
+}
+
+/// 从 PATH 中过滤掉 Node/npm 工具目录，仅保留普通目录。
+fn filter_path_entries(node_dir: &str, path_value: &str) -> String {
+    #[cfg(target_os = "windows")]
+    let separator = ";";
+    #[cfg(not(target_os = "windows"))]
+    let separator = ":";
+
+    let node_dir_normalized = normalize_path_str(node_dir);
+
+    let filtered: Vec<&str> = path_value
+        .split(separator)
+        .filter(|entry| {
+            let entry_trimmed = entry.trim();
+            if entry_trimmed.is_empty() {
+                return false;
+            }
+            // 当前项目 nodeDir 会在最终 PATH 最前面单独注入，这里跳过避免重复。
+            if normalize_path_str(entry_trimmed) == node_dir_normalized {
+                return false;
+            }
+            // 含有 Node/npm 工具入口的目录 → 过滤
+            if dir_has_node_tools(entry_trimmed) {
+                return false;
+            }
+            // 普通目录 → 保留
+            true
+        })
+        .collect();
+
+    filtered.join(separator)
+}
+
+/// 标准化路径字符串用于比较（小写 + 统一分隔符，仅 Windows 需要）
+fn normalize_path_str(s: &str) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        s.to_lowercase().replace('/', "\\").trim_end_matches('\\').to_string()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        s.trim_end_matches('/').to_string()
+    }
+}
+
 fn build_terminal_path_env(node_path: &str) -> Option<String> {
     let node_dir = resolve_terminal_node_dir(node_path)?;
     let current_path = std::env::var("PATH").unwrap_or_default();
@@ -989,11 +1076,16 @@ fn build_terminal_path_env(node_path: &str) -> Option<String> {
     #[cfg(not(target_os = "windows"))]
     let separator = ":";
 
-    if current_path.is_empty() {
-        Some(node_dir)
+    // 打开终端只注入项目 Node 路径，不再扫描其它 NVM 目录兜底包管理器。
+    // 同时过滤原始 PATH 中其它 Node/npm 目录，避免 npm 版本错配。
+    let filtered = filter_path_entries(&node_dir, &current_path);
+
+    if filtered.is_empty() {
+        node_dir.clone()
     } else {
-        Some(format!("{}{}{}", node_dir, separator, current_path))
+        format!("{}{}{}", node_dir, separator, filtered)
     }
+    .into()
 }
 
 #[cfg(target_os = "windows")]
@@ -1006,8 +1098,135 @@ fn escape_for_powershell_single_quotes(value: &str) -> String {
     value.replace('\'', "''")
 }
 
+#[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
+fn escape_for_bash_single_quotes(value: &str) -> String {
+    value.replace('\'', "'\\''")
+}
+
+/// 解析项目 Node 目录下是否存在可用的 npm-cli.js（用于绕过被损坏的 npm.cmd / npm 软链）。
+/// 在 nvm-windows 等环境下，npm.cmd 内部会指向 `%~dp0\node_modules\npm`，若该目录被其它版本的 junction 覆盖，
+/// 直接 `npm -v` 会加载错误版本的 npm-cli.js。这里给出 npm-cli.js 的真实路径，让上层用 `node "<abs>" -v` 绕过。
+fn resolve_npm_cli_js(node_dir: &str) -> Option<String> {
+    if node_dir.is_empty() {
+        return None;
+    }
+    let p = std::path::Path::new(node_dir);
+
+    let primary = p.join("node_modules").join("npm").join("bin").join("npm-cli.js");
+    if primary.exists() {
+        return Some(primary.to_string_lossy().to_string());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Some(parent) = p.parent() {
+            let lib_cli = parent
+                .join("lib")
+                .join("node_modules")
+                .join("npm")
+                .join("bin")
+                .join("npm-cli.js");
+            if lib_cli.exists() {
+                return Some(lib_cli.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    None
+}
+
+#[derive(Clone, Copy)]
+enum StartupShell {
+    PowerShell,
+    Cmd,
+    Bash,
+}
+
+/// 构造打开终端时的版本检查命令，例如：`node -v && npm -v` 或 `node -v ; node "C:/.../npm-cli.js" -v`。
+/// - 对 npm：若项目 Node 目录下能定位到 npm-cli.js 的真实路径，则用 `node "<abs>" -v` 直接调用，绕过 npm.cmd 软链问题。
+/// - 其它 PM：使用 `<pm> -v`，依赖 PATH 已被注入为项目 Node 目录。
+/// - 包管理器为空：仅输出 `node -v`。
+fn build_startup_check(node_dir: &str, package_manager: &str, shell: StartupShell) -> String {
+    let pm = package_manager.trim();
+    let sep = match shell {
+        StartupShell::PowerShell => "; ",
+        StartupShell::Cmd => " && ",
+        StartupShell::Bash => " && ",
+    };
+
+    if pm.is_empty() {
+        return "node -v".to_string();
+    }
+
+    // 仅对 npm 做绝对路径绕过
+    if pm.eq_ignore_ascii_case("npm") {
+        if let Some(cli) = resolve_npm_cli_js(node_dir) {
+            let cli_quoted = match shell {
+                StartupShell::PowerShell => format!("'{}'", cli.replace('\'', "''")),
+                StartupShell::Cmd => {
+                    // CMD 下需要把单个 " 转义为 ""（在 cmd /C "..." 包裹中），上层会再做一层 escape_for_cmd_double_quotes
+                    format!("\"{}\"", cli)
+                }
+                StartupShell::Bash => format!("'{}'", cli.replace('\'', "'\\''")),
+            };
+            return format!("node -v{}node {} -v", sep, cli_quoted);
+        }
+    }
+
+    format!("node -v{}{} -v", sep, pm)
+}
+
+/// 构造 shell 别名命令，让用户手敲 `npm` 直接调用项目 Node 目录下的真实 npm-cli.js，
+/// 绕过 npm.cmd（在 nvm-windows 软链损坏时会加载错版本的 npm-cli.js）。
+/// 仅对 npm 生效；其它 PM 走 PATH 解析。
+fn build_pm_alias(node_dir: &str, package_manager: &str, shell: StartupShell) -> String {
+    let pm = package_manager.trim();
+    if pm.is_empty() || !pm.eq_ignore_ascii_case("npm") {
+        return String::new();
+    }
+    let cli = match resolve_npm_cli_js(node_dir) {
+        Some(c) => c,
+        None => return String::new(),
+    };
+
+    match shell {
+        // PowerShell function 覆盖；$args 自动转发参数
+        StartupShell::PowerShell => format!("function npm {{ node '{}' @args }}", cli.replace('\'', "''")),
+        // CMD doskey 宏；$* 是 doskey 的全部参数占位符
+        StartupShell::Cmd => format!("doskey npm=node \"{}\" $*", cli),
+        // Bash/Git-Bash function
+        StartupShell::Bash => format!("npm() {{ node '{}' \"$@\"; }}", cli.replace('\'', "'\\''")),
+    }
+}
+
+/// 拼接 [别名 + 版本检查]：别名先生效，使后续 `npm` 也走正确 cli.js。
+fn build_startup_script(node_dir: &str, package_manager: &str, shell: StartupShell) -> String {
+    let alias = build_pm_alias(node_dir, package_manager, shell);
+    let check = build_startup_check(node_dir, package_manager, shell);
+    if alias.is_empty() {
+        return check;
+    }
+    let sep = match shell {
+        StartupShell::PowerShell => "; ",
+        StartupShell::Cmd => " && ",
+        StartupShell::Bash => " && ",
+    };
+    format!("{}{}{}", alias, sep, check)
+}
+
 #[tauri::command]
-pub fn open_in_terminal(path: String, terminal: String, node_path: String) -> Result<(), String> {
+pub fn open_in_terminal(path: String, terminal: String, node_path: String, package_manager: String) -> Result<(), String> {
+    let resolved_node_dir = resolve_terminal_node_dir(&node_path).unwrap_or_default();
+    #[cfg(target_os = "windows")]
+    let startup_check_ps = build_startup_script(&resolved_node_dir, &package_manager, StartupShell::PowerShell);
+    #[cfg(target_os = "windows")]
+    let startup_check_cmd = build_startup_script(&resolved_node_dir, &package_manager, StartupShell::Cmd);
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    let startup_check_bash = build_startup_script(&resolved_node_dir, &package_manager, StartupShell::Bash);
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    let _ = &resolved_node_dir;
+
     let terminal = terminal.trim().to_string();
     let terminal_key = terminal.to_lowercase();
     let terminal_path_env = build_terminal_path_env(&node_path);
@@ -1040,9 +1259,9 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String) -> Re
         match terminal_key.as_str() {
             _ if is_windows_powershell => {
                 let startup_script = if let Some(path_env) = &path_env_ps {
-                    format!("$env:PATH='{}'; Set-Location '{}'; node -v", path_env, win_path_ps)
+                    format!("$env:PATH='{}'; Set-Location '{}'; {}", path_env, win_path_ps, startup_check_ps)
                 } else {
-                    format!("Set-Location '{}'; node -v", win_path_ps)
+                    format!("Set-Location '{}'; {}", win_path_ps, startup_check_ps)
                 };
                 let executable = if is_custom_executable { terminal.as_str() } else { "powershell" };
                 let mut command = Command::new("cmd");
@@ -1051,9 +1270,9 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String) -> Re
             }
             _ if is_pwsh => {
                 let startup_script = if let Some(path_env) = &path_env_ps {
-                    format!("$env:PATH='{}'; Set-Location '{}'; node -v", path_env, win_path_ps)
+                    format!("$env:PATH='{}'; Set-Location '{}'; {}", path_env, win_path_ps, startup_check_ps)
                 } else {
-                    format!("Set-Location '{}'; node -v", win_path_ps)
+                    format!("Set-Location '{}'; {}", win_path_ps, startup_check_ps)
                 };
                 let executable = if is_custom_executable { terminal.as_str() } else { "pwsh" };
                 let mut command = Command::new("cmd");
@@ -1063,10 +1282,10 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String) -> Re
             "windows-terminal" => {
                 let mut command = Command::new("wt");
                 if let Some(path_env) = &path_env_cmd {
-                    let startup_command = format!("set \"PATH={}\" && cd /d \"{}\" && node -v", path_env, win_path_cmd);
+                    let startup_command = format!("set \"PATH={}\" && cd /d \"{}\" && {}", path_env, win_path_cmd, startup_check_cmd);
                     command.args(["-d", &win_path, "cmd", "/K", &startup_command]);
                 } else {
-                    command.args(["-d", &win_path, "cmd", "/K", "node -v"]);
+                    command.args(["-d", &win_path, "cmd", "/K", startup_check_cmd.as_str()]);
                 }
                 command.spawn().map_err(|e| e.to_string())?;
             }
@@ -1081,10 +1300,11 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String) -> Re
                 } else {
                     // Fallback: try to run bash in a new CMD window that stays open if bash fails
                     let mut command = Command::new("cmd");
+                    let bash_inner = format!("{}; exec bash", startup_check_bash);
                     let startup_command = if let Some(path_env) = &path_env_cmd {
-                        format!("set \"PATH={}\" && cd /d \"{}\" && bash -c \"node -v; exec bash\"", path_env, win_path_cmd)
+                        format!("set \"PATH={}\" && cd /d \"{}\" && bash -c \"{}\"", path_env, win_path_cmd, bash_inner.replace('"', "\\\""))
                     } else {
-                        format!("cd /d \"{}\" && bash -c \"node -v; exec bash\"", win_path_cmd)
+                        format!("cd /d \"{}\" && bash -c \"{}\"", win_path_cmd, bash_inner.replace('"', "\\\""))
                     };
                     command.args(["/K", &startup_command]);
                     command.spawn().map_err(|e| e.to_string())?;
@@ -1093,9 +1313,9 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String) -> Re
             "cmder" => {
                 let mut command = Command::new("cmd");
                 let startup_command = if let Some(path_env) = &path_env_cmd {
-                    format!("set \"PATH={}\" && cd /d \"{}\" && cmder && node -v", path_env, win_path_cmd)
+                    format!("set \"PATH={}\" && cd /d \"{}\" && cmder && {}", path_env, win_path_cmd, startup_check_cmd)
                 } else {
-                    format!("cd /d \"{}\" && cmder && node -v", win_path_cmd)
+                    format!("cd /d \"{}\" && cmder && {}", win_path_cmd, startup_check_cmd)
                 };
                 command.args(["/C", "start", "", "cmd", "/K", &startup_command]);
                 command.spawn().map_err(|e| e.to_string())?;
@@ -1115,9 +1335,9 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String) -> Re
                     // CMD (Default)
                     let mut command = Command::new("cmd");
                     let startup_command = if let Some(path_env) = &path_env_cmd {
-                        format!("set \"PATH={}\" && cd /d \"{}\" && node -v", path_env, win_path_cmd)
+                        format!("set \"PATH={}\" && cd /d \"{}\" && {}", path_env, win_path_cmd, startup_check_cmd)
                     } else {
-                        format!("cd /d \"{}\" && node -v", win_path_cmd)
+                        format!("cd /d \"{}\" && {}", win_path_cmd, startup_check_cmd)
                     };
                     command.args(["/C", "start", "", "cmd", "/K", &startup_command]);
                     command.spawn().map_err(|e| e.to_string())?;
@@ -1161,11 +1381,13 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String) -> Re
 
     #[cfg(target_os = "linux")]
     {
-        let shell_command = format!("cd '{}' ; node -v ; exec bash", path.replace('\'', "'\\''"));
+        let bash_inner = format!("{}; exec bash", startup_check_bash);
+        let shell_command = format!("cd '{}' ; {} ; exec bash", path.replace('\'', "'\\''"), startup_check_bash);
+        let xfce_inline = format!("bash -c '{}'", bash_inner.replace('\'', "'\\''"));
         match terminal_key.as_str() {
             "gnome-terminal" => {
                 let mut command = Command::new("gnome-terminal");
-                command.args(&["--working-directory", &path, "--", "bash", "-c", "node -v; exec bash"]);
+                command.args(&["--working-directory", &path, "--", "bash", "-c", &bash_inner]);
                 if let Some(path_env) = &terminal_path_env {
                     command.env("PATH", path_env);
                 }
@@ -1173,7 +1395,7 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String) -> Re
             }
             "konsole" => {
                 let mut command = Command::new("konsole");
-                command.args(&["--workdir", &path, "-e", "bash", "-c", "node -v; exec bash"]);
+                command.args(&["--workdir", &path, "-e", "bash", "-c", &bash_inner]);
                 if let Some(path_env) = &terminal_path_env {
                     command.env("PATH", path_env);
                 }
@@ -1181,7 +1403,7 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String) -> Re
             }
             "xfce4-terminal" => {
                 let mut command = Command::new("xfce4-terminal");
-                command.args(&["--working-directory", &path, "-e", "bash -c 'node -v; exec bash'"]);
+                command.args(&["--working-directory", &path, "-e", &xfce_inline]);
                 if let Some(path_env) = &terminal_path_env {
                     command.env("PATH", path_env);
                 }
@@ -1189,7 +1411,7 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String) -> Re
             }
             "alacritty" => {
                 let mut command = Command::new("alacritty");
-                command.args(&["--working-directory", &path, "-e", "bash", "-c", "node -v; exec bash"]);
+                command.args(&["--working-directory", &path, "-e", "bash", "-c", &bash_inner]);
                 if let Some(path_env) = &terminal_path_env {
                     command.env("PATH", path_env);
                 }
@@ -1197,7 +1419,7 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String) -> Re
             }
             "kitty" => {
                 let mut command = Command::new("kitty");
-                command.args(&["--directory", &path, "bash", "-c", "node -v; exec bash"]);
+                command.args(&["--directory", &path, "bash", "-c", &bash_inner]);
                 if let Some(path_env) = &terminal_path_env {
                     command.env("PATH", path_env);
                 }
@@ -1273,6 +1495,196 @@ pub fn open_url(url: String) -> Result<(), String> {
         .arg(&url)
         .spawn()
         .map_err(|e| e.to_string())?;
-    
+
     Ok(())
+}
+
+#[tauri::command]
+pub fn install_pm(node_path: String, pm_name: String) -> Result<(), String> {
+    let node_dir = resolve_terminal_node_dir(&node_path)
+        .ok_or_else(|| "Invalid node path".to_string())?;
+
+    // Build the npm command using the specific Node version's npm
+    #[cfg(target_os = "windows")]
+    let (cmd_name, cmd_args) = {
+        let node_exe = std::path::Path::new(&node_dir).join("node.exe");
+        let npm_cli = std::path::Path::new(&node_dir)
+            .join("node_modules")
+            .join("npm")
+            .join("bin")
+            .join("npm-cli.js");
+
+        if node_exe.exists() && npm_cli.exists() {
+            (
+                node_exe.to_string_lossy().to_string(),
+                vec![
+                    npm_cli.to_string_lossy().to_string(),
+                    "install".to_string(),
+                    "-g".to_string(),
+                    pm_name.clone(),
+                ],
+            )
+        } else {
+            (
+                "npm".to_string(),
+                vec!["install".to_string(), "-g".to_string(), pm_name.clone()],
+            )
+        }
+    };
+
+    #[cfg(not(target_os = "windows"))]
+    let (cmd_name, cmd_args) = {
+        let node_exe = std::path::Path::new(&node_dir).join("node");
+        let npm_cli = std::path::Path::new(&node_dir)
+            .join("lib")
+            .join("node_modules")
+            .join("npm")
+            .join("bin")
+            .join("npm-cli.js");
+
+        if node_exe.exists() && npm_cli.exists() {
+            (
+                node_exe.to_string_lossy().to_string(),
+                vec![
+                    npm_cli.to_string_lossy().to_string(),
+                    "install".to_string(),
+                    "-g".to_string(),
+                    pm_name.clone(),
+                ],
+            )
+        } else {
+            (
+                "npm".to_string(),
+                vec!["install".to_string(), "-g".to_string(), pm_name.clone()],
+            )
+        }
+    };
+
+    let output = std::process::Command::new(&cmd_name)
+        .args(&cmd_args)
+        .current_dir(&node_dir)
+        .output()
+        .map_err(|e| format!("Failed to run npm install: {}", e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Err(format!("{}\n{}", stderr, stdout))
+    }
+}
+
+/// 检查指定 Node 目录下是否安装了指定包管理器。
+/// 返回 (found, command_path)。
+fn check_pm_in_node_dir(node_dir: &str, pm: &str) -> (bool, Option<String>) {
+    let dir = std::path::Path::new(node_dir);
+    if !dir.exists() || !dir.is_dir() {
+        return (false, None);
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // 检查 {pm}.cmd 或 {pm}.exe
+        let pm_cmd = dir.join(format!("{}.cmd", pm));
+        if pm_cmd.exists() {
+            return (true, Some(format!("\"{}\"", pm_cmd.to_string_lossy())));
+        }
+        let pm_exe = dir.join(format!("{}.exe", pm));
+        if pm_exe.exists() {
+            return (true, Some(format!("\"{}\"", pm_exe.to_string_lossy())));
+        }
+        // npm 特殊：node_modules/npm/bin/npm-cli.js
+        if pm == "npm" {
+            let npm_cli = dir.join("node_modules").join("npm").join("bin").join("npm-cli.js");
+            if npm_cli.exists() {
+                return (true, Some(npm_cli.to_string_lossy().to_string()));
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        // 检查 bin 目录下是否有 pm 可执行文件
+        let pm_bin = dir.join(pm);
+        if pm_bin.exists() {
+            return (true, Some(format!("\"{}\"", pm_bin.to_string_lossy())));
+        }
+        // npm 特殊：lib/node_modules/npm/bin/npm-cli.js
+        if pm == "npm" {
+            let npm_cli_bin = dir.join("node_modules").join("npm").join("bin").join("npm-cli.js");
+            if npm_cli_bin.exists() {
+                return (true, Some(npm_cli_bin.to_string_lossy().to_string()));
+            }
+            // 检查上级目录的 lib 结构（nvm 安装格式）
+            if let Some(parent) = dir.parent() {
+                let npm_cli_lib = parent.join("lib").join("node_modules").join("npm").join("bin").join("npm-cli.js");
+                if npm_cli_lib.exists() {
+                    return (true, Some(npm_cli_lib.to_string_lossy().to_string()));
+                }
+            }
+        }
+    }
+
+    (false, None)
+}
+
+/// 解析包管理器可用性。
+/// 根据 source 决定在哪个 Node 目录中查找 PM。
+#[tauri::command]
+pub fn resolve_pm(
+    node_path: String,
+    default_node_path: String,
+    package_manager: String,
+    source: String,
+) -> Result<PmResolveResult, String> {
+    if package_manager.is_empty() {
+        return Ok(PmResolveResult {
+            available: true,
+            command_path: None,
+            reason: None,
+        });
+    }
+
+    let check_path = if source == "default" {
+        &default_node_path
+    } else {
+        &node_path
+    };
+
+    if check_path.is_empty() {
+        let reason = if source == "default" {
+            "default_node_unavailable".to_string()
+        } else {
+            "project_node_unavailable".to_string()
+        };
+        // npm 在无 Node 时仍不可用
+        return Ok(PmResolveResult {
+            available: false,
+            command_path: None,
+            reason: Some(reason),
+        });
+    }
+
+    let (found, cmd_path) = check_pm_in_node_dir(check_path, &package_manager);
+
+    if found {
+        return Ok(PmResolveResult {
+            available: true,
+            command_path: cmd_path,
+            reason: None,
+        });
+    }
+
+    let reason = if source == "default" {
+        "pm_not_installed_in_default_node".to_string()
+    } else {
+        "pm_not_installed_in_project_node".to_string()
+    };
+
+    Ok(PmResolveResult {
+        available: false,
+        command_path: None,
+        reason: Some(reason),
+    })
 }

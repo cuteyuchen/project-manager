@@ -3,7 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
 import { open as openDialogFn, save as saveDialogFn } from '@tauri-apps/plugin-dialog';
 import { openPath as openPathFn, openUrl as openUrlFn } from '@tauri-apps/plugin-opener';
-import type { PlatformAPI, ProjectInfo, TerminalInfo, PortEntry } from '../types';
+import type { PlatformAPI, ProjectInfo, TerminalInfo, PortEntry, PackageManagerResolveResult } from '../types';
 import type { NodeVersion, GitStatusResult, GitBranch, GitCommit, GitSummary, GitCommitFile } from '../../types';
 
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -54,8 +54,8 @@ export class TauriAdapter implements PlatformAPI {
     }
 
     // Runner
-    async runProjectCommand(id: string, path: string, script: string, packageManager: string, nodePath: string): Promise<void> {
-        return invoke('run_project_command', { id, path, script, packageManager, nodePath });
+    async runProjectCommand(id: string, path: string, script: string, packageManager: string, nodePath: string, commandPath?: string, pmNodePath?: string): Promise<void> {
+        return invoke('run_project_command', { id, path, script, packageManager, nodePath, commandPath: commandPath || null, pmNodePath: pmNodePath || null });
     }
 
     async runCustomCommand(id: string, path: string, command: string): Promise<void> {
@@ -66,13 +66,21 @@ export class TauriAdapter implements PlatformAPI {
         return invoke('stop_project_command', { id });
     }
 
+    async installPm(nodePath: string, pmName: string): Promise<void> {
+        return invoke('install_pm', { nodePath, pmName });
+    }
+
+    async resolvePackageManager(nodePath: string, defaultNodePath: string, packageManager: string, source: 'project' | 'default'): Promise<PackageManagerResolveResult> {
+        return invoke('resolve_pm', { nodePath, defaultNodePath, packageManager, source });
+    }
+
     // System / Shell
     async openInEditor(path: string, editor?: string): Promise<void> {
         return invoke('open_in_editor', { path, editor });
     }
 
-    async openInTerminal(path: string, terminal?: string, nodePath?: string): Promise<void> {
-        return invoke('open_in_terminal', { path, terminal: terminal || 'cmd', nodePath: nodePath || '' });
+    async openInTerminal(path: string, terminal?: string, nodePath?: string, packageManager?: string): Promise<void> {
+        return invoke('open_in_terminal', { path, terminal: terminal || 'cmd', nodePath: nodePath || '', packageManager: packageManager || '' });
     }
     
     async openFolder(path: string): Promise<void> {

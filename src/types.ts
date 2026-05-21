@@ -34,6 +34,8 @@ export interface Project {
   gitConfigured?: boolean;
   nodeVersion?: string;
   packageManager?: 'npm' | 'yarn' | 'pnpm' | 'cnpm';
+  /** 包管理器来源：'project' 使用项目 Node 环境，'default' 借用默认 Node 环境的包管理器入口 */
+  packageManagerSource?: 'project' | 'default';
   scripts?: string[];
   visibleScripts?: string[];
   customCommands?: CustomCommand[];
@@ -66,6 +68,7 @@ export interface Settings {
   autoUpdate: boolean;
   trayEnabled?: boolean;
   closeAction?: 'ask' | 'tray' | 'exit';
+  autoLaunch?: boolean;
   // AI commit message generation
   gitAiEnabled?: boolean;
   gitAiPrimaryService?: AiServiceConfig;

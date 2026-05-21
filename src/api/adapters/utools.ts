@@ -1,4 +1,4 @@
-import type { PlatformAPI, ProjectInfo, TerminalInfo, PortEntry } from '../types';
+import type { PlatformAPI, ProjectInfo, TerminalInfo, PortEntry, PackageManagerResolveResult } from '../types';
 import type { NodeVersion, GitStatusResult, GitBranch, GitCommit, GitSummary, GitCommitFile } from '../../types';
 
 // Declare global interface for uTools services
@@ -33,18 +33,37 @@ export class UToolsAdapter implements PlatformAPI {
     return this.service.gitCancelOperation ? this.service.gitCancelOperation(operationId) : Promise.resolve();
   }
 
-  runProjectCommand(id: string, path: string, script: string, packageManager: string, nodePath: string): Promise<void> {
+  runProjectCommand(id: string, path: string, script: string, packageManager: string, nodePath: string, commandPath?: string, pmNodePath?: string): Promise<void> {
+    if ((this.service as any).runProjectCommandWithCommandPath) {
+      return (this.service as any).runProjectCommandWithCommandPath(id, path, script, packageManager, nodePath, commandPath || '', pmNodePath || '');
+    }
     return this.service.runProjectCommand(id, path, script, packageManager, nodePath);
   }
   runCustomCommand(id: string, path: string, command: string): Promise<void> {
     return this.service.runCustomCommand(id, path, command);
   }
   stopProjectCommand(id: string): Promise<void> { return this.service.stopProjectCommand(id); }
+  installPm(nodePath: string, pmName: string): Promise<void> {
+      if ((this.service as any).installPm) {
+          return (this.service as any).installPm(nodePath, pmName);
+      }
+      return Promise.reject(new Error('installPm not supported'));
+  }
+
+  resolvePackageManager(nodePath: string, defaultNodePath: string, packageManager: string, source: 'project' | 'default'): Promise<PackageManagerResolveResult> {
+      if ((this.service as any).resolvePackageManager) {
+          return (this.service as any).resolvePackageManager(nodePath, defaultNodePath, packageManager, source);
+      }
+      return Promise.resolve({
+          available: false,
+          reason: source === 'default' ? 'pm_not_installed_in_default_node' : 'pm_not_installed_in_project_node',
+      });
+  }
 
   openInEditor(path: string, editor?: string): Promise<void> { return this.service.openInEditor(path, editor); }
-    openInTerminal(path: string, terminal?: string, nodePath?: string): Promise<void> {
+    openInTerminal(path: string, terminal?: string, nodePath?: string, packageManager?: string): Promise<void> {
         if ((this.service as any).openInTerminal) {
-            return (this.service as any).openInTerminal(path, terminal, nodePath);
+            return (this.service as any).openInTerminal(path, terminal, nodePath, packageManager);
         }
         return this.service.openFolder(path);
     }

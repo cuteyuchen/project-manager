@@ -463,19 +463,15 @@ function onDragMouseUp() {
 }
 
 function syncDraggableOrder() {
-    const projects = projectStore.projects;
+    const projectMap = new Map(projectStore.projects.map(p => [p.id, p]));
+    let unpinnedIndex = 0;
     draggableList.value.forEach((p, i) => {
-        const proj = projects.find(pp => pp.id === p.id);
+        const proj = projectMap.get(p.id);
         if (!proj) return;
         if (p.pinned) {
             proj.pinOrder = i;
-        }
-    });
-    let unpinnedIndex = 0;
-    draggableList.value.forEach(p => {
-        if (!p.pinned) {
-            const proj = projects.find(pp => pp.id === p.id);
-            if (proj) proj.sortOrder = unpinnedIndex++;
+        } else {
+            proj.sortOrder = unpinnedIndex++;
         }
     });
 }

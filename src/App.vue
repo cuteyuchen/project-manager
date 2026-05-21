@@ -440,7 +440,7 @@ onMounted(async () => {
 
     // Web/uTools Drag and Drop
     let dragCounter = 0;
-    
+
     document.addEventListener('dragenter', (e) => {
       e.preventDefault();
       dragCounter++;
@@ -466,7 +466,7 @@ onMounted(async () => {
       e.stopPropagation();
       isDragging.value = false;
       dragCounter = 0;
-      
+
       const files = e.dataTransfer?.files;
       if (files && files.length > 0) {
         for (let i = 0; i < files.length; i++) {
@@ -495,15 +495,15 @@ onMounted(async () => {
     // Setup Drag and Drop Listeners
     try {
       const { listen } = await import('@tauri-apps/api/event');
-      
+
       unlistenDragEnter = await listen('tauri://drag-enter', () => {
         isDragging.value = true;
       });
-      
+
       unlistenDragLeave = await listen('tauri://drag-leave', () => {
         isDragging.value = false;
       });
-      
+
       unlistenDragDrop = await listen<{ paths: string[] }>('tauri://drag-drop', (event) => {
         isDragging.value = false;
         if (event.payload.paths && event.payload.paths.length > 0) {
@@ -528,6 +528,22 @@ onMounted(async () => {
   // Default to true if undefined (legacy support)
   if (!isPlugin && useSettingsStore().settings.autoUpdate !== false) {
     checkUpdate();
+  }
+
+  // Restore auto-launch state after reinstall
+  if (!isPlugin) {
+    try {
+      const settingsStore = useSettingsStore();
+      if (settingsStore.settings.autoLaunch === true) {
+        const autostart = await import('@tauri-apps/plugin-autostart');
+        const isEnabled = await autostart.isEnabled();
+        if (!isEnabled) {
+          await autostart.enable();
+        }
+      }
+    } catch (e) {
+      console.error('Failed to restore auto-launch state:', e);
+    }
   }
 
   // Listen for manual update check from Settings page
@@ -582,7 +598,7 @@ watch(
 <template>
   <div class="h-screen w-screen flex flex-col bg-slate-50 dark:bg-[#0f172a] text-slate-900 dark:text-gray-100 font-sans overflow-hidden transition-colors duration-200 antialiased">
     <TitleBar v-if="!isPlugin" />
-    
+
     <div class="flex-1 flex overflow-hidden relative">
       <Sidebar @navigate="v => currentView = v" />
       <main class="flex-1 h-full overflow-hidden relative">
@@ -607,7 +623,7 @@ watch(
           </KeepAlive>
           </Transition>
         </div>
-        
+
         <!-- Drag Overlay -->
         <div v-if="isDragging" class="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center border-4 border-blue-500 border-dashed m-4 rounded-xl transition-all duration-300">
           <div class="text-center text-white">
@@ -620,8 +636,8 @@ watch(
       </main>
     </div>
 
-    <UpdateProgress 
-      v-if="showUpdateProgress" 
+    <UpdateProgress
+      v-if="showUpdateProgress"
       :percentage="downloadProgress"
       @cancel="handleCancelUpdate"
       @background="handleBackgroundUpdate"
@@ -780,7 +796,7 @@ button, [role="button"] {
 }
 
 .project-modal {
-  width: min(680px, calc(100vw - 32px)) !important;
+  width: min(750px, calc(100vw - 32px)) !important;
   max-height: 90vh;
 }
 

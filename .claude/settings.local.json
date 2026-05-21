@@ -3,7 +3,12 @@
     "allow": [
       "Bash(node *)",
       "Bash(npx vue-tsc *)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(gh pr *)",
+      "Bash(gh api *)",
+      "Bash(cargo check *)",
+      "Bash(npm run *)",
+      "Bash(npx tsx *)"
     ]
   }
 }

@@ -138,7 +138,8 @@ async function toggleAutoLaunch(val: boolean) {
     const autostart = await import('@tauri-apps/plugin-autostart');
     if (val) await autostart.enable();
     else await autostart.disable();
-    await refreshAutoLaunchState();
+    autoLaunchEnabled.value = val;
+    settingsStore.settings.autoLaunch = val;
     ElMessage.success(t('common.success'));
   } catch (error) {
     ElMessage.error(`${t('common.error')}: ${error}`);

@@ -130,31 +130,6 @@ function decodeTextBuffer(buffer) {
     return new TextDecoder('utf-8').decode(buffer);
 }
 
-function findPmFromNvm(nodeExe, packageManager) {
-    // Search NVM directories for npm-cli.js or {pm}.cmd when the version dir lacks npm
-    const nvmSymlink = process.env.NVM_SYMLINK;
-    if (nvmSymlink) {
-        const cli = path.join(nvmSymlink, 'node_modules', 'npm', 'bin', 'npm-cli.js');
-        if (fs.existsSync(cli)) return `"${nodeExe}" "${cli}"`;
-        const cmd = path.join(nvmSymlink, `${packageManager}.cmd`);
-        if (fs.existsSync(cmd)) return `"${cmd}"`;
-    }
-    const nvmHome = process.env.NVM_HOME;
-    if (nvmHome) {
-        try {
-            for (const entry of fs.readdirSync(nvmHome)) {
-                const dir = path.join(nvmHome, entry);
-                if (!fs.statSync(dir).isDirectory()) continue;
-                const cli = path.join(dir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
-                if (fs.existsSync(cli)) return `"${nodeExe}" "${cli}"`;
-                const cmd = path.join(dir, `${packageManager}.cmd`);
-                if (fs.existsSync(cmd)) return `"${cmd}"`;
-            }
-        } catch (_) {}
-    }
-    return null;
-}
-
 function ensureNodeExeInDir(dir) {
     if (process.platform !== 'win32') return;
     try {
@@ -212,18 +187,148 @@ function resolveTerminalNodeDir(nodePath) {
     return trimmed;
 }
 
+/** *********************PATH 过滤：移除其它 Node/npm 工具目录********************* */
+
+/**
+ * 判断某个 PATH 目录是否包含 Node/npm 相关工具入口。
+ * 用于过滤原始 PATH 中其它 Node 版本的目录，防止 npm/npx 等命中错误的 Node。
+ */
+function dirHasNodeTools(dir) {
+    try {
+        if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return false;
+    } catch (_) {
+        return false;
+    }
+    const names = process.platform === 'win32'
+        ? ['node.exe', 'npm.cmd', 'npm.exe', 'npx.cmd', 'pnpm.cmd', 'yarn.cmd', 'cnpm.cmd']
+        : ['node', 'npm', 'npx', 'pnpm', 'yarn', 'cnpm'];
+    return names.some((n) => {
+        try { return fs.existsSync(path.join(dir, n)); } catch (_) { return false; }
+    });
+}
+
+/**
+ * 标准化路径用于比较（Windows 小写 + 统一反斜杠）
+ */
+function normalizePathStr(s) {
+    if (process.platform === 'win32') {
+        return s.toLowerCase().replace(/\//g, '\\').replace(/\\+$/, '');
+    }
+    return s.replace(/\/+$/, '');
+}
+
+/**
+ * 从 PATH 字符串中过滤掉 Node/npm 工具目录，仅保留普通目录。
+ */
+function filterPathEntries(nodeDir, pathValue) {
+    const nodeDirNorm = normalizePathStr(nodeDir);
+    return pathValue
+        .split(path.delimiter)
+        .filter((entry) => {
+            const e = entry.trim();
+            if (!e) return false;
+            // 当前项目 nodeDir 会在最终 PATH 最前面单独注入，这里跳过避免重复
+            if (normalizePathStr(e) === nodeDirNorm) return false;
+            // 含有 Node/npm 工具入口的目录 → 过滤
+            if (dirHasNodeTools(e)) return false;
+            // 普通目录 → 保留
+            return true;
+        })
+        .join(path.delimiter);
+}
+
+/**
+ * 解析项目 Node 目录下是否存在可用的 npm-cli.js（用于绕过被损坏的 npm.cmd / npm 软链）。
+ * 在 nvm-windows 等环境下，npm.cmd 内部会指向 `%~dp0\node_modules\npm`，若该目录被其它版本的 junction 覆盖，
+ * 直接 `npm -v` 会加载错误版本的 npm-cli.js。这里返回真实路径，让上层用 `node "<abs>" -v` 绕过。
+ */
+function resolveNpmCliJs(nodeDir) {
+    if (!nodeDir) return null;
+    const primary = path.join(nodeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+    try { if (fs.existsSync(primary)) return primary; } catch (_) {}
+
+    if (process.platform !== 'win32') {
+        const parent = path.dirname(nodeDir);
+        const libCli = path.join(parent, 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js');
+        try { if (fs.existsSync(libCli)) return libCli; } catch (_) {}
+    }
+    return null;
+}
+
+/**
+ * 构造 shell 别名命令，让用户手敲 `npm` 直接调用项目 Node 目录下的 npm-cli.js，
+ * 绕过 npm.cmd（在 nvm-windows 软链损坏时会加载错版本的 npm）。
+ * 返回空字符串表示无需别名。
+ */
+function buildPmAlias(nodeDir, packageManager, shell) {
+    const pm = (packageManager || '').trim();
+    if (!pm || pm.toLowerCase() !== 'npm') return '';
+    const cli = resolveNpmCliJs(nodeDir);
+    if (!cli) return '';
+
+    if (shell === 'ps') {
+        // PowerShell function 覆盖
+        return `function npm { node '${cli.replace(/'/g, "''")}' @args }`;
+    }
+    if (shell === 'cmd') {
+        // doskey 别名（仅当前 cmd 会话）
+        return `doskey npm=node "${cli}" $*`;
+    }
+    // bash / git-bash function
+    return `npm() { node '${cli.replace(/'/g, "'\\''")}' "$@"; }`;
+}
+
+/**
+ * 构造打开终端时的版本检查命令：`node -v && <pm> -v`。
+ * - 对 npm 优先使用 `node "<abs>/npm-cli.js" -v` 绕过 npm.cmd 软链问题。
+ * - 其它 PM：`<pm> -v`，依赖注入的 PATH。
+ * - shell: 'ps' | 'cmd' | 'bash'
+ */
+function buildStartupCheck(nodeDir, packageManager, shell) {
+    const pm = (packageManager || '').trim();
+    const sep = shell === 'ps' ? '; ' : ' && ';
+
+    if (!pm) return 'node -v';
+
+    if (pm.toLowerCase() === 'npm') {
+        const cli = resolveNpmCliJs(nodeDir);
+        if (cli) {
+            let cliQuoted;
+            if (shell === 'ps') cliQuoted = `'${cli.replace(/'/g, "''")}'`;
+            else if (shell === 'cmd') cliQuoted = `"${cli}"`;
+            else cliQuoted = `'${cli.replace(/'/g, "'\\''")}'`;
+            return `node -v${sep}node ${cliQuoted} -v`;
+        }
+    }
+
+    return `node -v${sep}${pm} -v`;
+}
+
+/**
+ * 把别名命令和启动检查拼接：别名先生效，再做版本输出（这样版本输出走的也是别名）。
+ */
+function buildStartupScript(nodeDir, packageManager, shell) {
+    const sep = shell === 'ps' ? '; ' : ' && ';
+    const alias = buildPmAlias(nodeDir, packageManager, shell);
+    const check = buildStartupCheck(nodeDir, packageManager, shell);
+    return alias ? `${alias}${sep}${check}` : check;
+}
+
 function getTerminalSpawnOptions(nodePath) {
     const nodeDir = resolveTerminalNodeDir(nodePath);
     if (!nodeDir) {
         return { detached: true, stdio: 'ignore' };
     }
 
+    // 过滤原始 PATH 中其它 Node/npm 目录，避免 npm 版本错配
+    const filtered = filterPathEntries(nodeDir, process.env.PATH || '');
+
     return {
         detached: true,
         stdio: 'ignore',
         env: {
             ...process.env,
-            PATH: `${nodeDir}${path.delimiter}${process.env.PATH || ''}`,
+            PATH: filtered ? `${nodeDir}${path.delimiter}${filtered}` : nodeDir,
         },
     };
 }
@@ -776,12 +881,6 @@ window.services = {
                 spawnCmd = `"${nodeExe}" "${npmCliJs}"`;
             } else if (fs.existsSync(pmCmd)) {
                 spawnCmd = `"${pmCmd}"`;
-            } else {
-                // Fallback: search NVM directories for npm
-                const found = findPmFromNvm(nodeExe, pm);
-                if (found) {
-                    spawnCmd = found;
-                }
             }
         }
 
@@ -984,7 +1083,7 @@ window.services = {
     },
     
     getAppVersion: async () => {
-        return "1.3.0";
+        return "1.3.1";
     },
     
     installUpdate: async (url) => {
@@ -1052,10 +1151,17 @@ window.services = {
     },
     
     //************* 终端打开 *************
-    openInTerminal: async (projectPath, terminal, nodePath) => {
+    openInTerminal: async (projectPath, terminal, nodePath, packageManager) => {
         const termRaw = (terminal || 'cmd').trim();
         const term = termRaw.toLowerCase();
         const spawnOptions = getTerminalSpawnOptions(nodePath);
+
+        // 解析项目 Node 目录用于构造 npm 版本检查命令（绕过 npm.cmd 软链问题）
+        // startupScript = 别名定义(npm→正确cli) + 版本输出，让用户手敲 npm 也走正确路径
+        const resolvedNodeDir = resolveTerminalNodeDir(nodePath) || '';
+        const startupCheckPs = buildStartupScript(resolvedNodeDir, packageManager, 'ps');
+        const startupCheckCmd = buildStartupScript(resolvedNodeDir, packageManager, 'cmd');
+        const startupCheckBash = buildStartupScript(resolvedNodeDir, packageManager, 'bash');
 
         if (process.platform === 'win32') {
             try {
@@ -1073,25 +1179,25 @@ window.services = {
 
                 if (isWindowsPowerShell) {
                      const startupScript = pathEnvPs
-                        ? `$env:PATH='${pathEnvPs}'; Set-Location '${winPathPs}'; node -v`
-                        : `Set-Location '${winPathPs}'; node -v`;
+                        ? `$env:PATH='${pathEnvPs}'; Set-Location '${winPathPs}'; ${startupCheckPs}`
+                        : `Set-Location '${winPathPs}'; ${startupCheckPs}`;
                      const executable = isCustomExecutable ? termRaw : 'powershell';
                      spawn('cmd', ['/C', 'start', '', executable, '-NoExit', '-Command', startupScript], spawnOptions);
                 } else if (isPwsh) {
                      const startupScript = pathEnvPs
-                        ? `$env:PATH='${pathEnvPs}'; Set-Location '${winPathPs}'; node -v`
-                        : `Set-Location '${winPathPs}'; node -v`;
+                        ? `$env:PATH='${pathEnvPs}'; Set-Location '${winPathPs}'; ${startupCheckPs}`
+                        : `Set-Location '${winPathPs}'; ${startupCheckPs}`;
                      const executable = isCustomExecutable ? termRaw : 'pwsh';
                      spawn('cmd', ['/C', 'start', '', executable, '-NoExit', '-Command', startupScript], spawnOptions);
                 } else if (term === 'windows-terminal') {
                     const startupCommand = pathEnvCmd
-                        ? `set "PATH=${pathEnvCmd}" && cd /d "${winPathCmd}" && node -v`
-                        : `node -v`;
+                        ? `set "PATH=${pathEnvCmd}" && cd /d "${winPathCmd}" && ${startupCheckCmd}`
+                        : startupCheckCmd;
                     spawn('wt', ['-d', winPath, 'cmd', '/K', startupCommand], spawnOptions);
                 } else if (term === 'cmder') {
                     const startupCommand = pathEnvCmd
-                        ? `set "PATH=${pathEnvCmd}" && cd /d "${winPathCmd}" && cmder && node -v`
-                        : `cd /d "${winPathCmd}" && cmder && node -v`;
+                        ? `set "PATH=${pathEnvCmd}" && cd /d "${winPathCmd}" && cmder && ${startupCheckCmd}`
+                        : `cd /d "${winPathCmd}" && cmder && ${startupCheckCmd}`;
                     spawn('cmd', ['/C', 'start', '', 'cmd', '/K', startupCommand], spawnOptions);
                 } else if (term === 'git-bash') {
                     const gitBash = [
@@ -1103,9 +1209,10 @@ window.services = {
                     if (gitBash) {
                         spawn('cmd', ['/C', 'start', '', gitBash, `--cd=${winPath}`], spawnOptions);
                     } else {
+                        const bashInner = `${startupCheckBash}; exec bash`.replace(/"/g, '\\"');
                         const startupCommand = pathEnvCmd
-                            ? `set "PATH=${pathEnvCmd}" && cd /d "${winPathCmd}" && bash -c "node -v; exec bash"`
-                            : `cd /d "${winPathCmd}" && bash -c "node -v; exec bash"`;
+                            ? `set "PATH=${pathEnvCmd}" && cd /d "${winPathCmd}" && bash -c "${bashInner}"`
+                            : `cd /d "${winPathCmd}" && bash -c "${bashInner}"`;
                         spawn('cmd', ['/K', startupCommand], spawnOptions);
                     }
                 } else {
@@ -1115,8 +1222,8 @@ window.services = {
                     } else {
                         // CMD (Default)
                         const startupCommand = pathEnvCmd
-                            ? `set "PATH=${pathEnvCmd}" && cd /d "${winPathCmd}" && node -v`
-                            : `cd /d "${winPathCmd}" && node -v`;
+                            ? `set "PATH=${pathEnvCmd}" && cd /d "${winPathCmd}" && ${startupCheckCmd}`
+                            : `cd /d "${winPathCmd}" && ${startupCheckCmd}`;
                         spawn('cmd', ['/C', 'start', '', 'cmd', '/K', startupCommand], spawnOptions);
                     }
                 }
@@ -1135,10 +1242,12 @@ window.services = {
              }
         } else {
             // Linux
+            const bashInner = `${startupCheckBash}; exec bash`;
+            const xfceInline = `bash -c '${bashInner.replace(/'/g, "'\\''")}'`;
             const terms = [
-                { id: 'gnome-terminal', cmd: 'gnome-terminal', args: ['--working-directory', projectPath, '--', 'bash', '-c', 'node -v; exec bash'] },
-                { id: 'konsole', cmd: 'konsole', args: ['--workdir', projectPath, '-e', 'bash', '-c', 'node -v; exec bash'] },
-                { id: 'xfce4-terminal', cmd: 'xfce4-terminal', args: ['--working-directory', projectPath, '-e', "bash -c 'node -v; exec bash'"] }
+                { id: 'gnome-terminal', cmd: 'gnome-terminal', args: ['--working-directory', projectPath, '--', 'bash', '-c', bashInner] },
+                { id: 'konsole', cmd: 'konsole', args: ['--workdir', projectPath, '-e', 'bash', '-c', bashInner] },
+                { id: 'xfce4-terminal', cmd: 'xfce4-terminal', args: ['--working-directory', projectPath, '-e', xfceInline] }
             ];
             
             const target = terms.find(t => t.id === term);
@@ -1588,14 +1697,19 @@ $result | ConvertTo-Json -Compress`;
                 });
             } catch {
                 // File is untracked, generate synthetic diff
-                const fs = require('fs');
-                const path = require('path');
                 const fullPath = path.join(projectPath, file);
                 try {
+                    const stat = fs.statSync(fullPath);
+                    // Skip files larger than 1MB to avoid memory issues
+                    if (stat.size > 1 * 1024 * 1024) return '';
+                    // Skip binary files by checking common extensions
+                    const ext = path.extname(file).toLowerCase();
+                    const binaryExts = ['.png', '.jpg', '.jpeg', '.gif', '.ico', '.svg', '.webp', '.mp3', '.mp4', '.wav', '.avi', '.mov', '.pdf', '.zip', '.tar', '.gz', '.rar', '.7z', '.exe', '.dll', '.so', '.dylib', '.bin', '.dat', '.woff', '.woff2', '.ttf', '.eot'];
+                    if (binaryExts.includes(ext)) return '';
                     const content = fs.readFileSync(fullPath, 'utf-8');
-                    const clean = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-                    const lines = clean.split('\n');
-                    const total = clean.endsWith('\n') && lines.length > 0 ? lines.length - 1 : lines.length;
+                    const lines = content.split(/\r?\n/);
+                    if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+                    const total = lines.length;
                     let result = `diff --git a/${file} b/${file}\nnew file mode 100644\n--- /dev/null\n+++ b/${file}\n@@ -0,0 +1,${total} @@\n`;
                     for (let i = 0; i < total; i++) {
                         result += '+' + lines[i] + '\n';
@@ -1867,6 +1981,288 @@ $result | ConvertTo-Json -Compress`;
             input: patch,
             stdio: ['pipe', 'pipe', 'pipe'],
         }).toString();
+    },
+
+    //************* 包管理器解析 *************
+    resolvePackageManager: async (nodePath, defaultNodePath, packageManager, source) => {
+        const pm = packageManager || '';
+        if (!pm) return { available: true, commandPath: null, reason: null };
+
+        const checkPath = source === 'default' ? defaultNodePath : nodePath;
+
+        if (!checkPath) {
+            return {
+                available: false,
+                commandPath: null,
+                reason: source === 'default' ? 'default_node_unavailable' : 'project_node_unavailable',
+            };
+        }
+
+        // 解析 node 目录
+        let nodeDir = checkPath;
+        try {
+            if (fs.existsSync(checkPath) && fs.statSync(checkPath).isFile()) {
+                nodeDir = path.dirname(checkPath);
+            }
+        } catch (_) {}
+
+        // 在 nodeDir 中查找包管理器
+        const isWin = process.platform === 'win32';
+        try {
+            const entries = fs.readdirSync(nodeDir);
+
+            if (isWin) {
+                // 检查 {pm}.cmd 或 {pm}.exe
+                if (entries.includes(`${pm}.cmd`)) {
+                    return { available: true, commandPath: `"${path.join(nodeDir, `${pm}.cmd`)}"`, reason: null };
+                }
+                if (entries.includes(`${pm}.exe`)) {
+                    return { available: true, commandPath: `"${path.join(nodeDir, `${pm}.exe`)}"`, reason: null };
+                }
+                // npm 特殊：node_modules/npm/bin/npm-cli.js
+                if (pm === 'npm') {
+                    const cliPath = path.join(nodeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+                    if (fs.existsSync(cliPath)) {
+                        return { available: true, commandPath: cliPath, reason: null };
+                    }
+                }
+            } else {
+                // Unix: 检查 pm 可执行文件
+                if (entries.includes(pm)) {
+                    return { available: true, commandPath: `"${path.join(nodeDir, pm)}"`, reason: null };
+                }
+                // npm 特殊路径检查
+                if (pm === 'npm') {
+                    const cliBin = path.join(nodeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+                    if (fs.existsSync(cliBin)) {
+                        return { available: true, commandPath: cliBin, reason: null };
+                    }
+                    // nvm 安装格式: lib/node_modules/npm/bin/npm-cli.js
+                    const parentDir = path.dirname(nodeDir);
+                    const cliLib = path.join(parentDir, 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js');
+                    if (fs.existsSync(cliLib)) {
+                        return { available: true, commandPath: cliLib, reason: null };
+                    }
+                }
+            }
+        } catch (_) {}
+
+        return {
+            available: false,
+            commandPath: null,
+            reason: source === 'default' ? 'pm_not_installed_in_default_node' : 'pm_not_installed_in_project_node',
+        };
+    },
+
+    //************* 带 commandPath 的 runProjectCommand *************
+    runProjectCommandWithCommandPath: async (id, projectPath, script, packageManager, nodePath, commandPath, pmNodePath) => {
+        if (processes.has(id)) throw new Error('Already running');
+
+        // Setup logging (与 runProjectCommand 相同)
+        let logFilePath = null;
+        let logStream = null;
+        const MAX_LOG_LINES = 500;
+        const logBuffer = [];
+        let linesSinceRewrite = 0;
+
+        function appendLog(text) {
+            if (!text) return;
+            logBuffer.push(text);
+            if (logBuffer.length > MAX_LOG_LINES) logBuffer.shift();
+            if (logStream) {
+                logStream.write(text);
+                linesSinceRewrite++;
+                if (linesSinceRewrite >= MAX_LOG_LINES) rewriteLogFile();
+            }
+        }
+
+        function rewriteLogFile() {
+            if (!logFilePath) return;
+            try {
+                if (logStream) logStream.end();
+                fs.writeFileSync(logFilePath, logBuffer.join(''), 'utf-8');
+                logStream = fs.createWriteStream(logFilePath, { flags: 'a' });
+                linesSinceRewrite = 0;
+            } catch (e) {
+                console.error('[Runner] Failed to rewrite log file:', e);
+            }
+        }
+
+        try {
+            const userData = platform.getPath('userData');
+            const baseLogDir = path.join(userData, 'logs');
+            let projectName = path.basename(projectPath);
+            try {
+                const pkgPath = path.join(projectPath, 'package.json');
+                if (fs.existsSync(pkgPath)) {
+                    const content = fs.readFileSync(pkgPath, 'utf-8');
+                    const pkg = JSON.parse(content);
+                    if (pkg.name) projectName = pkg.name;
+                }
+            } catch (e) {}
+
+            const safeProjectName = projectName.replace(/[<>:"/\\|?*]/g, '_');
+            const projectLogDir = path.join(baseLogDir, safeProjectName);
+            if (!fs.existsSync(projectLogDir)) fs.mkdirSync(projectLogDir, { recursive: true });
+
+            const safeScript = script.replace(/[<>:"/\\|?*]/g, '_');
+            logFilePath = path.join(projectLogDir, `${safeScript}.log`);
+            logStream = fs.createWriteStream(logFilePath, { flags: 'w' });
+        } catch (e) {
+            console.error('[Runner] Failed to setup log file:', e);
+        }
+
+        // 环境准备：项目 Node 优先
+        const env = { ...process.env };
+        let nodeDir = '';
+
+        if (nodePath && nodePath !== 'System Default') {
+            try {
+                let checkPath = nodePath;
+                if (fs.existsSync(checkPath)) {
+                    const stat = fs.statSync(checkPath);
+                    if (stat.isFile()) nodeDir = path.dirname(checkPath);
+                    else nodeDir = checkPath;
+                } else {
+                    nodeDir = nodePath;
+                }
+
+                if (nodeDir) {
+                    const pathKey = Object.keys(env).find(k => k.toUpperCase() === 'PATH') || 'PATH';
+                    const separator = process.platform === 'win32' ? ';' : ':';
+                    env[pathKey] = `${nodeDir}${separator}${env[pathKey] || ''}`;
+
+                    // 如果 PM 来自不同 Node 目录（source='default'），也将其加入 PATH
+                    if (pmNodePath && pmNodePath !== nodeDir) {
+                        env[pathKey] = `${nodeDir}${separator}${pmNodePath}${separator}${process.env[pathKey] || ''}`;
+                    }
+                }
+            } catch (e) {
+                console.error('[Runner] Error resolving node path:', e);
+            }
+        }
+
+        // 使用 commandPath 作为 PM 命令；npm-cli.js 需要用项目 Node 执行
+        const resolvedCommandPath = commandPath && packageManager === 'npm' && commandPath.endsWith('npm-cli.js')
+            ? `"${path.join(nodeDir || '', process.platform === 'win32' ? 'node.exe' : 'node')}" "${commandPath}"`
+            : commandPath;
+        const pm = resolvedCommandPath || packageManager || 'npm';
+        let spawnCmd = pm;
+
+        if (nodeDir && process.platform === 'win32' && !commandPath) {
+            // 仅当没有 commandPath 时才进行自动查找
+            const nodeExe = path.join(nodeDir, 'node.exe');
+            const npmCliJs = path.join(nodeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+            const pmCmd = path.join(nodeDir, `${pm}.cmd`);
+
+            if (fs.existsSync(npmCliJs)) {
+                spawnCmd = `"${nodeExe}" "${npmCliJs}"`;
+            } else if (fs.existsSync(pmCmd)) {
+                spawnCmd = `"${pmCmd}"`;
+            }
+        }
+
+        const cmdStr = `${spawnCmd} run ${script}`;
+        try {
+            appendLog(`Executing: ${cmdStr}\n`);
+            appendLog(`Node Path used: ${nodeDir || 'System Default'}\n`);
+            if (commandPath) appendLog(`PM Command Path: ${commandPath}\n`);
+
+            const child = spawn(spawnCmd, ['run', script], {
+                cwd: projectPath,
+                shell: true,
+                env: env,
+                detached: process.platform !== 'win32',
+                windowsHide: process.platform === 'win32',
+            });
+
+            spawnParentDeathWatch(child);
+            processes.set(id, child);
+
+            child.stdout.on('data', (data) => {
+                const str = data.toString();
+                if (outputCallback) outputCallback({ id, data: str });
+                appendLog(str);
+            });
+
+            child.stderr.on('data', (data) => {
+                const str = data.toString();
+                if (outputCallback) outputCallback({ id, data: str });
+                appendLog(`ERR: ${str}`);
+            });
+
+            child.on('exit', () => {
+                processes.delete(id);
+                rewriteLogFile();
+                if (logStream) logStream.end();
+                if (exitCallback) exitCallback({ id });
+            });
+
+            child.on('error', (err) => {
+                console.error('[Runner] Spawn error:', err);
+                const errMsg = `Error spawning process: ${err.message}`;
+                if (outputCallback) outputCallback({ id, data: errMsg });
+                appendLog(`${errMsg}\n`);
+                rewriteLogFile();
+                if (logStream) logStream.end();
+                processes.delete(id);
+            });
+        } catch (e) {
+            if (logStream) logStream.end();
+            throw e;
+        }
+    },
+
+    //************* 安装包管理器 *************
+    installPm: async (nodePath, pmName) => {
+        let nodeDir = nodePath;
+        try {
+            if (fs.existsSync(nodePath) && fs.statSync(nodePath).isFile()) {
+                nodeDir = path.dirname(nodePath);
+            }
+        } catch (_) {}
+
+        const isWin = process.platform === 'win32';
+        let cmdName, cmdArgs;
+
+        if (isWin) {
+            const nodeExe = path.join(nodeDir, 'node.exe');
+            const npmCli = path.join(nodeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+            if (fs.existsSync(nodeExe) && fs.existsSync(npmCli)) {
+                cmdName = nodeExe;
+                cmdArgs = [npmCli, 'install', '-g', pmName];
+            } else {
+                cmdName = 'npm';
+                cmdArgs = ['install', '-g', pmName];
+            }
+        } else {
+            const nodeBin = path.join(nodeDir, 'node');
+            const npmCli = path.join(nodeDir, 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js');
+            if (fs.existsSync(nodeBin) && fs.existsSync(npmCli)) {
+                cmdName = nodeBin;
+                cmdArgs = [npmCli, 'install', '-g', pmName];
+            } else {
+                cmdName = 'npm';
+                cmdArgs = ['install', '-g', pmName];
+            }
+        }
+
+        return new Promise((resolve, reject) => {
+            const child = spawn(cmdName, cmdArgs, {
+                cwd: nodeDir,
+                shell: true,
+                env: { ...process.env },
+            });
+            let stderr = '';
+            let stdout = '';
+            child.stdout.on('data', d => { stdout += d.toString(); });
+            child.stderr.on('data', d => { stderr += d.toString(); });
+            child.on('exit', (code) => {
+                if (code === 0) resolve();
+                else reject(new Error(`${stderr}\n${stdout}`));
+            });
+            child.on('error', reject);
+        });
     },
 
 };

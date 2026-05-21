@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { api } from '../api';
 import type { Project } from '../types';
+import type { PackageManagerResolveResult } from '../api/types';
 import { useNodeStore } from './node';
 import { useSettingsStore } from './settings';
 import { useUsageStore } from './usage';
@@ -114,6 +115,36 @@ export const useProjectStore = defineStore('project', () => {
     requestedRightTabToken.value += 1;
   }
 
+  /**
+   * 解析项目的包管理器可用性。
+   * 返回解析结果（包含 available、commandPath、reason）。
+   * 供 ProjectListItem 等组件在渲染时调用，用于判断是否禁用命令按钮。
+   */
+  async function resolvePmForProject(project: Project): Promise<PackageManagerResolveResult> {
+    if (project.type !== 'node' || !project.packageManager) {
+      return { available: true };
+    }
+
+    const nodeStore = useNodeStore();
+    if (!nodeStore.versions.length) {
+      await nodeStore.loadNvmNodes();
+    }
+
+    const nodePath = resolveProjectNodePath(project, nodeStore.versions);
+    let defaultNodePath = '';
+    try {
+      defaultNodePath = await api.getSystemNodePath();
+    } catch (_) {}
+
+    const source = project.packageManagerSource || 'project';
+
+    try {
+      return await api.resolvePackageManager(nodePath, defaultNodePath, project.packageManager, source);
+    } catch (_) {
+      return { available: false, reason: 'unknown' };
+    }
+  }
+
   async function runProject(project: Project, script: string) {
     const runId = `${project.id}:${script}`;
 
@@ -154,6 +185,30 @@ export const useProjectStore = defineStore('project', () => {
       }
     }
 
+    // 解析包管理器可用性
+    let pmCommandPath: string | undefined;
+    let pmNodePath: string | undefined;
+    if (project.type === 'node' && project.packageManager) {
+      const pmResult = await resolvePmForProject(project);
+      if (!pmResult.available) {
+        // 构建禁用原因日志
+        ElMessage.error(`命令不可用：${pmResult.reason || '包管理器不可用'}`);
+        return;
+      }
+      pmCommandPath = pmResult.commandPath;
+
+      // 当来源为 default 时，需要将默认 Node 目录传给后端加入 PATH
+      const source = project.packageManagerSource || 'project';
+      if (source === 'default') {
+        try {
+          const defaultNodePath = await api.getSystemNodePath();
+          if (defaultNodePath) {
+            pmNodePath = defaultNodePath;
+          }
+        } catch (_) {}
+      }
+    }
+
     try {
       logs.value[runId] = [];
 
@@ -167,13 +222,18 @@ export const useProjectStore = defineStore('project', () => {
       logs.value[runId].push(`[Runner] Package Manager: ${project.packageManager || 'npm'}`);
       logs.value[runId].push(`[Runner] Node Version: ${project.nodeVersion || 'Default'}`);
       logs.value[runId].push(`[Runner] Node Path: ${nodePath || 'System Default'}`);
+      if (pmCommandPath) {
+        logs.value[runId].push(`[Runner] PM Command Path: ${pmCommandPath}`);
+      }
 
       await api.runProjectCommand(
         runId,
         project.path,
         script,
         project.packageManager || 'npm',
-        nodePath
+        nodePath,
+        pmCommandPath,
+        pmNodePath
       );
     } catch (e) {
       console.error(e);
@@ -190,6 +250,15 @@ export const useProjectStore = defineStore('project', () => {
     const runId = `${project.id}:${cmd.id}`;
 
     if (runningStatus.value[runId]) return;
+
+    // Node 项目只要 PM 不可用，项目内所有命令都禁用
+    if (project.type === 'node' && project.packageManager) {
+      const pmResult = await resolvePmForProject(project);
+      if (!pmResult.available) {
+        ElMessage.error(`命令不可用：${pmResult.reason || '包管理器不可用'}`);
+        return;
+      }
+    }
 
     try {
       logs.value[runId] = [];
@@ -278,6 +347,7 @@ export const useProjectStore = defineStore('project', () => {
     runProject,
     runCustomCommand,
     stopProject,
+    resolvePmForProject,
     clearLog,
     refreshAll,
     pinProject,
