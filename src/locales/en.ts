@@ -450,6 +450,7 @@ export default {
     selectFileToView: 'Select a file to view diff',
     binaryFileNoDiff: 'Binary file - diff not available',
     fileTooLargeNoDiff: 'File too large - diff not available',
+    diffLoadFailed: 'Failed to load diff: {error}',
     additions: 'additions',
     deletions: 'deletions',
     // Log / Graph

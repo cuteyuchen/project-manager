@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onActivated, onDeactivated, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted, onActivated, onDeactivated, onUnmounted, nextTick } from 'vue';
 import { useProjectStore } from '../../stores/project';
 import { useGitStore } from '../../stores/git';
 import { useSettingsStore } from '../../stores/settings';
@@ -60,6 +60,12 @@ onMounted(() => {
     if (entry) leftContainerWidth.value = entry.contentRect.width;
   });
   leftResizeObserver.observe(leftPaneContainerRef.value);
+  // 确保首次布局后立即测量容器宽度，避免 ResizeObserver 延迟导致 leftContainerWidth 为 0
+  nextTick(() => {
+    if (leftPaneContainerRef.value && leftContainerWidth.value === 0) {
+      leftContainerWidth.value = leftPaneContainerRef.value.getBoundingClientRect().width;
+    }
+  });
 });
 
 onUnmounted(() => {
@@ -111,6 +117,14 @@ const isDraggingStagedSplit = ref(false);
 const statusPanelRef = ref<HTMLElement | null>(null);
 const isViewActive = ref(false);
 let refreshTimer: number | null = null;
+
+// 左右分割拖拽开始前，确保容器宽度已测量
+function onLeftPaneMouseDown(e: MouseEvent) {
+  if (leftContainerWidth.value === 0 && leftPaneContainerRef.value) {
+    leftContainerWidth.value = leftPaneContainerRef.value.getBoundingClientRect().width;
+  }
+  leftPane.onMouseDown(e);
+}
 
 function onStagedSplitMouseDown(e: MouseEvent) {
   e.preventDefault();
@@ -360,7 +374,7 @@ async function copyText(value: string, successMessage: string) {
           <div
             class="w-1 hover:w-1.5 shrink-0 cursor-col-resize transition-all group relative"
             :class="leftPane.isDragging.value ? 'bg-blue-500/40 w-1.5' : 'hover:bg-blue-500/20'"
-            @mousedown="leftPane.onMouseDown"
+            @mousedown="onLeftPaneMouseDown"
           >
             <div class="absolute inset-y-0 -left-1 -right-1" />
           </div>

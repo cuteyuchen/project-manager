@@ -452,6 +452,7 @@
     selectFileToView: '选择文件以查看差异',
     binaryFileNoDiff: '二进制文件不支持显示差异',
     fileTooLargeNoDiff: '文件过大不支持显示差异',
+    diffLoadFailed: '加载差异失败：{error}',
     additions: '新增',
     deletions: '删除',
     // Log / Graph

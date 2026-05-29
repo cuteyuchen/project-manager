@@ -13,6 +13,7 @@ const gitStore = useGitStore();
 
 const diffContent = computed(() => gitStore.selectedDiff);
 const diffFile = computed(() => gitStore.selectedDiffFile);
+const hasSelectedFile = computed(() => !!gitStore.selectedDiffFile);
 const reverting = ref(false);
 
 const DIFF_BINARY_MARKER = '__BINARY_FILE__';
@@ -125,10 +126,16 @@ async function rollbackHunk(hunk: DiffHunk) {
 
 <template>
   <div class="h-full flex flex-col overflow-hidden">
-    <!-- No diff selected -->
-    <div v-if="!diffContent" class="flex-1 flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 gap-1">
+    <!-- No file selected -->
+    <div v-if="!hasSelectedFile" class="flex-1 flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 gap-1">
       <div class="i-mdi-file-document-outline text-2xl" />
       <span class="text-[11px]">{{ t('git.selectFileToView') }}</span>
+    </div>
+
+    <!-- File selected but no diff content -->
+    <div v-else-if="!diffContent" class="flex-1 flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 gap-1">
+      <div class="i-mdi-check-circle-outline text-2xl" />
+      <span class="text-[11px]">{{ t('git.noDiff') }}</span>
     </div>
 
     <template v-else>

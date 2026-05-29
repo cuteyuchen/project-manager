@@ -469,11 +469,17 @@ export const useGitStore = defineStore('git', () => {
   }
 
   async function getDiff(path: string, file?: string, staged?: boolean): Promise<string> {
-    const result = await api.gitDiff(path, file, staged);
-    selectedDiff.value = result;
-    selectedDiffFile.value = file || '';
-    selectedDiffStaged.value = staged || false;
-    return result;
+    try {
+      const result = await api.gitDiff(path, file, staged);
+      selectedDiff.value = result;
+      selectedDiffFile.value = file || '';
+      selectedDiffStaged.value = staged || false;
+      return result;
+    } catch (e) {
+      // 加载diff失败时清除当前diff状态，避免显示过期内容
+      clearDiff();
+      throw e;
+    }
   }
 
   async function getDiffCommit(path: string, hash: string): Promise<string> {
