@@ -11,6 +11,7 @@ import NodeManager from './views/NodeManager.vue';
 import PortManager from './views/PortManager.vue';
 import TitleBar from './components/TitleBar.vue';
 import UpdateProgress from './components/UpdateProgress.vue';
+import ProjectQuickSearch from './components/ProjectQuickSearch.vue';
 import { loadData, scheduleSaveData, flushPendingSave } from './utils/persistence';
 import { useProjectStore } from './stores/project';
 import { useSettingsStore } from './stores/settings';
@@ -38,6 +39,7 @@ let manualUpdateCheckListener: (() => void) | null = null;
 
 const showUpdateProgress = ref(false);
 const downloadProgress = ref(0);
+const showQuickSearch = ref(false);
 const processedImportInstallVersions = new Set<string>();
 const closeBehaviorDialogVisible = ref(false);
 const rememberCloseAction = ref(false);
@@ -126,6 +128,31 @@ async function handleImportProject(path: string) {
   } finally {
     loading.close();
   }
+}
+
+/***********************Ctrl+K 快速搜索*********************/
+
+/** 全局键盘事件处理：Ctrl+K / Cmd+K 打开快速搜索 */
+function handleGlobalKeydown(event: KeyboardEvent) {
+  // Ctrl+K 或 Cmd+K 打开快速搜索
+  if ((event.ctrlKey || event.metaKey) && event.key === 'k') {
+    event.preventDefault();
+    showQuickSearch.value = true;
+    return;
+  }
+  // Esc 仅在快速搜索打开时关闭
+  if (event.key === 'Escape' && showQuickSearch.value) {
+    event.preventDefault();
+    showQuickSearch.value = false;
+  }
+}
+
+/** 快速搜索选中项目 */
+function handleQuickSearchSelect(projectId: string) {
+  const store = useProjectStore();
+  store.activeProjectId = projectId;
+  currentView.value = 'dashboard';
+  showQuickSearch.value = false;
 }
 
 function compareVersions(v1: string, v2: string) {
@@ -550,6 +577,9 @@ onMounted(async () => {
   const handleManualUpdateCheck = () => checkUpdate(true);
   manualUpdateCheckListener = () => window.removeEventListener('manual-check-update', handleManualUpdateCheck);
   window.addEventListener('manual-check-update', handleManualUpdateCheck);
+
+  // 注册全局 Ctrl+K 快捷键
+  document.addEventListener('keydown', handleGlobalKeydown);
 });
 
 onUnmounted(() => {
@@ -559,6 +589,7 @@ onUnmounted(() => {
   if (unlistenSingleInstance) unlistenSingleInstance();
   if (manualUpdateCheckListener) manualUpdateCheckListener();
   if (unlistenCloseRequested) unlistenCloseRequested();
+  document.removeEventListener('keydown', handleGlobalKeydown);
   void destroyTray();
   void flushPendingSave();
 });
@@ -574,6 +605,7 @@ const triggerSave = () => {
 };
 
 watch(() => projectStore.projects, triggerSave, { deep: true });
+watch(() => projectStore.projectGroups, triggerSave, { deep: true });
 watch(() => settingsStore.settings, triggerSave, { deep: true });
 watch(() => nodeStore.versions, triggerSave, { deep: true });
 watch(() => usageStore.usageData, triggerSave, { deep: true });
@@ -673,6 +705,13 @@ watch(
         </div>
       </template>
     </el-dialog>
+
+    <!-- Ctrl+K 快速搜索覆盖层 -->
+    <ProjectQuickSearch
+      v-if="showQuickSearch"
+      @close="showQuickSearch = false"
+      @select="handleQuickSearchSelect"
+    />
   </div>
 </template>
 

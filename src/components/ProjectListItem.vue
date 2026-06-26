@@ -34,6 +34,27 @@ const isRunning = computed(() => {
     return (store.runningProjectCount[props.project.id] || 0) > 0;
 });
 
+/***********************项目附加信息*********************/
+
+/** 分组名称 */
+const groupName = computed(() => {
+    if (!props.project.groupId) return '';
+    const group = store.projectGroups.find(g => g.id === props.project.groupId);
+    return group ? group.name : '';
+});
+
+/** 显示的标签（最多 3 个） */
+const displayTags = computed(() => {
+    if (!props.project.tags || props.project.tags.length === 0) return [];
+    return props.project.tags.slice(0, 3);
+});
+
+/** 超出的标签数量 */
+const extraTagsCount = computed(() => {
+    if (!props.project.tags) return 0;
+    return Math.max(0, props.project.tags.length - 3);
+});
+
 /** ********************* 包管理器可用性检查 *********************/
 
 /** PM 解析结果缓存（reactive） */
@@ -310,6 +331,27 @@ async function openFolder() {
         </div>
 
         <div class="text-[10px] text-slate-400 dark:text-slate-500 truncate font-mono mb-2 pr-4">{{ project.path }}</div>
+
+        <!-- 描述摘要 + 标签 + 分组 -->
+        <div v-if="project.description || displayTags.length > 0 || groupName" class="flex flex-wrap items-center gap-1 mb-1.5 pr-4 overflow-hidden max-h-5">
+            <span v-if="project.description" class="text-[10px] text-slate-400 dark:text-slate-500 truncate max-w-32" :title="project.description">
+                {{ project.description }}
+            </span>
+            <span v-if="project.description && (displayTags.length > 0 || groupName)" class="text-slate-300 dark:text-slate-600 text-[10px]">·</span>
+            <span
+                v-for="tag in displayTags"
+                :key="tag"
+                class="inline-flex items-center px-1.5 py-0 rounded text-[9px] font-medium bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-400 border border-blue-200/50 dark:border-blue-500/20"
+            >
+                {{ tag }}
+            </span>
+            <span v-if="extraTagsCount > 0" class="text-[9px] text-slate-400 dark:text-slate-500">+{{ extraTagsCount }}</span>
+            <span v-if="displayTags.length > 0 && groupName" class="text-slate-300 dark:text-slate-600 text-[10px]">·</span>
+            <span v-if="groupName" class="inline-flex items-center gap-0.5 px-1.5 py-0 rounded text-[9px] font-medium bg-slate-100 text-slate-500 dark:bg-slate-700/40 dark:text-slate-400 border border-slate-200/50 dark:border-slate-600/30">
+                <div class="i-mdi-folder-network text-[8px]" />
+                {{ groupName }}
+            </span>
+        </div>
 
         <Transition name="project-scripts">
             <div

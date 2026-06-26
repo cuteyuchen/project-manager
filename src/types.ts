@@ -45,6 +45,18 @@ export interface Project {
   pinOrder?: number;
   sortOrder?: number;
   editorId?: string;
+  description?: string;
+  tags?: string[];
+  groupId?: string;
+}
+
+// ─── Project Group Types ────────────────────────────────────────────────────
+
+export interface ProjectGroup {
+  id: string;
+  name: string;
+  sortOrder?: number;
+  collapsed?: boolean;
 }
 
 export type AiApiType = 'chat_completions' | 'responses';

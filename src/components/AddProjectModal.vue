@@ -8,6 +8,7 @@ import type { ProjectInfo } from '../api/types';
 import { normalizeNvmVersion, findInstalledNodeVersion } from '../utils/nvm';
 import { ensureNodeInstallCommand, getInstallDependenciesCommand } from '../utils/projectCommands';
 import { useSettingsStore } from '../stores/settings';
+import { useProjectStore } from '../stores/project';
 import type { PackageManagerResolveResult } from '../api/types';
 
 type ProjectForm = {
@@ -25,10 +26,14 @@ type ProjectForm = {
   visibleScripts: string[];
   customCommands: CustomCommand[];
   editorId: string;
+  description: string;
+  tags: string[];
+  groupId: string;
 };
 
 const { t } = useI18n();
 const settingsStore = useSettingsStore();
+const projectStore = useProjectStore();
 const props = defineProps<{
   modelValue: boolean;
   editProject?: Project | null;
@@ -84,7 +89,29 @@ const form = ref<ProjectForm>({
   visibleScripts: [],
   customCommands: [],
   editorId: '',
+  description: '',
+  tags: [],
+  groupId: '',
 });
+
+/***********************标签输入处理*********************/
+const tagInputValue = ref('');
+
+/** 标签输入框按 Enter 添加标签 */
+function handleTagInputKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Enter') return;
+  event.preventDefault();
+  const value = tagInputValue.value.trim();
+  if (value && !form.value.tags.includes(value)) {
+    form.value.tags = [...form.value.tags, value];
+  }
+  tagInputValue.value = '';
+}
+
+/** 移除标签 */
+function removeTag(tag: string) {
+  form.value.tags = form.value.tags.filter((t) => t !== tag);
+}
 
 const canConfigureRepo = computed(() => !isEdit.value && !!form.value.path && !pathIsGitRepo.value);
 const repoTargetHasFiles = computed(() => pathEntryCount.value > 0);
@@ -106,6 +133,9 @@ function buildEmptyForm(): ProjectForm {
     visibleScripts: [],
     customCommands: [],
     editorId: '',
+    description: '',
+    tags: [],
+    groupId: '',
   };
 }
 
@@ -222,6 +252,9 @@ function hydrateFormFromProject(project: Project) {
       }))
       : [],
     editorId: project.editorId || '',
+    description: project.description || '',
+    tags: project.tags ? [...project.tags] : [],
+    groupId: project.groupId || '',
   };
 }
 
@@ -494,6 +527,17 @@ function buildProjectPayload(): Project {
     project.editorId = form.value.editorId;
   }
 
+  // 保存描述、标签、分组
+  if (form.value.description.trim()) {
+    project.description = form.value.description.trim();
+  }
+  if (form.value.tags.length > 0) {
+    project.tags = [...form.value.tags];
+  }
+  if (form.value.groupId) {
+    project.groupId = form.value.groupId;
+  }
+
   // Preserve pin and sort state when editing
   if (isEdit.value && props.editProject) {
     project.pinned = props.editProject.pinned;
@@ -582,6 +626,52 @@ async function cancelClone() {
       <el-form-item :label="t('project.name')">
         <el-input v-model="form.name" :placeholder="t('project.namePlaceholder')" />
       </el-form-item>
+
+      <el-form-item :label="t('project.description')">
+        <el-input
+          v-model="form.description"
+          type="textarea"
+          :rows="2"
+          :placeholder="t('project.descriptionPlaceholder')"
+          resize="none"
+        />
+      </el-form-item>
+
+      <div class="grid gap-4 grid-cols-2">
+        <el-form-item :label="t('project.tags')">
+          <div class="w-full">
+            <div class="flex flex-wrap gap-1.5 mb-2" v-if="form.tags.length > 0">
+              <el-tag
+                v-for="tag in form.tags"
+                :key="tag"
+                closable
+                size="small"
+                @close="removeTag(tag)"
+              >
+                {{ tag }}
+              </el-tag>
+            </div>
+            <el-input
+              v-model="tagInputValue"
+              size="small"
+              :placeholder="t('project.tagsPlaceholder')"
+              @keydown="handleTagInputKeydown"
+            />
+          </div>
+        </el-form-item>
+
+        <el-form-item :label="t('project.group')">
+          <el-select v-model="form.groupId" class="w-full" clearable :placeholder="t('project.groupPlaceholder')">
+            <el-option :label="t('dashboard.ungrouped')" value="" />
+            <el-option
+              v-for="group in projectStore.projectGroups"
+              :key="group.id"
+              :label="group.name"
+              :value="group.id"
+            />
+          </el-select>
+        </el-form-item>
+      </div>
 
       <el-form-item :label="t('project.path')" required>
         <div class="flex gap-2 w-full">

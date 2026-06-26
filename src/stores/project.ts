@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { api } from '../api';
-import type { Project } from '../types';
+import type { Project, ProjectGroup } from '../types';
 import type { PackageManagerResolveResult } from '../api/types';
 import { useNodeStore } from './node';
 import { useSettingsStore } from './settings';
@@ -15,6 +15,7 @@ type WorkspaceTab = 'console' | 'git' | 'files' | 'memo';
 
 export const useProjectStore = defineStore('project', () => {
   const projects = ref<Project[]>([]);
+  const projectGroups = ref<ProjectGroup[]>([]);
   const runningStatus = ref<Record<string, boolean>>({});
   const runningProjectCount = ref<Record<string, number>>({});
   const logs = ref<Record<string, string[]>>({});
@@ -332,8 +333,43 @@ export const useProjectStore = defineStore('project', () => {
     project.pinOrder = undefined;
   }
 
+  /***********************项目分组管理*********************/
+
+  /** 新增分组 */
+  function addProjectGroup(group: Omit<ProjectGroup, 'id'>) {
+    projectGroups.value.push({
+      id: crypto.randomUUID(),
+      ...group,
+    });
+  }
+
+  /** 更新分组（合并 patch） */
+  function updateProjectGroup(id: string, patch: Partial<Omit<ProjectGroup, 'id'>>) {
+    const group = projectGroups.value.find((g) => g.id === id);
+    if (!group) return;
+    Object.assign(group, patch);
+  }
+
+  /** 删除分组，并把该分组下的项目 groupId 清空（不删除项目） */
+  function removeProjectGroup(id: string) {
+    projectGroups.value = projectGroups.value.filter((g) => g.id !== id);
+    for (const p of projects.value) {
+      if (p.groupId === id) {
+        p.groupId = undefined;
+      }
+    }
+  }
+
+  /** 切换分组折叠状态 */
+  function toggleProjectGroupCollapsed(id: string) {
+    const group = projectGroups.value.find((g) => g.id === id);
+    if (!group) return;
+    group.collapsed = !group.collapsed;
+  }
+
   return {
     projects,
+    projectGroups,
     runningStatus,
     runningProjectCount,
     logs,
@@ -352,5 +388,9 @@ export const useProjectStore = defineStore('project', () => {
     refreshAll,
     pinProject,
     unpinProject,
+    addProjectGroup,
+    updateProjectGroup,
+    removeProjectGroup,
+    toggleProjectGroupCollapsed,
   };
 });

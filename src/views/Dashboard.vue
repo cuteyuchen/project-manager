@@ -10,6 +10,7 @@ import GitView from '../components/git/GitView.vue';
 import FileManager from '../components/FileManager.vue';
 import ProjectMemo from '../components/ProjectMemo.vue';
 import AddProjectModal from '../components/AddProjectModal.vue';
+import ProjectGroupManager from '../components/ProjectGroupManager.vue';
 import type { Project } from '../types';
 import { useI18n } from 'vue-i18n';
 import { api } from '../api';
@@ -218,6 +219,31 @@ watch(
 
 //************* 搜索功能 *************
 const searchQuery = ref('');
+const showGroupManager = ref(false);
+
+/***********************筛选状态*********************/
+const activeQuickFilter = ref<'all' | 'pinned' | 'recent'>('all');
+const selectedGroupId = ref('');
+const selectedTags = ref<string[]>([]);
+
+const quickFilterOptions = computed(() => [
+    { label: t('dashboard.filterAll'), value: 'all' },
+    { label: t('dashboard.filterPinned'), value: 'pinned' },
+    { label: t('dashboard.filterRecent'), value: 'recent' },
+]);
+
+/** 聚合所有项目标签用于筛选下拉 */
+const allTags = computed(() => {
+    const tagSet = new Set<string>();
+    for (const p of projectStore.projects) {
+        if (p.tags) {
+            for (const tag of p.tags) {
+                tagSet.add(tag);
+            }
+        }
+    }
+    return [...tagSet].sort();
+});
 
 function buildPinyinSearchText(text: string): string {
     if (!text) return '';
@@ -246,8 +272,14 @@ const sortOptions = computed(() => [
     { label: t('dashboard.sortModeSmart'), value: 'smart' },
 ]);
 
-// Whether drag is allowed (default mode + no active search)
-const isDraggable = computed(() => sortMode.value === 'default' && !searchQuery.value.trim());
+// Whether drag is allowed (default mode + no active search + no active filters)
+const isDraggable = computed(() =>
+    sortMode.value === 'default'
+    && !searchQuery.value.trim()
+    && activeQuickFilter.value === 'all'
+    && !selectedGroupId.value
+    && selectedTags.value.length === 0
+);
 
 const sortedProjects = computed(() => {
     if (sortMode.value === 'smart') {
@@ -284,27 +316,62 @@ const projectSearchIndex = computed(() => {
         compactPath: project.path.toLowerCase().replace(/\s+/g, ''),
         namePinyin: getCachedPinyinSearchText(project.name),
         pathPinyin: getCachedPinyinSearchText(project.path),
+        normalizedDescription: (project.description || '').toLowerCase(),
+        normalizedTags: (project.tags || []).join(' ').toLowerCase(),
+        normalizedScripts: (project.scripts || []).join(' ').toLowerCase(),
+        normalizedCustomCommands: (project.customCommands || []).map(c => c.name).join(' ').toLowerCase(),
     }));
 });
 
 const filteredProjects = computed(() => {
+    /***********************筛选链：快捷筛选 → 分组 → 标签 → 搜索文本*********************/
+    let result = sortedProjects.value;
+
+    // 快捷筛选
+    if (activeQuickFilter.value === 'pinned') {
+        result = result.filter(p => p.pinned);
+    } else if (activeQuickFilter.value === 'recent') {
+        const weights = usageStore.calculateAllWeights();
+        result = result.filter(p => (weights[p.id] ?? 0) > 0);
+    }
+
+    // 分组筛选
+    if (selectedGroupId.value) {
+        result = result.filter(p => p.groupId === selectedGroupId.value);
+    }
+
+    // 标签筛选（项目必须包含所有选中标签）
+    if (selectedTags.value.length > 0) {
+        result = result.filter(p => {
+            if (!p.tags || p.tags.length === 0) return false;
+            return selectedTags.value.every(tag => p.tags!.includes(tag));
+        });
+    }
+
+    // 搜索文本
     const query = searchQuery.value.trim().toLowerCase();
     const compactQuery = query.replace(/\s+/g, '');
 
-    if (!query) {
-        return sortedProjects.value;
+    if (query) {
+        const index = projectSearchIndex.value;
+        const indexMap = new Map(index.map(item => [item.project.id, item]));
+        result = result.filter(p => {
+            const entry = indexMap.get(p.id);
+            if (!entry) return false;
+            return entry.normalizedName.includes(query)
+                || entry.normalizedPath.includes(query)
+                || entry.compactName.includes(compactQuery)
+                || entry.compactPath.includes(compactQuery)
+                || entry.namePinyin.includes(compactQuery)
+                || entry.pathPinyin.includes(compactQuery)
+                || entry.normalizedDescription.includes(query)
+                || entry.normalizedTags.includes(query)
+                || entry.normalizedScripts.includes(compactQuery)
+                || entry.normalizedCustomCommands.includes(compactQuery);
+        });
     }
 
-    return projectSearchIndex.value
-        .filter(({ normalizedName, normalizedPath, compactName, compactPath, namePinyin, pathPinyin }) => {
-            return normalizedName.includes(query)
-                || normalizedPath.includes(query)
-                || compactName.includes(compactQuery)
-                || compactPath.includes(compactQuery)
-                || namePinyin.includes(compactQuery)
-                || pathPinyin.includes(compactQuery);
-        })
-        .map(item => item.project);
+    return result;
 });
 
 /***********************项目列表手动拖拽排序*********************/
@@ -688,6 +755,9 @@ async function batchAddProjects() {
                 <button @click="refreshProjects" :disabled="refreshing" class="sidebar-header-btn" :title="t('common.refresh') || 'Refresh'">
                     <div class="i-mdi-refresh text-base transition-transform duration-700" :class="{ 'animate-spin': refreshing }" />
                 </button>
+                <button @click="showGroupManager = true" class="sidebar-header-btn" :title="t('dashboard.manageGroups')">
+                    <div class="i-mdi-folder-cog text-base" />
+                </button>
                 <button @click="batchAddProjects" class="sidebar-header-btn" :title="t('dashboard.batchAddProject')">
                     <div class="i-mdi-folder-multiple-plus text-base" />
                 </button>
@@ -715,6 +785,47 @@ async function batchAddProjects() {
                 <el-tooltip :content="sortMode === 'smart' ? t('dashboard.sortModeSmartHint') : t('dashboard.sortModeDefaultHint')" placement="top" :show-after="300">
                     <el-segmented v-model="settingsStore.settings.sortMode" :options="sortOptions" size="small" />
                 </el-tooltip>
+            </div>
+        </div>
+
+        <!-- 筛选区域 -->
+        <div class="px-3 py-2 border-b border-slate-200 dark:border-slate-700/20 space-y-1.5 filter-area">
+            <!-- 快捷筛选 -->
+            <el-segmented v-model="activeQuickFilter" :options="quickFilterOptions" size="small" class="w-full" />
+            <!-- 分组筛选 + 标签筛选 -->
+            <div class="flex gap-1.5">
+                <el-select
+                    v-model="selectedGroupId"
+                    size="small"
+                    clearable
+                    :placeholder="t('dashboard.group')"
+                    class="flex-1"
+                >
+                    <el-option :label="t('dashboard.filterAll')" value="" />
+                    <el-option
+                        v-for="group in projectStore.projectGroups"
+                        :key="group.id"
+                        :label="group.name"
+                        :value="group.id"
+                    />
+                </el-select>
+                <el-select
+                    v-model="selectedTags"
+                    size="small"
+                    multiple
+                    clearable
+                    collapse-tags
+                    collapse-tags-tooltip
+                    :placeholder="t('dashboard.tags')"
+                    class="flex-1"
+                >
+                    <el-option
+                        v-for="tag in allTags"
+                        :key="tag"
+                        :label="tag"
+                        :value="tag"
+                    />
+                </el-select>
             </div>
         </div>
         
@@ -860,12 +971,14 @@ async function batchAddProjects() {
         </template>
     </div>
 
-    <AddProjectModal 
-        v-model="showModal" 
+    <AddProjectModal
+        v-model="showModal"
         :edit-project="editingProject"
-        @add="handleAdd" 
+        @add="handleAdd"
         @update="handleUpdate"
     />
+
+    <ProjectGroupManager v-model="showGroupManager" />
   </div>
 </template>
 
@@ -1192,6 +1305,29 @@ async function batchAddProjects() {
 /* Sort mode segmented control font size */
 .sort-mode-control :deep(.el-segmented) {
   font-size: 10px;
+}
+
+/* Filter area segmented and selects */
+.filter-area :deep(.el-segmented) {
+  font-size: 10px;
+}
+
+.filter-area :deep(.el-segmented__item) {
+  padding: 2px 8px;
+  min-height: 22px;
+}
+
+.filter-area :deep(.el-segmented__item-label) {
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.filter-area :deep(.el-select) {
+  font-size: 11px;
+}
+
+.filter-area :deep(.el-input__wrapper) {
+  font-size: 11px;
 }
 
 .sort-mode-control :deep(.el-segmented__item) {

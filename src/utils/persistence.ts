@@ -3,7 +3,7 @@ import { useProjectStore } from '../stores/project';
 import { useSettingsStore } from '../stores/settings';
 import { useNodeStore } from '../stores/node';
 import { useUsageStore } from '../stores/usage';
-import type { NodeVersion, Project, Settings, UsageData } from '../types';
+import type { NodeVersion, Project, ProjectGroup, Settings, UsageData } from '../types';
 import { ensureNodeInstallCommand } from './projectCommands';
 
 const FILE_NAME = 'data.json';
@@ -15,6 +15,7 @@ type PersistedData = {
   settings: Settings;
   customNodes: NodeVersion[];
   usageData?: UsageData;
+  projectGroups?: ProjectGroup[];
 };
 
 type IdleCallbackHandle = number;
@@ -37,6 +38,7 @@ function buildPersistedData(): PersistedData {
     settings: settingsStore.settings,
     customNodes: nodeStore.versions.filter(v => v.source === 'custom'),
     usageData: usageStore.usageData,
+    projectGroups: projectStore.projectGroups,
   };
 }
 
@@ -155,6 +157,9 @@ export async function loadData() {
         memo: p.memo || '',
         pinned: p.pinned ?? false,
         pinOrder: p.pinOrder ?? undefined,
+        description: typeof p.description === 'string' ? p.description : undefined,
+        tags: Array.isArray(p.tags) ? p.tags : undefined,
+        groupId: typeof p.groupId === 'string' ? p.groupId : undefined,
       }, installCommandName));
 
       normalizedDataChanged = projectStore.projects.some((project: Project, index: number) => {
@@ -179,6 +184,15 @@ export async function loadData() {
     if (data.usageData) {
       const usageStore = useUsageStore();
       usageStore.loadData(data.usageData);
+    }
+    if (data.projectGroups) {
+      const projectStore = useProjectStore();
+      projectStore.projectGroups = data.projectGroups.map((g: any) => ({
+        id: g.id,
+        name: g.name,
+        sortOrder: g.sortOrder ?? undefined,
+        collapsed: g.collapsed ?? false,
+      }));
     }
     console.log('Data loaded');
     lastSerializedData = serializePersistedData();
