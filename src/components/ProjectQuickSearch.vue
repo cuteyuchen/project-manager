@@ -3,16 +3,32 @@ import { ref, computed, watch, onMounted, nextTick, useTemplateRef } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useProjectStore } from '../stores/project';
 import { useUsageStore } from '../stores/usage';
-import type { Project } from '../types';
 import { pinyin } from 'pinyin-pro';
 
 const { t } = useI18n();
 const projectStore = useProjectStore();
 const usageStore = useUsageStore();
 
+/***********************搜索结果类型定义*********************/
+type SearchResultType = 'project' | 'script';
+
+interface SearchResult {
+  type: SearchResultType;
+  id: string;
+  name: string;
+  subtitle: string;
+  icon: string;
+  iconColor: string;
+  /** 关联的项目 ID（用于项目/脚本跳转） */
+  projectId?: string;
+}
+
 const emit = defineEmits<{
   close: [];
+  /** 选中项目 */
   select: [projectId: string];
+  /** 选中脚本 */
+  selectScript: [projectId: string, scriptName: string];
 }>();
 
 const searchQuery = ref('');
@@ -39,44 +55,86 @@ function getCachedPinyin(text: string) {
     return next;
 }
 
-/***********************搜索结果*********************/
-
-function buildSearchEntry(project: Project) {
-    return {
-        project,
-        normalizedName: project.name.toLowerCase(),
-        normalizedPath: project.path.toLowerCase(),
-        namePinyin: getCachedPinyin(project.name),
-        pathPinyin: getCachedPinyin(project.path),
-        normalizedDescription: (project.description || '').toLowerCase(),
-        normalizedTags: (project.tags || []).join(' ').toLowerCase(),
-        normalizedScripts: (project.scripts || []).join(' ').toLowerCase(),
-        normalizedCustomCommands: (project.customCommands || []).map(c => c.name).join(' ').toLowerCase(),
-    };
+/***********************构建搜索条目*********************/
+function buildProjectResults(query: string, compactQuery: string): SearchResult[] {
+    return projectStore.projects
+        .filter(project => {
+            const name = project.name.toLowerCase();
+            const path = project.path.toLowerCase();
+            const desc = (project.description || '').toLowerCase();
+            const tags = (project.tags || []).join(' ').toLowerCase();
+            const namePinyin = getCachedPinyin(project.name);
+            return name.includes(query)
+                || path.includes(query)
+                || desc.includes(query)
+                || tags.includes(query)
+                || namePinyin.includes(compactQuery);
+        })
+        .map(project => ({
+            type: 'project' as SearchResultType,
+            id: `project-${project.id}`,
+            name: project.name,
+            subtitle: project.path,
+            icon: project.type === 'node' ? 'i-mdi-nodejs' : 'i-mdi-folder-outline',
+            iconColor: project.type === 'node' ? 'text-emerald-500' : 'text-slate-400',
+            projectId: project.id,
+        }));
 }
 
-const allSearchEntries = computed(() => projectStore.projects.map(buildSearchEntry));
+function buildScriptResults(query: string, compactQuery: string): SearchResult[] {
+    const results: SearchResult[] = [];
+    for (const project of projectStore.projects) {
+        const scripts = project.scripts || [];
+        const commands = project.customCommands || [];
+        for (const script of scripts) {
+            const s = script.toLowerCase();
+            const sPinyin = getCachedPinyin(script);
+            if (s.includes(query) || sPinyin.includes(compactQuery)) {
+                results.push({
+                    type: 'script',
+                    id: `script-${project.id}-${script}`,
+                    name: script,
+                    subtitle: `${project.name} · npm run ${script}`,
+                    icon: 'i-mdi-play-circle-outline',
+                    iconColor: 'text-amber-500',
+                    projectId: project.id,
+                });
+            }
+        }
+        for (const cmd of commands) {
+            const cn = cmd.name.toLowerCase();
+            const cc = cmd.command.toLowerCase();
+            const cnPinyin = getCachedPinyin(cmd.name);
+            if (cn.includes(query) || cc.includes(query) || cnPinyin.includes(compactQuery)) {
+                results.push({
+                    type: 'script',
+                    id: `cmd-${project.id}-${cmd.id}`,
+                    name: cmd.name,
+                    subtitle: `${project.name} · ${cmd.command}`,
+                    icon: 'i-mdi-console',
+                    iconColor: 'text-amber-500',
+                    projectId: project.id,
+                });
+            }
+        }
+    }
+    return results;
+}
 
+/***********************搜索结果计算*********************/
 const searchResults = computed(() => {
     const query = searchQuery.value.trim().toLowerCase();
     const compactQuery = query.replace(/\s+/g, '');
 
     if (!query) return [];
 
-    return allSearchEntries.value
-        .filter(entry => {
-            return entry.normalizedName.includes(query)
-                || entry.normalizedPath.includes(query)
-                || entry.namePinyin.includes(compactQuery)
-                || entry.pathPinyin.includes(compactQuery)
-                || entry.normalizedDescription.includes(query)
-                || entry.normalizedTags.includes(query)
-                || entry.normalizedScripts.includes(compactQuery)
-                || entry.normalizedCustomCommands.includes(compactQuery);
-        })
-        .map(entry => entry.project);
+    const projects = buildProjectResults(query, compactQuery);
+    const scripts = buildScriptResults(query, compactQuery);
+
+    return [...projects, ...scripts];
 });
 
+/***********************默认结果（无搜索时）*********************/
 const defaultResults = computed(() => {
     const pinned = projectStore.projects.filter(p => p.pinned);
     const weights = usageStore.calculateAllWeights();
@@ -84,42 +142,45 @@ const defaultResults = computed(() => {
         .filter(p => !p.pinned && (weights[p.id] ?? 0) > 0)
         .sort((a, b) => (weights[b.id] ?? 0) - (weights[a.id] ?? 0))
         .slice(0, 10);
-    return { pinned, recent };
-});
 
-const displayList = computed(() => {
-    const query = searchQuery.value.trim();
-    if (query) return searchResults.value;
-
-    const list: Project[] = [];
-    const seenIds = new Set<string>();
-    for (const p of defaultResults.value.pinned) {
-        if (!seenIds.has(p.id)) {
-            list.push(p);
-            seenIds.add(p.id);
-        }
+    const items: SearchResult[] = [];
+    for (const p of pinned) {
+        items.push({
+            type: 'project',
+            id: `project-${p.id}`,
+            name: p.name,
+            subtitle: p.path,
+            icon: p.type === 'node' ? 'i-mdi-nodejs' : 'i-mdi-folder-outline',
+            iconColor: p.type === 'node' ? 'text-emerald-500' : 'text-slate-400',
+            projectId: p.id,
+        });
     }
-    for (const p of defaultResults.value.recent) {
-        if (!seenIds.has(p.id)) {
-            list.push(p);
-            seenIds.add(p.id);
-        }
+    for (const p of recent) {
+        items.push({
+            type: 'project',
+            id: `project-${p.id}`,
+            name: p.name,
+            subtitle: p.path,
+            icon: p.type === 'node' ? 'i-mdi-nodejs' : 'i-mdi-folder-outline',
+            iconColor: p.type === 'node' ? 'text-emerald-500' : 'text-slate-400',
+            projectId: p.id,
+        });
     }
-    return list;
+    return { pinned, recent, items };
 });
 
 const showPinnedHeader = computed(() => !searchQuery.value.trim() && defaultResults.value.pinned.length > 0);
 const showRecentHeader = computed(() => !searchQuery.value.trim() && defaultResults.value.recent.length > 0);
 const showNoResults = computed(() => searchQuery.value.trim() && searchResults.value.length === 0);
 
-/** 合并后的完整列表（用于键盘导航索引计算） */
-const fullFlatList = computed(() => {
+const displayList = computed(() => {
     if (searchQuery.value.trim()) return searchResults.value;
-    return displayList.value;
+    return defaultResults.value.items;
 });
 
-/***********************键盘导航（仅在输入框触发，不冒泡到遮罩）*********************/
+const fullFlatList = computed(() => displayList.value);
 
+/***********************键盘导航*********************/
 function handleKeydown(event: KeyboardEvent) {
     const list = fullFlatList.value;
     if (event.key === 'ArrowDown') {
@@ -131,7 +192,7 @@ function handleKeydown(event: KeyboardEvent) {
     } else if (event.key === 'Enter') {
         event.preventDefault();
         if (list[selectedIndex.value]) {
-            selectProject(list[selectedIndex.value].id);
+            selectItem(list[selectedIndex.value]);
         }
     } else if (event.key === 'Escape') {
         event.preventDefault();
@@ -139,8 +200,17 @@ function handleKeydown(event: KeyboardEvent) {
     }
 }
 
-function selectProject(projectId: string) {
-    emit('select', projectId);
+function selectItem(item: SearchResult) {
+    switch (item.type) {
+        case 'project':
+            if (item.projectId) emit('select', item.projectId);
+            break;
+        case 'script':
+            if (item.projectId) {
+                emit('selectScript', item.projectId, item.name);
+            }
+            break;
+    }
 }
 
 function handleOverlayClick(event: MouseEvent) {
@@ -159,8 +229,12 @@ onMounted(() => {
     });
 });
 
-function getDisplayTags(project: Project): string[] {
-    return (project.tags || []).slice(0, 2);
+function getTypeLabel(type: SearchResultType): string {
+    switch (type) {
+        case 'project': return '';
+        case 'script': return '脚本';
+        default: return '';
+    }
 }
 </script>
 
@@ -182,32 +256,27 @@ function getDisplayTags(project: Project): string[] {
             </div>
 
             <div class="quick-search-results custom-scrollbar">
-                <!-- 搜索态：单列表 -->
+                <!-- 搜索态：统一列表 -->
                 <template v-if="searchQuery.trim()">
                     <div
-                        v-for="(project, index) in searchResults"
-                        :key="project.id"
+                        v-for="(item, index) in searchResults"
+                        :key="item.id"
                         class="quick-search-item"
                         :class="{ 'quick-search-item-active': index === selectedIndex }"
-                        @click="selectProject(project.id)"
+                        @click="selectItem(item)"
                         @mouseenter="selectedIndex = index"
                     >
                         <div class="quick-search-item-icon">
-                            <div :class="project.type === 'node' ? 'i-mdi-nodejs text-emerald-500' : 'i-mdi-folder-outline text-slate-400'" class="text-base" />
+                            <div :class="[item.icon, item.iconColor]" class="text-base" />
                         </div>
                         <div class="quick-search-item-content">
-                            <div class="quick-search-item-name">{{ project.name }}</div>
-                            <div class="quick-search-item-path">{{ project.path }}</div>
-                        </div>
-                        <div class="quick-search-item-meta">
-                            <span
-                                v-for="tag in getDisplayTags(project)"
-                                :key="tag"
-                                class="quick-search-tag"
-                            >
-                                {{ tag }}
-                            </span>
-                            <span v-if="project.pinned" class="i-mdi-pin text-[10px] text-amber-500" />
+                            <div class="flex items-center gap-1.5">
+                                <div class="quick-search-item-name">{{ item.name }}</div>
+                                <span v-if="item.type !== 'project'" class="quick-search-tag">
+                                    {{ getTypeLabel(item.type) }}
+                                </span>
+                            </div>
+                            <div class="quick-search-item-path">{{ item.subtitle }}</div>
                         </div>
                     </div>
                     <div v-if="showNoResults" class="quick-search-empty">
@@ -216,78 +285,62 @@ function getDisplayTags(project: Project): string[] {
                     </div>
                 </template>
 
-                <!-- 默认态：置顶 + 最近使用分组渲染 -->
+                <!-- 默认态：置顶 + 最近使用 -->
                 <template v-else>
-                    <!-- 置顶项目 -->
                     <template v-if="showPinnedHeader">
                         <div class="quick-search-section-title">
                             <div class="i-mdi-pin text-[10px] text-amber-500" />
                             {{ t('dashboard.pinnedProjects') }}
                         </div>
-                        <div
-                            v-for="(project, localIdx) in defaultResults.pinned"
-                            :key="project.id"
-                            class="quick-search-item"
-                            :class="{ 'quick-search-item-active': localIdx === selectedIndex }"
-                            @click="selectProject(project.id)"
-                            @mouseenter="selectedIndex = localIdx"
-                        >
-                            <div class="quick-search-item-icon">
-                                <div :class="project.type === 'node' ? 'i-mdi-nodejs text-emerald-500' : 'i-mdi-folder-outline text-slate-400'" class="text-base" />
+                        <template v-for="(item, localIdx) in defaultResults.items.filter(i => {
+                            const p = defaultResults.pinned.find(pp => pp.id === i.projectId);
+                            return !!p;
+                        })" :key="item.id">
+                            <div
+                                class="quick-search-item"
+                                :class="{ 'quick-search-item-active': localIdx === selectedIndex }"
+                                @click="selectItem(item)"
+                                @mouseenter="selectedIndex = localIdx"
+                            >
+                                <div class="quick-search-item-icon">
+                                    <div :class="[item.icon, item.iconColor]" class="text-base" />
+                                </div>
+                                <div class="quick-search-item-content">
+                                    <div class="quick-search-item-name">{{ item.name }}</div>
+                                    <div class="quick-search-item-path">{{ item.subtitle }}</div>
+                                </div>
                             </div>
-                            <div class="quick-search-item-content">
-                                <div class="quick-search-item-name">{{ project.name }}</div>
-                                <div class="quick-search-item-path">{{ project.path }}</div>
-                            </div>
-                            <div class="quick-search-item-meta">
-                                <span
-                                    v-for="tag in getDisplayTags(project)"
-                                    :key="tag"
-                                    class="quick-search-tag"
-                                >
-                                    {{ tag }}
-                                </span>
-                                <span class="i-mdi-pin text-[10px] text-amber-500" />
-                            </div>
-                        </div>
+                        </template>
                     </template>
 
-                    <!-- 最近使用项目 -->
                     <template v-if="showRecentHeader">
                         <div class="quick-search-divider" />
                         <div class="quick-search-section-title">
                             <div class="i-mdi-clock-outline text-[10px] text-slate-400" />
                             {{ t('dashboard.recentProjects') }}
                         </div>
-                        <div
-                            v-for="(project, localIdx) in defaultResults.recent"
-                            :key="project.id"
-                            class="quick-search-item"
-                            :class="{ 'quick-search-item-active': (defaultResults.pinned.length + localIdx) === selectedIndex }"
-                            @click="selectProject(project.id)"
-                            @mouseenter="selectedIndex = defaultResults.pinned.length + localIdx"
-                        >
-                            <div class="quick-search-item-icon">
-                                <div :class="project.type === 'node' ? 'i-mdi-nodejs text-emerald-500' : 'i-mdi-folder-outline text-slate-400'" class="text-base" />
+                        <template v-for="(item, localIdx) in defaultResults.items.filter(i => {
+                            const p = defaultResults.recent.find(pp => pp.id === i.projectId);
+                            return !!p;
+                        })" :key="item.id">
+                            <div
+                                class="quick-search-item"
+                                :class="{ 'quick-search-item-active': (defaultResults.pinned.length + localIdx) === selectedIndex }"
+                                @click="selectItem(item)"
+                                @mouseenter="selectedIndex = defaultResults.pinned.length + localIdx"
+                            >
+                                <div class="quick-search-item-icon">
+                                    <div :class="[item.icon, item.iconColor]" class="text-base" />
+                                </div>
+                                <div class="quick-search-item-content">
+                                    <div class="quick-search-item-name">{{ item.name }}</div>
+                                    <div class="quick-search-item-path">{{ item.subtitle }}</div>
+                                </div>
                             </div>
-                            <div class="quick-search-item-content">
-                                <div class="quick-search-item-name">{{ project.name }}</div>
-                                <div class="quick-search-item-path">{{ project.path }}</div>
-                            </div>
-                            <div class="quick-search-item-meta">
-                                <span
-                                    v-for="tag in getDisplayTags(project)"
-                                    :key="tag"
-                                    class="quick-search-tag"
-                                >
-                                    {{ tag }}
-                                </span>
-                            </div>
-                        </div>
+                        </template>
                     </template>
 
-                    <!-- 无项目 -->
-                    <div v-if="displayList.length === 0" class="quick-search-empty">
+                    <div v-if="defaultResults.items.length === 0" class="quick-search-empty">
                         <div class="i-mdi-folder-open-outline text-3xl mb-2 opacity-20" />
                         <p class="text-sm">{{ t('dashboard.noProjects') }}</p>
                     </div>

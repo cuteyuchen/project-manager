@@ -1,4 +1,4 @@
-import type { NodeVersion, GitStatusResult, GitBranch, GitCommit, GitSummary, GitCommitFile } from '../types';
+import type { NodeVersion, GitStatusResult, GitBranch, GitCommit, GitSummary, GitCommitFile, GitOwnCommitResult } from '../types';
 
 /** 包管理器解析结果 */
 export interface PackageManagerResolveResult {
@@ -22,6 +22,11 @@ export interface ProjectInfo {
 export interface TerminalInfo {
     id: string;
     name: string;
+}
+
+export interface EditorInfo {
+    name: string;
+    path: string;
 }
 
 export interface PortEntry {
@@ -121,6 +126,7 @@ export interface PlatformAPI {
     isContextMenuSupported(): Promise<boolean>;
     getPlatformInfo(): Promise<{ os: string; arch: string }>;
     detectAvailableTerminals(): Promise<TerminalInfo[]>;
+    detectAvailableEditors(): Promise<EditorInfo[]>;
     listUsedPorts(): Promise<PortEntry[]>;
     terminateProcessByPid(pid: number): Promise<void>;
 
@@ -149,6 +155,7 @@ export interface PlatformAPI {
     gitDeleteBranch(path: string, name: string, force?: boolean): Promise<string>;
     gitRenameBranch(path: string, oldName: string, newName: string): Promise<string>;
     gitHistory(path: string, maxCount?: number): Promise<GitCommit[]>;
+    gitOwnCommits(path: string, since: string, until: string): Promise<GitOwnCommitResult>;
     gitCommitDetail(path: string, hash: string): Promise<GitCommit>;
     gitCommitFiles(path: string, hash: string): Promise<GitCommitFile[]>;
     gitDiffCommitFile(path: string, hash: string, file: string): Promise<string>;

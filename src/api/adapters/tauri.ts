@@ -3,8 +3,8 @@ import { listen } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
 import { open as openDialogFn, save as saveDialogFn } from '@tauri-apps/plugin-dialog';
 import { openPath as openPathFn, openUrl as openUrlFn } from '@tauri-apps/plugin-opener';
-import type { PlatformAPI, ProjectInfo, TerminalInfo, PortEntry, PackageManagerResolveResult } from '../types';
-import type { NodeVersion, GitStatusResult, GitBranch, GitCommit, GitSummary, GitCommitFile } from '../../types';
+import type { PlatformAPI, ProjectInfo, TerminalInfo, EditorInfo, PortEntry, PackageManagerResolveResult } from '../types';
+import type { NodeVersion, GitStatusResult, GitBranch, GitCommit, GitSummary, GitCommitFile, GitOwnCommitResult } from '../../types';
 
 import { getCurrentWindow } from '@tauri-apps/api/window';
 
@@ -228,6 +228,10 @@ export class TauriAdapter implements PlatformAPI {
         return invoke('detect_available_terminals');
     }
 
+    async detectAvailableEditors(): Promise<EditorInfo[]> {
+        return invoke('detect_available_editors');
+    }
+
     async listUsedPorts(): Promise<PortEntry[]> {
         return invoke('list_used_ports');
     }
@@ -331,6 +335,10 @@ export class TauriAdapter implements PlatformAPI {
 
     async gitHistory(path: string, maxCount?: number): Promise<GitCommit[]> {
         return invoke('git_history', { path, maxCount });
+    }
+
+    async gitOwnCommits(path: string, since: string, until: string): Promise<GitOwnCommitResult> {
+        return invoke('git_own_commits', { path, since, until });
     }
 
     async gitCommitDetail(path: string, hash: string): Promise<GitCommit> {

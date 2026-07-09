@@ -62,6 +62,29 @@ pub struct GitCommit {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitOwnCommit {
+    pub hash: String,
+    pub short_hash: String,
+    pub author: String,
+    pub email: String,
+    pub date: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitAuthorIdentity {
+    pub name: Option<String>,
+    pub email: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitOwnCommitResult {
+    pub identity: GitAuthorIdentity,
+    pub commits: Vec<GitOwnCommit>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitRemote {
     pub name: String,
     pub url: String,
@@ -896,58 +919,76 @@ fn is_binary_file(path: &std::path::Path) -> bool {
     buf[..n].contains(&0)
 }
 
+fn build_added_file_diff(repo_path: &str, file: &str) -> Result<String, String> {
+    let full_path = std::path::Path::new(repo_path).join(file);
+
+    if let Ok(meta) = std::fs::metadata(&full_path) {
+        if meta.len() > DIFF_MAX_FILE_SIZE {
+            return Ok(DIFF_TOO_LARGE_MARKER.to_string());
+        }
+    }
+
+    if is_binary_file(&full_path) {
+        return Ok(DIFF_BINARY_MARKER.to_string());
+    }
+
+    let content = std::fs::read_to_string(&full_path)
+        .map_err(|e| format!("Failed to read file diff content: {}", e))?;
+    let clean = content.replace("\r\n", "\n").replace('\r', "\n");
+    let lines: Vec<&str> = clean.split('\n').collect();
+    let total = if clean.ends_with('\n') && !lines.is_empty() { lines.len() - 1 } else { lines.len() };
+    let mut result = format!(
+        "diff --git a/{file} b/{file}\nnew file mode 100644\n--- /dev/null\n+++ b/{file}\n@@ -0,0 +1,{total} @@\n"
+    );
+
+    for line in &lines[..total] {
+        result.push('+');
+        result.push_str(line);
+        result.push('\n');
+    }
+
+    Ok(result)
+}
+
+pub fn git_diff_sync(path: &str, file: Option<&str>, staged: bool) -> Result<String, String> {
+    if let Some(f) = file {
+        let full_path = std::path::Path::new(path).join(f);
+
+        if let Ok(meta) = std::fs::metadata(&full_path) {
+            if meta.len() > DIFF_MAX_FILE_SIZE {
+                return Ok(DIFF_TOO_LARGE_MARKER.to_string());
+            }
+        }
+
+        /***********************未追踪文件差异兜底*********************/
+        if !staged {
+            let ls_output = run_git(path, &["ls-files", "--error-unmatch", "--", f]);
+            if ls_output.is_err() {
+                return build_added_file_diff(path, f);
+            }
+        }
+    }
+
+    let mut args = vec!["diff", "--patch", "--find-renames", "--find-copies"];
+    if staged {
+        args.push("--cached");
+    }
+    if let Some(f) = file {
+        args.push("--");
+        args.push(f);
+    }
+    let result = run_git_relaxed(path, &args)?;
+
+    if result.contains("Binary files") && result.contains("differ") {
+        return Ok(DIFF_BINARY_MARKER.to_string());
+    }
+
+    Ok(result)
+}
+
 #[tauri::command]
 pub async fn git_diff(path: String, file: Option<String>, staged: Option<bool>) -> Result<String, String> {
-    run_git_task(move || {
-        if let Some(ref f) = file {
-            let full_path = std::path::Path::new(&path).join(f);
-
-            // Check file size for all files
-            if let Ok(meta) = std::fs::metadata(&full_path) {
-                if meta.len() > DIFF_MAX_FILE_SIZE {
-                    return Ok(DIFF_TOO_LARGE_MARKER.to_string());
-                }
-            }
-
-            if !staged.unwrap_or(false) {
-                let ls_output = run_git(&path, &["ls-files", "--error-unmatch", "--", f]);
-                if ls_output.is_err() {
-                    // Untracked file: check binary before reading
-                    if is_binary_file(&full_path) {
-                        return Ok(DIFF_BINARY_MARKER.to_string());
-                    }
-                    if let Ok(content) = std::fs::read_to_string(&full_path) {
-                        let clean = content.replace("\r\n", "\n").replace('\r', "\n");
-                        let lines: Vec<&str> = clean.split('\n').collect();
-                        let total = if clean.ends_with('\n') && !lines.is_empty() { lines.len() - 1 } else { lines.len() };
-                        let mut result = format!("diff --git a/{} b/{}\nnew file mode 100644\n--- /dev/null\n+++ b/{}\n@@ -0,0 +1,{} @@\n", f, f, f, total);
-                        for line in &lines[..total] {
-                            result.push('+');
-                            result.push_str(line);
-                            result.push('\n');
-                        }
-                        return Ok(result);
-                    }
-                }
-            }
-        }
-        let mut args = vec!["diff"];
-        if staged.unwrap_or(false) {
-            args.push("--cached");
-        }
-        if let Some(ref f) = file {
-            args.push("--");
-            args.push(f.as_str());
-        }
-        let result = run_git_relaxed(&path, &args)?;
-
-        // Check if git reports binary file
-        if result.contains("Binary files") && result.contains("differ") {
-            return Ok(DIFF_BINARY_MARKER.to_string());
-        }
-
-        Ok(result)
-    })
+    run_git_task(move || git_diff_sync(&path, file.as_deref(), staged.unwrap_or(false)))
     .await
 }
 
@@ -1362,6 +1403,63 @@ pub async fn git_history(
     .await
 }
 
+pub fn git_own_commits_sync(path: &str, since: &str, until: &str) -> Result<GitOwnCommitResult, String> {
+    let identity = resolve_git_author_identity(path)?;
+    let since_arg = format!("--since={}", since);
+    let until_arg = format!("--before={}", until);
+    let output = run_git_relaxed(
+        path,
+        &[
+            "log",
+            "--all",
+            since_arg.as_str(),
+            until_arg.as_str(),
+            "--format=%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s",
+        ],
+    )?;
+
+    let mut commits = Vec::new();
+    for line in output.lines() {
+        let parts: Vec<&str> = line.split('\u{1f}').collect();
+        if parts.len() < 6 {
+            continue;
+        }
+
+        let author = parts[2].to_string();
+        let email = parts[3].to_string();
+        let date = parts[4].to_string();
+        if date.as_str() < since || date.as_str() >= until {
+            continue;
+        }
+
+        if !is_own_author(&author, &email, &identity) {
+            continue;
+        }
+
+        commits.push(GitOwnCommit {
+            hash: parts[0].to_string(),
+            short_hash: parts[1].to_string(),
+            author,
+            email,
+            date,
+            message: parts[5].to_string(),
+        });
+    }
+
+    commits.sort_by(|a, b| a.date.cmp(&b.date));
+
+    Ok(GitOwnCommitResult { identity, commits })
+}
+
+#[tauri::command]
+pub async fn git_own_commits(
+    path: String,
+    since: String,
+    until: String,
+) -> Result<GitOwnCommitResult, String> {
+    run_git_task(move || git_own_commits_sync(&path, &since, &until)).await
+}
+
 #[tauri::command]
 pub async fn git_commit_detail(path: String, hash: String) -> Result<GitCommit, String> {
     run_git_task(move || {
@@ -1517,6 +1615,8 @@ pub async fn git_revert_hunk(path: String, patch: String, staged: Option<bool>) 
 
 #[cfg(test)]
 mod tests {
+    use super::git_diff_sync;
+    use super::git_own_commits_sync;
     use super::git_diff_for_ai_sync;
     use super::run_git;
     use std::fs;
@@ -1600,4 +1700,155 @@ mod tests {
 
         let _ = fs::remove_dir_all(&repo_dir);
     }
+
+    /***********************选中文件差异可显示*********************/
+
+    #[test]
+    fn git_diff_shows_staged_added_file_content() {
+        let repo_dir = create_temp_repo_dir();
+        let repo_path = repo_dir.to_string_lossy().to_string();
+
+        setup_repo(&repo_dir);
+        write_file(&repo_dir, "added.txt", "first\nsecond\n");
+        run_git(&repo_path, &["add", "added.txt"]).expect("git add should succeed");
+
+        let diff = git_diff_sync(&repo_path, Some("added.txt"), true).expect("diff should be generated");
+
+        assert!(diff.contains("new file mode"));
+        assert!(diff.contains("@@ -0,0 +1,2 @@"));
+        assert!(diff.contains("+first"));
+        assert!(diff.contains("+second"));
+
+        let _ = fs::remove_dir_all(&repo_dir);
+    }
+
+    #[test]
+    fn git_diff_shows_untracked_file_content() {
+        let repo_dir = create_temp_repo_dir();
+        let repo_path = repo_dir.to_string_lossy().to_string();
+
+        setup_repo(&repo_dir);
+        write_file(&repo_dir, "untracked.txt", "alpha\nbeta\n");
+
+        let diff = git_diff_sync(&repo_path, Some("untracked.txt"), false).expect("diff should be generated");
+
+        assert!(diff.contains("new file mode"));
+        assert!(diff.contains("@@ -0,0 +1,2 @@"));
+        assert!(diff.contains("+alpha"));
+        assert!(diff.contains("+beta"));
+
+        let _ = fs::remove_dir_all(&repo_dir);
+    }
+
+    /***********************自己的提交按身份与日期过滤*********************/
+
+    #[test]
+    fn git_own_commits_filters_author_and_date_range() {
+        let repo_dir = create_temp_repo_dir();
+        let repo_path = repo_dir.to_string_lossy().to_string();
+
+        setup_repo(&repo_dir);
+
+        write_file(&repo_dir, "mine.txt", "mine\n");
+        run_git(&repo_path, &["add", "."]).expect("git add should succeed");
+        run_git(
+            &repo_path,
+            &[
+                "-c",
+                "user.name=Project Manager Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "--date=2026-07-09T09:05:00+08:00",
+                "-m",
+                "mine in range",
+            ],
+        )
+        .expect("own commit should succeed");
+
+        write_file(&repo_dir, "other.txt", "other\n");
+        run_git(&repo_path, &["add", "."]).expect("git add should succeed");
+        run_git(
+            &repo_path,
+            &[
+                "-c",
+                "user.name=Other Author",
+                "-c",
+                "user.email=other@example.com",
+                "commit",
+                "--date=2026-07-10T09:05:00+08:00",
+                "-m",
+                "other author",
+            ],
+        )
+        .expect("other author commit should succeed");
+
+        write_file(&repo_dir, "old.txt", "old\n");
+        run_git(&repo_path, &["add", "."]).expect("git add should succeed");
+        run_git(
+            &repo_path,
+            &[
+                "-c",
+                "user.name=Project Manager Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "--date=2026-06-30T23:59:00+08:00",
+                "-m",
+                "mine out of range",
+            ],
+        )
+        .expect("out of range commit should succeed");
+
+        let result = git_own_commits_sync(
+            &repo_path,
+            "2026-07-01T00:00:00+08:00",
+            "2026-08-01T00:00:00+08:00",
+        )
+        .expect("own commits should be queried");
+
+        assert_eq!(result.identity.email.as_deref(), Some("test@example.com"));
+        assert_eq!(result.commits.len(), 1);
+        assert_eq!(result.commits[0].message, "mine in range");
+
+        let _ = fs::remove_dir_all(&repo_dir);
+    }
+}
+
+fn read_git_config(path: &str, key: &str) -> Option<String> {
+    run_git(path, &["config", "--get", key])
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            run_git_global(&["config", "--global", "--get", key])
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
+}
+
+fn resolve_git_author_identity(path: &str) -> Result<GitAuthorIdentity, String> {
+    let identity = GitAuthorIdentity {
+        name: read_git_config(path, "user.name"),
+        email: read_git_config(path, "user.email"),
+    };
+
+    if identity.name.is_none() && identity.email.is_none() {
+        return Err("No Git author identity configured.".to_string());
+    }
+
+    Ok(identity)
+}
+
+fn is_own_author(author: &str, email: &str, identity: &GitAuthorIdentity) -> bool {
+    if let Some(expected_email) = identity.email.as_deref() {
+        return email.eq_ignore_ascii_case(expected_email);
+    }
+
+    if let Some(expected_name) = identity.name.as_deref() {
+        return author == expected_name;
+    }
+
+    false
 }

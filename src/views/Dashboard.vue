@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, useTemplateRef } from 'vue';
 import { useProjectStore } from '../stores/project';
 import { useGitStore } from '../stores/git';
 import { useUsageStore } from '../stores/usage';
@@ -9,14 +9,26 @@ import ConsoleView from '../components/ConsoleView.vue';
 import GitView from '../components/git/GitView.vue';
 import FileManager from '../components/FileManager.vue';
 import ProjectMemo from '../components/ProjectMemo.vue';
+import FrontendEnvPanel from '../components/FrontendEnvPanel.vue';
 import AddProjectModal from '../components/AddProjectModal.vue';
 import ProjectGroupManager from '../components/ProjectGroupManager.vue';
-import type { Project } from '../types';
+// ─── 项目总控能力组件 ─────────────────────────────────────────────────
+import ViewPresetChips from '../components/dashboard/ViewPresetChips.vue';
+import BatchActionBar from '../components/dashboard/BatchActionBar.vue';
+import WorkspaceOverview from '../components/dashboard/WorkspaceOverview.vue';
+import WorkspaceProfileMenu from '../components/dashboard/WorkspaceProfileMenu.vue';
+// ─── 项目总控能力 composable ──────────────────────────────────────────
+import { useViewPresets } from '../composables/dashboard/useViewPresets';
+import { useProjectBatch } from '../composables/dashboard/useProjectBatch';
+import { useProjectHealth } from '../composables/dashboard/useProjectHealth';
+import { useWorkspaceProfiles } from '../composables/dashboard/useWorkspaceProfiles';
+import type { Project, WorkspaceProfile, ProjectHealthSnapshot } from '../types';
 import { useI18n } from 'vue-i18n';
 import { api } from '../api';
 import { ElMessage } from 'element-plus';
 import { normalizeNvmVersion, findInstalledNodeVersion } from '../utils/nvm';
 import { calculateDraggedItemCenterY, calculateDraggedItemTranslateY, calculateFlipTransforms } from '../utils/dragPosition';
+import { collectProjectTags, projectMatchesSelectedTags } from '../utils/projectTags';
 import { pinyin } from 'pinyin-pro';
 
 const { t } = useI18n();
@@ -30,11 +42,23 @@ const refreshing = ref(false);
 const PROJECT_LIST_ITEM_GAP = 8;
 const PROJECT_LIST_OVERSCAN = 4;
 
+type RightPanelTab = 'overview' | 'console' | 'git' | 'files' | 'memo' | 'env';
+type OverviewCategoryTone = 'slate' | 'emerald' | 'amber' | 'red' | 'rose' | 'blue';
+
+interface OverviewProjectCategory {
+    key: string;
+    label: string;
+    count: number;
+    tone: OverviewCategoryTone;
+    icon: string;
+    projects: Project[];
+}
+
 // Right panel tab
-const rightTab = ref<'console' | 'git' | 'files' | 'memo'>('console');
+const rightTab = ref<RightPanelTab>('overview');
 
 // Project list container ref for scroll-to-project
-const projectListContainer = ref<HTMLElement | null>(null);
+const projectListContainer = useTemplateRef<HTMLElement>('projectListContainer');
 const projectListScrollTop = ref(0);
 const projectListViewportHeight = ref(0);
 const projectItemHeights = ref<Record<string, number>>({});
@@ -126,7 +150,7 @@ function scrollToActiveProject() {
 }
 
 // Tab bar scroll handling
-const tabScrollContainer = ref<HTMLElement | null>(null);
+const tabScrollContainer = useTemplateRef<HTMLElement>('tabScrollContainer');
 const canScrollLeft = ref(false);
 const canScrollRight = ref(false);
 
@@ -205,6 +229,8 @@ const gitChangesCount = computed(() => {
 watch(activeProject, (newProject) => {
   if (newProject) {
     void gitStore.checkGitRepo(newProject.id, newProject.path);
+  } else {
+    rightTab.value = 'overview';
   }
 }, { immediate: true });
 
@@ -233,17 +259,7 @@ const quickFilterOptions = computed(() => [
 ]);
 
 /** 聚合所有项目标签用于筛选下拉 */
-const allTags = computed(() => {
-    const tagSet = new Set<string>();
-    for (const p of projectStore.projects) {
-        if (p.tags) {
-            for (const tag of p.tags) {
-                tagSet.add(tag);
-            }
-        }
-    }
-    return [...tagSet].sort();
-});
+const allTags = computed(() => collectProjectTags(projectStore.projects));
 
 function buildPinyinSearchText(text: string): string {
     if (!text) return '';
@@ -266,6 +282,22 @@ function getCachedPinyinSearchText(text: string) {
 }
 
 const sortMode = computed(() => settingsStore.settings.sortMode ?? 'default');
+
+// ─── 保存视图 composable ──────────────────────────────────────────────
+const {
+  presets: viewPresets,
+  activePresetId,
+  saveCurrentView,
+  applyPreset,
+  deletePreset,
+  detectActivePreset,
+} = useViewPresets({
+  searchQuery,
+  activeQuickFilter,
+  selectedGroupId,
+  selectedTags,
+  sortMode,
+});
 
 const sortOptions = computed(() => [
     { label: t('dashboard.sortModeDefault'), value: 'default' },
@@ -342,10 +374,7 @@ const filteredProjects = computed(() => {
 
     // 标签筛选（项目必须包含所有选中标签）
     if (selectedTags.value.length > 0) {
-        result = result.filter(p => {
-            if (!p.tags || p.tags.length === 0) return false;
-            return selectedTags.value.every(tag => p.tags!.includes(tag));
-        });
+        result = result.filter(p => projectMatchesSelectedTags(p, selectedTags.value));
     }
 
     // 搜索文本
@@ -372,6 +401,116 @@ const filteredProjects = computed(() => {
     }
 
     return result;
+});
+
+// ─── 批量模式 composable ──────────────────────────────────────────────
+const filteredProjectIds = computed(() => filteredProjects.value.map((p) => p.id));
+const {
+  batchMode,
+  selectedIds,
+  selectedCount,
+  isAllSelected,
+  enterBatchMode,
+  exitBatchMode,
+  toggleSelect,
+  toggleSelectAll,
+  batchSetGroup,
+  batchAddTag,
+  batchRemoveTag,
+  batchPin,
+  batchUnpin,
+  batchRefresh,
+  batchOpenFolder,
+  batchRemove,
+} = useProjectBatch({ filteredProjectIds });
+
+// ─── 项目健康状态 composable ───────────────────────────────────────────
+const {
+  getHealth,
+  healthSummary,
+  healthLevel,
+} = useProjectHealth({ filteredProjects });
+
+// ─── 启动组 composable ────────────────────────────────────────────────
+const {
+  profiles: workspaceProfiles,
+  getRecentProjects,
+  createProfile,
+  deleteProfile,
+  runProfile,
+  stopAll: stopProfile,
+} = useWorkspaceProfiles();
+
+/** 总览面板的最近使用项目（取最多 5 个） */
+const overviewRecentProjects = computed(() => getRecentProjects(5));
+
+/***********************项目总览分类与定位*********************/
+function isProjectRunning(projectId: string): boolean {
+    return (projectStore.runningProjectCount[projectId] ?? 0) > 0;
+}
+
+function getRealHealthIssues(snapshot: ProjectHealthSnapshot | undefined) {
+    return snapshot?.issues.filter((issue) => issue.code !== 'not_git') ?? [];
+}
+
+function isProjectUnhealthy(projectId: string): boolean {
+    const snapshot = getHealth(projectId);
+    if (!snapshot) return false;
+    return !snapshot.pathExists || getRealHealthIssues(snapshot).length > 0;
+}
+
+function createOverviewCategory(
+    key: string,
+    label: string,
+    projects: Project[],
+    tone: OverviewCategoryTone,
+    icon: string
+): OverviewProjectCategory {
+    return {
+        key,
+        label,
+        count: projects.length,
+        tone,
+        icon,
+        projects,
+    };
+}
+
+const overviewCategories = computed<OverviewProjectCategory[]>(() => {
+    const allProjects = projectStore.projects;
+    const runningProjects = allProjects.filter((project) => isProjectRunning(project.id));
+    const dirtyProjects = allProjects.filter((project) => !!getHealth(project.id)?.gitDirty);
+    const unhealthyProjects = allProjects.filter((project) => isProjectUnhealthy(project.id));
+    const missingProjects = allProjects.filter((project) => getHealth(project.id)?.pathExists === false);
+
+    return [
+        createOverviewCategory('all', t('dashboard.overviewTotal'), allProjects, 'slate', 'i-mdi-folder-multiple-outline'),
+        createOverviewCategory('running', t('dashboard.overviewRunning'), runningProjects, 'emerald', 'i-mdi-play-circle-outline'),
+        createOverviewCategory('dirty', t('dashboard.overviewDirty'), dirtyProjects, 'amber', 'i-mdi-git'),
+        createOverviewCategory('unhealthy', t('dashboard.overviewUnhealthy'), unhealthyProjects, 'red', 'i-mdi-alert-circle-outline'),
+        createOverviewCategory('missing', t('dashboard.overviewMissing'), missingProjects, 'rose', 'i-mdi-folder-alert-outline'),
+        createOverviewCategory('recent', t('dashboard.overviewRecent'), overviewRecentProjects.value, 'blue', 'i-mdi-clock-outline'),
+    ];
+});
+
+async function focusProjectFromOverview(projectId: string) {
+    const project = projectStore.projects.find((item) => item.id === projectId);
+    if (!project) return;
+
+    projectStore.activeProjectId = projectId;
+    activeQuickFilter.value = 'all';
+    selectedGroupId.value = '';
+    selectedTags.value = [];
+    searchQuery.value = '';
+    rightTab.value = 'overview';
+
+    await nextTick();
+    scrollToActiveProject();
+}
+
+/** 自动检测活跃视图 */
+watch([searchQuery, activeQuickFilter, selectedGroupId, selectedTags, sortMode], () => {
+  detectActivePreset();
 });
 
 /***********************项目列表手动拖拽排序*********************/
@@ -752,6 +891,16 @@ async function batchAddProjects() {
         <div class="px-4 py-3 border-b border-slate-200 dark:border-slate-700/20 flex justify-between items-center">
             <h2 class="text-xs font-semibold text-slate-500 dark:text-slate-400 tracking-widest uppercase pl-1">{{ t('dashboard.title') }}</h2>
             <div class="sidebar-header-actions">
+                <button
+                  v-if="!batchMode"
+                  @click="enterBatchMode()" class="sidebar-header-btn" :title="t('dashboard.batchMode')">
+                    <div class="i-mdi-checkbox-multiple-marked-outline text-base" />
+                </button>
+                <button
+                  v-else
+                  @click="exitBatchMode" class="sidebar-header-btn text-blue-500" :title="t('dashboard.batchMode')">
+                    <div class="i-mdi-close text-base" />
+                </button>
                 <button @click="refreshProjects" :disabled="refreshing" class="sidebar-header-btn" :title="t('common.refresh') || 'Refresh'">
                     <div class="i-mdi-refresh text-base transition-transform duration-700" :class="{ 'animate-spin': refreshing }" />
                 </button>
@@ -828,6 +977,27 @@ async function batchAddProjects() {
                 </el-select>
             </div>
         </div>
+
+        <!-- ─── 保存视图 chips ──────────────────────────────────────── -->
+        <ViewPresetChips
+          :presets="viewPresets"
+          :active-preset-id="activePresetId"
+          @apply="applyPreset"
+          @delete="deletePreset"
+          @save="saveCurrentView"
+        />
+
+        <!-- ─── 启动组快捷入口 ──────────────────────────────────────── -->
+        <div class="px-3 py-2 border-b border-slate-200 dark:border-slate-700/20">
+          <WorkspaceProfileMenu
+            :profiles="workspaceProfiles"
+            :projects="projectStore.projects"
+            @create="createProfile"
+            @delete="deleteProfile"
+            @run="runProfile"
+            @stop="stopProfile"
+          />
+        </div>
         
         <div class="flex-1 overflow-y-auto p-3 custom-scrollbar" ref="projectListContainer" @scroll="handleProjectListScroll">
              <!-- Draggable list (default sort mode, no search) -->
@@ -837,21 +1007,38 @@ async function batchAddProjects() {
                      :key="project.id"
                      :data-project-id="project.id"
                      class="draggable-item group/item"
-                     :class="{ 'draggable-item-active': dragState.dragging && dragState.projectId === project.id }"
+                     :class="{ 'draggable-item-active': dragState.dragging && dragState.projectId === project.id, 'ring-1 ring-blue-400 bg-blue-50/40 dark:bg-blue-900/20': batchMode && selectedIds.has(project.id) }"
                      :style="dragState.dragging && dragState.projectId === project.id
                          ? `transform: translateY(${dragState.dragDelta}px); z-index: 50; transition: none;`
                          : ''"
+                     @click.exact="batchMode && toggleSelect(project.id)"
                  >
-                     <div
-                         class="drag-handle"
-                         @mousedown.prevent="onDragMouseDown($event, project.id)"
-                     >
-                         <div class="i-mdi-drag text-[11px] text-slate-300 dark:text-slate-600 group-hover/item:text-slate-400 dark:group-hover/item:text-slate-500 transition-colors" />
+                     <!-- ─── 批量选中 checkbox ─────────────────────── -->
+                     <div v-if="batchMode" class="shrink-0 pl-1 flex items-center" @click.stop="toggleSelect(project.id)">
+                       <div class="w-4 h-4 rounded border transition-colors flex items-center justify-center cursor-pointer"
+                         :class="selectedIds.has(project.id) ? 'bg-blue-500 border-blue-500' : 'border-slate-300 dark:border-slate-600 hover:border-blue-400'"
+                       >
+                         <div v-if="selectedIds.has(project.id)" class="i-mdi-check text-white text-[10px]" />
+                       </div>
                      </div>
-                     <ProjectListItem
-                         :project="project"
-                         @edit="openEditModal(project)"
-                     />
+                      <div class="flex-1 min-w-0">
+                        <ProjectListItem
+                            :project="project"
+                            :health-snapshot="getHealth(project.id)"
+                            :health-level="healthLevel(getHealth(project.id))"
+                            @edit="openEditModal(project)"
+                        >
+                            <template #leading>
+                                <!-- ─── 拖拽手柄跟健康状态点同一行显示 ─────────────── -->
+                                <div
+                                    class="drag-handle"
+                                    @mousedown.prevent="onDragMouseDown($event, project.id)"
+                                >
+                                    <div class="i-mdi-drag text-[11px] text-slate-300 dark:text-slate-600 group-hover/item:text-slate-400 dark:group-hover/item:text-slate-500 transition-colors" />
+                                </div>
+                            </template>
+                        </ProjectListItem>
+                      </div>
                  </div>
              </div>
 
@@ -861,16 +1048,28 @@ async function batchAddProjects() {
                     v-for="item in visibleProjectMetrics"
                     :key="item.project.id"
                     :ref="(el) => registerProjectItemRef(item.project.id, resolveElementRef(el))"
-                    class="absolute left-0 right-0"
+                    class="absolute left-0 right-0 flex items-center"
+                    :class="{ 'ring-1 ring-blue-400 bg-blue-50/40 dark:bg-blue-900/20': batchMode && selectedIds.has(item.project.id) }"
                     :style="{ transform: `translateY(${item.start}px)` }"
+                    @click.exact="batchMode && toggleSelect(item.project.id)"
                 >
-                    <div :style="{ paddingBottom: `${PROJECT_LIST_ITEM_GAP}px` }">
+                    <!-- ─── 批量选中 checkbox ─────────────────────── -->
+                    <div v-if="batchMode" class="shrink-0 pl-1 flex items-center" @click.stop="toggleSelect(item.project.id)">
+                      <div class="w-4 h-4 rounded border transition-colors flex items-center justify-center cursor-pointer"
+                        :class="selectedIds.has(item.project.id) ? 'bg-blue-500 border-blue-500' : 'border-slate-300 dark:border-slate-600 hover:border-blue-400'"
+                      >
+                        <div v-if="selectedIds.has(item.project.id)" class="i-mdi-check text-white text-[10px]" />
+                      </div>
+                    </div>
+                    <div :style="{ paddingBottom: `${PROJECT_LIST_ITEM_GAP}px` }" class="flex-1 min-w-0">
                         <ProjectListItem
                             :project="item.project"
+                            :health-snapshot="getHealth(item.project.id)"
+                            :health-level="healthLevel(getHealth(item.project.id))"
                             @edit="openEditModal(item.project)"
                         />
                     </div>
-                </div>
+                 </div>
              </div>
 
              <div v-if="filteredProjects.length === 0 && projectStore.projects.length > 0" class="text-center mt-10 text-slate-400 dark:text-slate-500">
@@ -885,27 +1084,44 @@ async function batchAddProjects() {
                 <p class="text-xs opacity-50 mt-1">{{ t('dashboard.addProject') }}</p>
              </div>
         </div>
+        <!-- ─── 批量操作工具条 ────────────────────────────────────────── -->
+        <BatchActionBar
+          v-if="batchMode"
+          :selected-count="selectedCount"
+          :is-all-selected="isAllSelected"
+          :total-visible="filteredProjects.length"
+          :all-tags="allTags"
+          :groups="projectStore.projectGroups"
+          @exit="exitBatchMode"
+          @toggle-select-all="toggleSelectAll"
+          @batch-set-group="batchSetGroup"
+          @batch-add-tag="batchAddTag"
+          @batch-remove-tag="batchRemoveTag"
+          @batch-pin="batchPin"
+          @batch-unpin="batchUnpin"
+          @batch-refresh="batchRefresh"
+          @batch-open-folder="batchOpenFolder"
+          @batch-remove="batchRemove"
+        />
     </div>
 
     <!-- Main Right Panel -->
     <div class="flex-1 overflow-hidden relative bg-slate-50 dark:bg-[#0b1120] transition-colors duration-200 flex flex-col">
-        <!-- Empty state when no project selected -->
-        <div v-if="!activeProject" class="flex-1 flex flex-col items-center justify-center gap-3 text-slate-300 dark:text-slate-600">
-            <div class="i-mdi-monitor-dashboard text-6xl opacity-30" />
-            <p class="text-sm font-medium">{{ t('dashboard.selectProjectHint') }}</p>
-            <p class="text-xs opacity-50">{{ t('dashboard.selectProjectDesc') }}</p>
-        </div>
-
-        <!-- Workspace when project selected -->
-        <template v-else>
             <!-- Project Name + Tab Bar -->
             <div class="workspace-topbar flex items-center border-b border-slate-200 dark:border-slate-700/20 bg-white dark:bg-[#0f172a] px-3 shrink-0 min-w-0">
                 <!-- Project Name (always visible) -->
                 <div class="project-title-group flex items-center gap-2 pr-3 mr-2 shrink-0 min-w-0">
-                    <button @click="scrollToActiveProject" class="toolbar-icon-btn" :title="t('dashboard.locateProject')">
+                    <button
+                        v-if="activeProject"
+                        @click="scrollToActiveProject"
+                        class="toolbar-icon-btn"
+                        :title="t('dashboard.locateProject')"
+                    >
                         <div class="i-mdi-crosshairs-gps text-sm" />
                     </button>
-                    <h3 class="text-sm font-semibold text-slate-700 dark:text-slate-200 truncate max-w-48 tracking-tight">{{ activeProject.name }}</h3>
+                    <h3 class="text-sm font-semibold text-slate-700 dark:text-slate-200 truncate max-w-48 tracking-tight">
+                        {{ activeProject?.name ?? t('dashboard.overviewTitle') }}
+                    </h3>
                 </div>
                 <!-- Tab scroll left arrow -->
                 <button v-show="canScrollLeft" @click="scrollTabs('left')"
@@ -916,9 +1132,18 @@ async function batchAddProjects() {
                 <div ref="tabScrollContainer" @scroll="checkTabOverflow" class="flex items-center overflow-x-auto scrollbar-none min-w-0 flex-1 py-2 px-1">
                 <div class="workspace-tab-group">
                 <button
+                    @click="rightTab = 'overview'"
+                    class="workspace-tab-btn"
+                    :class="{ 'workspace-tab-btn-active': rightTab === 'overview' }"
+                >
+                    <div class="i-mdi-view-dashboard-outline text-sm" />
+                    <span>{{ t('dashboard.overviewTitle') }}</span>
+                </button>
+                <button
                     @click="rightTab = 'console'"
                     class="workspace-tab-btn"
                     :class="{ 'workspace-tab-btn-active': rightTab === 'console' }"
+                    :disabled="!activeProject"
                 >
                     <div class="i-mdi-console text-sm" />
                     <span>{{ t('dashboard.console') }}</span>
@@ -927,15 +1152,26 @@ async function batchAddProjects() {
                     @click="rightTab = 'git'"
                     class="workspace-tab-btn"
                     :class="{ 'workspace-tab-btn-active': rightTab === 'git' }"
+                    :disabled="!activeProject"
                 >
                     <div class="i-mdi-git text-sm" />
                     <span>{{ t('git.title') }}</span>
                     <span v-if="isGitRepo && gitChangesCount > 0" class="workspace-tab-badge">{{ gitChangesCount }}</span>
                 </button>
                 <button
+                    @click="rightTab = 'env'"
+                    class="workspace-tab-btn"
+                    :class="{ 'workspace-tab-btn-active': rightTab === 'env' }"
+                    :disabled="!activeProject"
+                >
+                    <div class="i-mdi-tune-variant text-sm" />
+                    <span>{{ t('dashboard.envSwitcher') }}</span>
+                </button>
+                <button
                     @click="rightTab = 'files'"
                     class="workspace-tab-btn"
                     :class="{ 'workspace-tab-btn-active': rightTab === 'files' }"
+                    :disabled="!activeProject"
                 >
                     <div class="i-mdi-folder-outline text-sm" />
                     <span>{{ t('dashboard.files') }}</span>
@@ -944,6 +1180,7 @@ async function batchAddProjects() {
                     @click="rightTab = 'memo'"
                     class="workspace-tab-btn"
                     :class="{ 'workspace-tab-btn-active': rightTab === 'memo' }"
+                    :disabled="!activeProject"
                 >
                     <div class="i-mdi-note-text-outline text-sm" />
                     <span>{{ t('dashboard.memo') }}</span>
@@ -961,14 +1198,25 @@ async function batchAddProjects() {
             <div class="flex-1 overflow-hidden relative">
                 <Transition name="tab-fade" mode="out-in">
                 <KeepAlive>
-                <ConsoleView v-if="rightTab === 'console'" />
+                <WorkspaceOverview
+                  v-if="rightTab === 'overview' || !activeProject"
+                  :summary="healthSummary"
+                  :categories="overviewCategories"
+                  :profiles="workspaceProfiles"
+                  :health-level="healthLevel"
+                  :get-health="getHealth"
+                  @select-project="focusProjectFromOverview"
+                  @run-profile="runProfile"
+                  @stop-profile="stopProfile"
+                />
+                <ConsoleView v-else-if="rightTab === 'console'" />
                 <GitView v-else-if="rightTab === 'git'" />
                 <FileManager v-else-if="rightTab === 'files'" :project="activeProject" />
                 <ProjectMemo v-else-if="rightTab === 'memo'" :project="activeProject" />
+                <FrontendEnvPanel v-else-if="rightTab === 'env'" :project="activeProject" />
                 </KeepAlive>
                 </Transition>
             </div>
-        </template>
     </div>
 
     <AddProjectModal
@@ -1137,6 +1385,16 @@ async function batchAddProjects() {
   background: rgba(255, 255, 255, 0.34);
 }
 
+.workspace-tab-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.workspace-tab-btn:disabled:hover {
+  color: rgb(100 116 139);
+  background: transparent;
+}
+
 .workspace-tab-btn-active {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.62), rgba(248, 250, 252, 0.44));
@@ -1240,6 +1498,11 @@ async function batchAddProjects() {
   background: rgba(255, 255, 255, 0.045);
 }
 
+:global(html.dark) .workspace-tab-btn:disabled:hover {
+  color: rgb(124 140 164);
+  background: transparent;
+}
+
 :global(html.dark) .workspace-tab-btn-active {
   background:
     linear-gradient(180deg, rgba(96, 165, 250, 0.12), rgba(59, 130, 246, 0.04)),
@@ -1278,20 +1541,17 @@ async function batchAddProjects() {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
 
-/* Drag handle - inside item top-left corner, no space taken */
+/* Drag handle - rendered inline with the project status indicator */
 .drag-handle {
-  position: absolute;
-  left: 6px;
-  top: 6px;
-  width: 16px;
-  height: 18px;
+  width: 14px;
+  height: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   cursor: grab;
-  opacity: 0;
+  opacity: 0.55;
   transition: opacity 0.15s ease;
-  z-index: 30;
 }
 
 .draggable-item:hover .drag-handle {

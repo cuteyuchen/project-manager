@@ -10,6 +10,7 @@ import { ensureNodeInstallCommand, getInstallDependenciesCommand } from '../util
 import { useSettingsStore } from '../stores/settings';
 import { useProjectStore } from '../stores/project';
 import type { PackageManagerResolveResult } from '../api/types';
+import { collectProjectTags, normalizeProjectTags } from '../utils/projectTags';
 
 type ProjectForm = {
   id: string;
@@ -95,23 +96,8 @@ const form = ref<ProjectForm>({
 });
 
 /***********************标签输入处理*********************/
-const tagInputValue = ref('');
-
-/** 标签输入框按 Enter 添加标签 */
-function handleTagInputKeydown(event: KeyboardEvent) {
-  if (event.key !== 'Enter') return;
-  event.preventDefault();
-  const value = tagInputValue.value.trim();
-  if (value && !form.value.tags.includes(value)) {
-    form.value.tags = [...form.value.tags, value];
-  }
-  tagInputValue.value = '';
-}
-
-/** 移除标签 */
-function removeTag(tag: string) {
-  form.value.tags = form.value.tags.filter((t) => t !== tag);
-}
+/** 所有项目已使用标签，用于新增/编辑项目时复用同一个标签 */
+const allProjectTags = computed(() => collectProjectTags(projectStore.projects));
 
 const canConfigureRepo = computed(() => !isEdit.value && !!form.value.path && !pathIsGitRepo.value);
 const repoTargetHasFiles = computed(() => pathEntryCount.value > 0);
@@ -531,8 +517,9 @@ function buildProjectPayload(): Project {
   if (form.value.description.trim()) {
     project.description = form.value.description.trim();
   }
-  if (form.value.tags.length > 0) {
-    project.tags = [...form.value.tags];
+  const tags = normalizeProjectTags(form.value.tags);
+  if (tags.length > 0) {
+    project.tags = tags;
   }
   if (form.value.groupId) {
     project.groupId = form.value.groupId;
@@ -639,25 +626,26 @@ async function cancelClone() {
 
       <div class="grid gap-4 grid-cols-2">
         <el-form-item :label="t('project.tags')">
-          <div class="w-full">
-            <div class="flex flex-wrap gap-1.5 mb-2" v-if="form.tags.length > 0">
-              <el-tag
-                v-for="tag in form.tags"
-                :key="tag"
-                closable
-                size="small"
-                @close="removeTag(tag)"
-              >
-                {{ tag }}
-              </el-tag>
-            </div>
-            <el-input
-              v-model="tagInputValue"
-              size="small"
-              :placeholder="t('project.tagsPlaceholder')"
-              @keydown="handleTagInputKeydown"
+          <el-select
+            v-model="form.tags"
+            multiple
+            filterable
+            allow-create
+            default-first-option
+            collapse-tags
+            collapse-tags-tooltip
+            :reserve-keyword="false"
+            class="w-full"
+            size="small"
+            :placeholder="t('project.tagsPlaceholder')"
+          >
+            <el-option
+              v-for="tag in allProjectTags"
+              :key="tag"
+              :label="tag"
+              :value="tag"
             />
-          </div>
+          </el-select>
         </el-form-item>
 
         <el-form-item :label="t('project.group')">

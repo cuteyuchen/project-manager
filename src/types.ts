@@ -1,3 +1,5 @@
+import type { FrontendEnvGroup } from './utils/frontendEnvSwitcher';
+
 export interface CustomCommand {
   id: string;
   name: string;
@@ -24,6 +26,30 @@ export interface ProjectFileEntry {
   isDirectory: boolean;
 }
 
+/** 代码模块：项目内识别出的子模块/子项目的快捷入口 */
+export interface CodeModule {
+  id: string;
+  /** 显示名称（通常取目录名或 package.json 的 name） */
+  name: string;
+  /** 相对于项目根目录的路径 */
+  relativePath: string;
+  /** 识别到的语言/框架标记 */
+  framework: CodeModuleFramework;
+  /** 是否置顶 */
+  pinned?: boolean;
+}
+
+/** 代码模块支持的框架/语言类型 */
+export type CodeModuleFramework =
+  | 'vue'
+  | 'react'
+  | 'node'
+  | 'java'
+  | 'go'
+  | 'python'
+  | 'dotnet'
+  | 'unknown';
+
 export interface Project {
   id: string;
   name: string;
@@ -48,6 +74,12 @@ export interface Project {
   description?: string;
   tags?: string[];
   groupId?: string;
+  /** 代码模块列表：扫描到的子模块快捷入口 */
+  codeModules?: CodeModule[];
+  /** 前端环境变量与 Vite 代理扫描缓存 */
+  frontendEnvGroups?: FrontendEnvGroup[];
+  /** 前端环境扫描时间 */
+  frontendEnvScannedAt?: number;
 }
 
 // ─── Project Group Types ────────────────────────────────────────────────────
@@ -94,6 +126,67 @@ export interface Settings {
   usageWeightEnabled?: boolean;
   // Sort mode: 'default' (manual drag), 'smart' (usage weight)
   sortMode?: 'default' | 'smart';
+  // ─── Project 总控能力 ────────────────────────────────────────────────────
+  /** 保存视图：把当前搜索 / 筛选 / 分组 / 标签 / 排序快速调出 */
+  projectViewPresets?: ProjectViewPreset[];
+  /** 启动组：一键运行一组项目命令 */
+  workspaceProfiles?: WorkspaceProfile[];
+}
+
+/** 保存视图：把当前过滤/排序状态打包命名后保存 */
+export interface ProjectViewPreset {
+  id: string;
+  name: string;
+  searchQuery: string;
+  quickFilter: 'all' | 'pinned' | 'recent';
+  /** null 表示全部分组 */
+  groupId: string | null;
+  tags: string[];
+  sortMode: 'default' | 'smart';
+  createdAt: string;
+}
+
+/** 启动组中的单条项：项目内脚本或自定义命令 */
+export type WorkspaceProfileItemType = 'project' | 'custom';
+
+export interface WorkspaceProfileItem {
+  type: WorkspaceProfileItemType;
+  projectId: string;
+  /**
+   * 当 type='project' 时是脚本名（如 'dev' / 'build'）
+   * 当 type='custom' 时是 CustomCommand.id
+   */
+  nameOrCommandId: string;
+  /** 可选，显示名（避免脚本被删后无法识别） */
+  label?: string;
+}
+
+/** 启动组：一组命令可一键启动/停止 */
+export interface WorkspaceProfile {
+  id: string;
+  name: string;
+  items: WorkspaceProfileItem[];
+  icon?: string;
+  createdAt: string;
+}
+
+/** 项目健康问题 */
+export interface ProjectHealthIssue {
+  code: 'path_missing' | 'not_git' | 'git_dirty' | 'pm_unresolved' | 'node_unresolved';
+  level: 'warn' | 'error';
+  message: string;
+}
+
+/** 项目健康快照：缓存最近一次扫描结果 */
+export interface ProjectHealthSnapshot {
+  projectId: string;
+  running: boolean;
+  hasGit: boolean;
+  gitDirty: boolean;
+  pmResolved: boolean;
+  pathExists: boolean;
+  issues: ProjectHealthIssue[];
+  updatedAt: number;
 }
 
 export interface NodeVersion {
@@ -156,6 +249,25 @@ export interface GitCommit {
   parents: string[];
   refs: string[];
   graph_prefix?: string;
+}
+
+export interface GitOwnCommit {
+  hash: string;
+  shortHash: string;
+  author: string;
+  email: string;
+  date: string;
+  message: string;
+}
+
+export interface GitAuthorIdentity {
+  name?: string;
+  email?: string;
+}
+
+export interface GitOwnCommitResult {
+  identity: GitAuthorIdentity;
+  commits: GitOwnCommit[];
 }
 
 export interface GitRemote {

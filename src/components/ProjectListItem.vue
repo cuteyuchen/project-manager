@@ -4,6 +4,8 @@ import type { PackageManagerResolveResult } from '../api/types';
 import { useProjectStore } from '../stores/project';
 import { useNodeStore } from '../stores/node';
 import { useSettingsStore } from '../stores/settings';
+import HealthBadge from './dashboard/HealthBadge.vue';
+import type { ProjectHealthSnapshot } from '../types';
 import { computed, ref, watch, onMounted } from 'vue';
 import { api } from '../api';
 import { ElMessage, ElMessageBox } from 'element-plus';
@@ -14,7 +16,11 @@ import { normalizeNvmVersion } from '../utils/nvm';
 import { resolveTerminalCommand } from '../utils/terminalConfig';
 
 const { t } = useI18n();
-const props = defineProps<{ project: Project }>();
+const props = defineProps<{
+    project: Project;
+    healthSnapshot?: ProjectHealthSnapshot;
+    healthLevel?: 'healthy' | 'warn' | 'error' | 'unknown';
+}>();
 const emit = defineEmits(['edit']);
 const store = useProjectStore();
 const nodeStore = useNodeStore();
@@ -318,7 +324,19 @@ async function openFolder() {
 
         <div class="flex justify-between items-center mb-1">
             <div class="flex items-center gap-1.5 min-w-0">
-                <div v-if="project.pinned" class="i-mdi-pin text-amber-500 text-[10px] flex-shrink-0" />
+                <!-- ─── 左上角状态与拖拽入口，保持同一行相邻显示 ───────────────── -->
+                <div
+                    v-if="$slots.leading || healthSnapshot || project.pinned"
+                    class="flex items-center gap-1.5 shrink-0"
+                >
+                    <slot name="leading" />
+                    <HealthBadge
+                        v-if="healthSnapshot"
+                        :snapshot="healthSnapshot"
+                        :level="healthLevel ?? 'unknown'"
+                    />
+                    <div v-if="project.pinned" class="i-mdi-pin text-amber-500 text-[10px] flex-shrink-0" />
+                </div>
                 <h3 class="font-semibold text-xs truncate pr-16" :class="isActive ? 'text-blue-700 dark:text-blue-400' : 'text-slate-700 dark:text-slate-200'">
                     {{ project.name }}
                 </h3>

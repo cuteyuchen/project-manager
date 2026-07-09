@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onActivated, onDeactivated, onUnmounted, nextTick } from 'vue';
+import { ref, computed, watch, onMounted, onActivated, onDeactivated, onUnmounted, nextTick, useTemplateRef } from 'vue';
 import { useProjectStore } from '../../stores/project';
 import { useGitStore } from '../../stores/git';
 import { useSettingsStore } from '../../stores/settings';
@@ -49,11 +49,13 @@ function persistLayoutNumber(storageKey: string, value: number) {
   settingsStore.settings.layoutState[storageKey] = value;
 }
 
-const leftPaneContainerRef = ref<HTMLElement | null>(null);
+const leftPaneContainerRef = useTemplateRef<HTMLElement>('leftPaneContainerRef');
 const leftContainerWidth = ref(0);
 let leftResizeObserver: ResizeObserver | null = null;
 
 onMounted(() => {
+  enterActiveMode();
+
   if (!leftPaneContainerRef.value) return;
   leftResizeObserver = new ResizeObserver((entries) => {
     const entry = entries[0];
@@ -114,7 +116,7 @@ const stagedRatio = ref(getSavedLayoutNumber('git.changes.stagedRatio', 50, 15, 
 let stagedDragStart = 0;
 let stagedRatioStart = 0;
 const isDraggingStagedSplit = ref(false);
-const statusPanelRef = ref<HTMLElement | null>(null);
+const statusPanelRef = useTemplateRef<HTMLElement>('statusPanelRef');
 const isViewActive = ref(false);
 let refreshTimer: number | null = null;
 
@@ -163,7 +165,7 @@ function clearScheduledRefresh() {
   }
 }
 
-function scheduleRefresh(options: { force?: boolean; includeHistory?: boolean; delayMs?: number } = {}) {
+function scheduleRefresh(options: { force?: boolean; includeHistory?: boolean; includeBranches?: boolean; delayMs?: number } = {}) {
   clearScheduledRefresh();
 
   const delayMs = options.delayMs ?? 120;
@@ -178,6 +180,14 @@ function scheduleRefresh(options: { force?: boolean; includeHistory?: boolean; d
     const isRepo = await gitStore.checkGitRepo(project.id, project.path, { force: options.force });
     if (!isRepo) return;
 
+    if (options.force || options.includeBranches) {
+      await gitStore.refreshRepositoryState(project.id, project.path, {
+        includeHistory: options.includeHistory,
+        includeBranches: options.includeBranches,
+      });
+      return;
+    }
+
     await gitStore.ensureSummaryAndStatus(project.id, project.path, { force: options.force });
     if (options.includeHistory) {
       await gitStore.ensureHistory(project.id, project.path, { force: options.force });
@@ -189,7 +199,9 @@ function enterActiveMode() {
   isViewActive.value = true;
   gitStore.setColdStorage(false);
   scheduleRefresh({
+    force: true,
     includeHistory: activeTab.value === 'history',
+    includeBranches: true,
     delayMs: 60,
   });
 }
@@ -200,6 +212,14 @@ function enterColdStorage() {
   gitStore.setColdStorage(true);
 }
 
+async function handleRepositoryChanged() {
+  if (!activeProject.value) return;
+  await gitStore.refreshRepositoryState(activeProject.value.id, activeProject.value.path, {
+    includeHistory: activeTab.value === 'history',
+    includeBranches: true,
+  });
+}
+
 // Watch project changes — refresh lazily after the selection UI settles
 watch(activeProject, (newProject, oldProject) => {
   if (oldProject?.id !== newProject?.id) {
@@ -207,7 +227,9 @@ watch(activeProject, (newProject, oldProject) => {
   }
   if (!newProject || !isViewActive.value) return;
   scheduleRefresh({
+    force: true,
     includeHistory: activeTab.value === 'history',
+    includeBranches: true,
     delayMs: 140,
   });
 }, { immediate: true });
@@ -217,7 +239,9 @@ let unlistenFocus: (() => void) | null = null;
 api.onWindowFocus(() => {
   if (!isViewActive.value || !activeProject.value || gitStore.coldStorage) return;
   scheduleRefresh({
+    force: true,
     includeHistory: activeTab.value === 'history',
+    includeBranches: true,
     delayMs: 180,
   });
 }).then(unlisten => { unlistenFocus = unlisten; });
@@ -235,7 +259,9 @@ watch(activeTab, (tab) => {
   gitStore.clearDiff();
   if (tab === 'history' && activeProject.value && isViewActive.value) {
     scheduleRefresh({
+      force: true,
       includeHistory: true,
+      includeBranches: true,
       delayMs: 0,
     });
   }
@@ -253,10 +279,10 @@ async function handleInitRepo() {
 
 async function handleRefresh() {
   if (!activeProject.value) return;
-  await gitStore.refreshSummaryAndStatus(activeProject.value.id, activeProject.value.path);
-  if (activeTab.value === 'history') {
-    await gitStore.refreshHistory(activeProject.value.id, activeProject.value.path);
-  }
+  await gitStore.refreshRepositoryState(activeProject.value.id, activeProject.value.path, {
+    includeHistory: activeTab.value === 'history',
+    includeBranches: true,
+  });
 }
 
 const tabs = computed(() => [
@@ -532,6 +558,7 @@ async function copyText(value: string, successMessage: string) {
       <GitRemoteSettingsDialog
         v-model="showSettingsDialog"
         :project="activeProject"
+        @changed="handleRepositoryChanged"
       />
     </template>
   </div>

@@ -9,6 +9,7 @@ import Dashboard from './views/Dashboard.vue';
 import Settings from './views/Settings.vue';
 import NodeManager from './views/NodeManager.vue';
 import PortManager from './views/PortManager.vue';
+import CommitCalendar from './views/CommitCalendar.vue';
 import TitleBar from './components/TitleBar.vue';
 import UpdateProgress from './components/UpdateProgress.vue';
 import ProjectQuickSearch from './components/ProjectQuickSearch.vue';
@@ -28,7 +29,7 @@ const target = import.meta.env.VITE_TARGET;
 const isPlugin = target === 'utools' || target === 'ztools';
 
 const { t } = useI18n();
-const currentView = ref<'dashboard' | 'settings' | 'nodes' | 'ports'>('dashboard');
+const currentView = ref<'dashboard' | 'settings' | 'nodes' | 'ports' | 'commitCalendar'>('dashboard');
 const loaded = ref(false);
 const isDragging = ref(false);
 let unlistenDragEnter: UnlistenFn | null = null;
@@ -149,6 +150,14 @@ function handleGlobalKeydown(event: KeyboardEvent) {
 
 /** 快速搜索选中项目 */
 function handleQuickSearchSelect(projectId: string) {
+  const store = useProjectStore();
+  store.activeProjectId = projectId;
+  currentView.value = 'dashboard';
+  showQuickSearch.value = false;
+}
+
+/** 快速搜索选中脚本 */
+function handleQuickSearchSelectScript(projectId: string, _scriptName: string) {
   const store = useProjectStore();
   store.activeProjectId = projectId;
   currentView.value = 'dashboard';
@@ -649,6 +658,7 @@ watch(
           <Transition name="page-fade" mode="out-in">
           <KeepAlive>
             <Dashboard v-if="currentView === 'dashboard'" key="dashboard" />
+            <CommitCalendar v-else-if="currentView === 'commitCalendar'" key="commitCalendar" />
             <Settings v-else-if="currentView === 'settings'" key="settings" />
             <NodeManager v-else-if="currentView === 'nodes'" key="nodes" />
             <PortManager v-else-if="currentView === 'ports'" key="ports" />
@@ -711,6 +721,7 @@ watch(
       v-if="showQuickSearch"
       @close="showQuickSearch = false"
       @select="handleQuickSearchSelect"
+      @selectScript="handleQuickSearchSelectScript"
     />
   </div>
 </template>

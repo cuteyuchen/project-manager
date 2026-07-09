@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { shallowRef, computed } from 'vue';
 import { useGitStore } from '../../stores/git';
 import { useSettingsStore } from '../../stores/settings';
 import { useI18n } from 'vue-i18n';
 import { ElMessage } from 'element-plus';
 import type { Project } from '../../types';
 import { showPersistentGitError } from './message';
+import { applyGeneratedCommitMessage } from './aiCommitMessageTarget';
+
+/***********************组件输入与依赖*********************/
 
 const props = defineProps<{
   project: Project;
@@ -15,11 +18,13 @@ const { t } = useI18n();
 const gitStore = useGitStore();
 const settingsStore = useSettingsStore();
 
+/***********************提交信息状态*********************/
+
 const commitMessage = computed({
   get: () => gitStore.commitMessage[props.project.id] || '',
   set: (v: string) => { gitStore.commitMessage[props.project.id] = v; },
 });
-const aiGenerating = ref(false);
+const aiGenerating = shallowRef(false);
 
 const stagedFiles = computed(() => {
   const s = gitStore.getStatus(props.project.id);
@@ -28,9 +33,13 @@ const stagedFiles = computed(() => {
 
 const aiEnabled = computed(() => settingsStore.settings.gitAiEnabled);
 
+/***********************通用判断*********************/
+
 function isCancelledError(error: unknown): boolean {
   return String(error).toLowerCase().includes('cancelled');
 }
+
+/***********************提交操作*********************/
 
 async function handleCommit() {
   if (!commitMessage.value.trim()) {
@@ -77,6 +86,8 @@ async function handleCommitAndPush() {
   }
 }
 
+/***********************AI提交信息生成*********************/
+
 async function handleAiGenerate() {
   const s = settingsStore.settings;
   const service = s.gitAiPrimaryService;
@@ -84,15 +95,18 @@ async function handleAiGenerate() {
     ElMessage.warning(t('git.aiConfigMissing'));
     return;
   }
+
+  const requestProjectId = props.project.id;
+  const requestProjectPath = props.project.path;
+
   aiGenerating.value = true;
   try {
-    const msg = await gitStore.generateAiCommitMessage(props.project.id, props.project.path, {
+    const msg = await gitStore.generateAiCommitMessage(requestProjectId, requestProjectPath, {
       service,
       promptTemplate: s.gitAiPromptTemplate,
       stream: s.gitAiStream,
     });
-    if (msg) {
-      commitMessage.value = msg;
+    if (applyGeneratedCommitMessage(gitStore.commitMessage, requestProjectId, msg)) {
       ElMessage.success(t('git.aiSuccess'));
     }
   } catch (e: any) {

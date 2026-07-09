@@ -10,6 +10,10 @@ const props = defineProps<{
   project: Project;
 }>();
 
+const emit = defineEmits<{
+  changed: [];
+}>();
+
 const visible = defineModel<boolean>();
 const { t } = useI18n();
 
@@ -71,6 +75,7 @@ async function handleAdd() {
     formName.value = '';
     formUrl.value = '';
     await loadRemotes();
+    emit('changed');
   } catch (e) {
     showPersistentGitError(t('git.operationFailed', { error: String(e) }));
   } finally {
@@ -88,6 +93,7 @@ async function handleUpdate() {
     ElMessage.success(t('git.remoteUpdated'));
     cancelEdit();
     await loadRemotes();
+    emit('changed');
   } catch (e) {
     showPersistentGitError(t('git.operationFailed', { error: String(e) }));
   } finally {
@@ -111,6 +117,7 @@ async function handleRemove(name: string) {
     ElMessage.success(t('git.remoteDeleted'));
     if (editingRemote.value === name) cancelEdit();
     await loadRemotes();
+    emit('changed');
   } catch (e) {
     showPersistentGitError(t('git.operationFailed', { error: String(e) }));
   } finally {

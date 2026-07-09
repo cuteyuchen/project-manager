@@ -183,16 +183,17 @@ function getGroupProjectCount(groupId: string): number {
         <el-input
           v-model="newGroupName"
           size="small"
+          class="flex-1 min-w-0"
           :placeholder="t('dashboard.groupNamePlaceholder')"
           @keydown.enter="confirmAddGroup"
           @keydown.escape="cancelAddGroup"
           autofocus
-        >
-          <template #append>
-            <el-button @click="confirmAddGroup">{{ t('common.confirm') }}</el-button>
-            <el-button @click="cancelAddGroup">{{ t('common.cancel') }}</el-button>
-          </template>
-        </el-input>
+        />
+        <!-- ─── 文字按钮独立布局，避免挤压 el-input append 区 ─────────────── -->
+        <div class="group-add-actions">
+          <el-button size="small" @click="confirmAddGroup">{{ t('common.confirm') }}</el-button>
+          <el-button size="small" @click="cancelAddGroup">{{ t('common.cancel') }}</el-button>
+        </div>
       </div>
 
       <!-- 添加按钮 -->
@@ -211,3 +212,18 @@ function getGroupProjectCount(groupId: string): number {
     </template>
   </el-dialog>
 </template>
+
+<style scoped>
+.group-add-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.group-add-actions :deep(.el-button) {
+  min-width: 52px;
+  margin-left: 0;
+  padding-inline: 10px;
+}
+</style>

@@ -102,6 +102,13 @@ export const useSettingsStore = defineStore('settings', () => {
       if (!parsed.sortMode) {
         parsed.sortMode = parsed.usageWeightEnabled ? 'smart' : 'default';
       }
+      // 项目总控能力新字段兜底
+      if (!Array.isArray(parsed.projectViewPresets)) {
+        parsed.projectViewPresets = [];
+      }
+      if (!Array.isArray(parsed.workspaceProfiles)) {
+        parsed.workspaceProfiles = [];
+      }
       settings.value = { ...settings.value, ...parsed };
     } catch (e) {
       console.error(e);
@@ -112,6 +119,12 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.gitAiStream = true;
   }
   settings.value.customTerminals = normalizeTerminalConfigs(settings.value.customTerminals);
+  if (!Array.isArray(settings.value.projectViewPresets)) {
+    settings.value.projectViewPresets = [];
+  }
+  if (!Array.isArray(settings.value.workspaceProfiles)) {
+    settings.value.workspaceProfiles = [];
+  }
   // Ensure at least one editor exists
   if (!settings.value.editors || settings.value.editors.length === 0) {
     settings.value.editors = [{ id: crypto.randomUUID(), name: 'VS Code', path: settings.value.editorPath || 'code' }];

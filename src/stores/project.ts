@@ -9,9 +9,11 @@ import { useUsageStore } from './usage';
 import { getCustomCommandDisplayNameByLocale } from '../utils/projectCommands';
 import { resolveNodePathFromVersion, resolveProjectNodePath, isExplicitNodeVersion } from '../utils/nodeRuntime';
 import { normalizeNvmVersion } from '../utils/nvm';
+import { scanFrontendEnvProject } from '../utils/frontendEnvSwitcher';
+import { normalizeProjectTags } from '../utils/projectTags';
 import { ElMessage } from 'element-plus';
 
-type WorkspaceTab = 'console' | 'git' | 'files' | 'memo';
+type WorkspaceTab = 'console' | 'git' | 'files' | 'memo' | 'env';
 
 export const useProjectStore = defineStore('project', () => {
   const projects = ref<Project[]>([]);
@@ -96,6 +98,9 @@ export const useProjectStore = defineStore('project', () => {
   function addProject(project: Project) {
     projects.value.unshift(project);
     try { useUsageStore().markAdded(project.id); } catch {}
+    void scanFrontendEnvForProject(project.id).catch((error) => {
+      console.error(`Failed to scan frontend env for added project ${project.name}`, error);
+    });
   }
 
   function updateProject(project: Project) {
@@ -299,18 +304,66 @@ export const useProjectStore = defineStore('project', () => {
     const updates = await Promise.all(
       projects.value.map(async (p) => {
         try {
-          const info: any = await api.scanProject(p.path);
-          if (p.type === 'node') {
-            return { ...p, scripts: info.scripts || [] };
-          }
-          return p;
-        } catch (e) {
-          console.error(`Failed to refresh project ${p.name}`, e);
+          await api.readDir(p.path);
+        } catch {
           return p;
         }
+
+        const [info, frontendEnvGroups] = await Promise.all([
+          api.scanProject(p.path).catch((error) => {
+            console.error(`Failed to refresh project ${p.name}`, error);
+            return null;
+          }),
+          scanFrontendEnvProject(p.path, api).catch((error) => {
+            console.error(`Failed to refresh frontend env for project ${p.name}`, error);
+            return undefined;
+          }),
+        ]);
+
+        const nextProject: Project = {
+          ...p,
+          frontendEnvGroups: frontendEnvGroups || p.frontendEnvGroups || [],
+          frontendEnvScannedAt: frontendEnvGroups ? Date.now() : p.frontendEnvScannedAt,
+        };
+
+        if (info && p.type === 'node') {
+          return { ...nextProject, scripts: info.scripts || [] };
+        }
+
+        return nextProject;
       })
     );
     projects.value = updates;
+  }
+
+  /***********************前端环境扫描*********************/
+
+  async function scanFrontendEnvForProject(projectId: string) {
+    const index = projects.value.findIndex((p) => p.id === projectId);
+    if (index === -1) {
+      return [];
+    }
+
+    const project = projects.value[index];
+    const groups = await scanFrontendEnvProject(project.path, api);
+    projects.value[index] = {
+      ...project,
+      frontendEnvGroups: groups,
+      frontendEnvScannedAt: Date.now(),
+    };
+
+    return groups;
+  }
+
+  async function scanFrontendEnvForAll() {
+    await Promise.all(
+      projects.value.map((project) =>
+        scanFrontendEnvForProject(project.id).catch((error) => {
+          console.error(`Failed to scan frontend env for project ${project.name}`, error);
+          return [];
+        }),
+      ),
+    );
   }
 
   function pinProject(id: string) {
@@ -331,6 +384,81 @@ export const useProjectStore = defineStore('project', () => {
     if (!project) return;
     project.pinned = false;
     project.pinOrder = undefined;
+  }
+
+  /***********************批量选择状态*********************/
+
+  /** 批量模式：仅在 UI 主动开启时使用，不影响普通选中项目 */
+  const batchMode = ref(false);
+  const selectedIds = ref<Set<string>>(new Set());
+
+  function enterBatchMode(initialIds: string[] = []) {
+    batchMode.value = true;
+    selectedIds.value = new Set(initialIds);
+  }
+
+  function exitBatchMode() {
+    batchMode.value = false;
+    selectedIds.value = new Set();
+  }
+
+  function toggleSelect(id: string) {
+    const next = new Set(selectedIds.value);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    selectedIds.value = next;
+  }
+
+  function selectAllVisible(ids: string[]) {
+    selectedIds.value = new Set(ids);
+  }
+
+  function clearSelection() {
+    selectedIds.value = new Set();
+  }
+
+  /** 对一组项目并发应用 partial 更新；遇失败不抛，返回失败 id 集合 */
+  async function batchUpdate(ids: string[], patch: Partial<Project>): Promise<{ updated: string[]; failed: string[] }> {
+    const targets = ids
+      .map((id) => projects.value.find((p) => p.id === id))
+      .filter((p): p is Project => !!p);
+    const updated: string[] = [];
+    const failed: string[] = [];
+    await Promise.all(
+      targets.map(async (p) => {
+        try {
+          Object.assign(p, patch);
+          updated.push(p.id);
+        } catch (e) {
+          console.error('batchUpdate failed for', p.id, e);
+          failed.push(p.id);
+        }
+      })
+    );
+    return { updated, failed };
+  }
+
+  /** 批量添加/删除标签（add=true 添加，否则移除） */
+  async function batchSetTags(ids: string[], tags: string[], add: boolean): Promise<void> {
+    const normalizedTags = normalizeProjectTags(tags);
+    const targets = ids
+      .map((id) => projects.value.find((p) => p.id === id))
+      .filter((p): p is Project => !!p);
+    for (const p of targets) {
+      const set = new Set(p.tags ?? []);
+      for (const t of normalizedTags) {
+        if (add) set.add(t);
+        else set.delete(t);
+      }
+      p.tags = normalizeProjectTags(Array.from(set));
+    }
+  }
+
+  /** 批量删除项目 */
+  async function batchRemove(ids: string[]): Promise<void> {
+    for (const id of ids) {
+      removeProject(id);
+    }
   }
 
   /***********************项目分组管理*********************/
@@ -386,11 +514,23 @@ export const useProjectStore = defineStore('project', () => {
     resolvePmForProject,
     clearLog,
     refreshAll,
+    scanFrontendEnvForProject,
+    scanFrontendEnvForAll,
     pinProject,
     unpinProject,
     addProjectGroup,
     updateProjectGroup,
     removeProjectGroup,
     toggleProjectGroupCollapsed,
+    batchMode,
+    selectedIds,
+    enterBatchMode,
+    exitBatchMode,
+    toggleSelect,
+    selectAllVisible,
+    clearSelection,
+    batchUpdate,
+    batchSetTags,
+    batchRemove,
   };
 });

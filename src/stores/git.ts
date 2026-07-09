@@ -373,6 +373,26 @@ export const useGitStore = defineStore('git', () => {
     }
   }
 
+  async function refreshRepositoryState(
+    projectId: string,
+    path: string,
+    options: { includeHistory?: boolean; includeBranches?: boolean } = {},
+  ): Promise<void> {
+    await refreshSummaryAndStatus(projectId, path);
+
+    const tasks: Promise<void>[] = [];
+    if (options.includeHistory) {
+      tasks.push(refreshHistory(projectId, path));
+    }
+    if (options.includeBranches) {
+      tasks.push(refreshBranches(projectId, path));
+    }
+
+    if (tasks.length > 0) {
+      await Promise.all(tasks);
+    }
+  }
+
   // ─── Git Operations ──────────────────────────────────────────────────────
 
   async function stageFiles(projectId: string, path: string, files: string[]): Promise<void> {
@@ -407,7 +427,7 @@ export const useGitStore = defineStore('git', () => {
     return withOperationLoading('commit', async () => {
       const result = await api.gitCommit(path, message);
       clearDiff();
-      await refreshSummaryAndStatus(projectId, path);
+      await refreshRepositoryState(projectId, path, { includeHistory: true, includeBranches: true });
       return result;
     });
   }
@@ -415,7 +435,7 @@ export const useGitStore = defineStore('git', () => {
   async function pull(projectId: string, path: string, remote?: string, branch?: string): Promise<string> {
     return withOperationLoading('pull', async (operationId) => {
       const result = await api.gitPull(path, remote, branch, operationId);
-      await refreshSummaryAndStatus(projectId, path);
+      await refreshRepositoryState(projectId, path, { includeHistory: true, includeBranches: true });
       return result;
     }, { cancellable: true });
   }
@@ -423,7 +443,7 @@ export const useGitStore = defineStore('git', () => {
   async function push(projectId: string, path: string, remote?: string, branch?: string, force?: boolean, setUpstream?: boolean): Promise<string> {
     return withOperationLoading('push', async (operationId) => {
       const result = await api.gitPush(path, remote, branch, force, setUpstream, operationId);
-      await refreshSummary(projectId, path);
+      await refreshRepositoryState(projectId, path, { includeHistory: true, includeBranches: true });
       return result;
     }, { cancellable: true });
   }
@@ -431,7 +451,7 @@ export const useGitStore = defineStore('git', () => {
   async function fetch(projectId: string, path: string, remote?: string): Promise<string> {
     return withOperationLoading('fetch', async (operationId) => {
       const result = await api.gitFetch(path, remote, operationId);
-      await refreshSummary(projectId, path);
+      await refreshRepositoryState(projectId, path, { includeHistory: true, includeBranches: true });
       return result;
     }, { cancellable: true });
   }
@@ -439,7 +459,8 @@ export const useGitStore = defineStore('git', () => {
   async function switchBranch(projectId: string, path: string, branch: string): Promise<string> {
     return withOperationLoading('switchBranch', async () => {
       const result = await api.gitSwitchBranch(path, branch);
-      await refreshSummaryAndStatus(projectId, path);
+      clearDiff();
+      await refreshRepositoryState(projectId, path, { includeHistory: true, includeBranches: true });
       return result;
     });
   }
@@ -447,7 +468,8 @@ export const useGitStore = defineStore('git', () => {
   async function createAndSwitchBranch(projectId: string, path: string, name: string, startPoint?: string): Promise<string> {
     return withOperationLoading('createBranch', async () => {
       const result = await api.gitCreateAndSwitchBranch(path, name, startPoint);
-      await refreshSummaryAndStatus(projectId, path);
+      clearDiff();
+      await refreshRepositoryState(projectId, path, { includeHistory: true, includeBranches: true });
       return result;
     });
   }
@@ -455,7 +477,7 @@ export const useGitStore = defineStore('git', () => {
   async function deleteBranch(projectId: string, path: string, name: string, force?: boolean): Promise<string> {
     return withOperationLoading('deleteBranch', async () => {
       const result = await api.gitDeleteBranch(path, name, force);
-      await refreshBranches(projectId, path);
+      await refreshRepositoryState(projectId, path, { includeBranches: true });
       return result;
     });
   }
@@ -463,7 +485,7 @@ export const useGitStore = defineStore('git', () => {
   async function renameBranch(projectId: string, path: string, oldName: string, newName: string): Promise<string> {
     return withOperationLoading('renameBranch', async () => {
       const result = await api.gitRenameBranch(path, oldName, newName);
-      await refreshSummary(projectId, path);
+      await refreshRepositoryState(projectId, path, { includeBranches: true });
       return result;
     });
   }
@@ -725,6 +747,7 @@ export const useGitStore = defineStore('git', () => {
     refreshStatus,
     refreshSummaryAndStatus,
     refreshHistory,
+    refreshRepositoryState,
     ensureSummaryAndStatus,
     ensureHistory,
     refreshBranches,

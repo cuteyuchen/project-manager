@@ -95,6 +95,9 @@ const parsedHunks = computed((): DiffHunk[] => {
   return hunks;
 });
 
+const rawDiffLines = computed(() => diffContent.value.split('\n').filter(line => line.length > 0));
+const hasParsedHunks = computed(() => parsedHunks.value.length > 0);
+
 const stats = computed(() => {
   let adds = 0;
   let dels = 0;
@@ -154,6 +157,15 @@ async function rollbackHunk(hunk: DiffHunk) {
 
       <!-- Diff content -->
       <div v-if="!isUnsupported" class="flex-1 overflow-auto font-mono text-[11px] leading-[18px] p-2 space-y-2 select-text cursor-text">
+        <div
+          v-if="!hasParsedHunks"
+          class="rounded-md border border-slate-200/50 dark:border-slate-700/40 overflow-hidden"
+        >
+          <div class="px-2 py-1 bg-slate-100/60 dark:bg-slate-800/50 border-b border-slate-200/40 dark:border-slate-700/40 text-[10px] text-blue-600 dark:text-blue-400">
+            {{ diffFile || t('git.commitDetail') }}
+          </div>
+          <pre class="m-0 p-2 overflow-auto whitespace-pre-wrap text-slate-700 dark:text-slate-300">{{ rawDiffLines.join('\n') }}</pre>
+        </div>
         <div
           v-for="(hunk, hunkIndex) in parsedHunks"
           :key="hunkIndex"

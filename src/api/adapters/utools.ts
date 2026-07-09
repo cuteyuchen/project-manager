@@ -1,5 +1,5 @@
-import type { PlatformAPI, ProjectInfo, TerminalInfo, PortEntry, PackageManagerResolveResult } from '../types';
-import type { NodeVersion, GitStatusResult, GitBranch, GitCommit, GitSummary, GitCommitFile } from '../../types';
+import type { PlatformAPI, ProjectInfo, TerminalInfo, EditorInfo, PortEntry, PackageManagerResolveResult } from '../types';
+import type { NodeVersion, GitStatusResult, GitBranch, GitCommit, GitSummary, GitCommitFile, GitOwnCommitResult } from '../../types';
 
 // Declare global interface for uTools services
 declare global {
@@ -177,6 +177,13 @@ export class UToolsAdapter implements PlatformAPI {
       ]);
   }
 
+  async detectAvailableEditors(): Promise<EditorInfo[]> {
+      if ((this.service as any).detectAvailableEditors) {
+          return (this.service as any).detectAvailableEditors();
+      }
+      return Promise.resolve([]);
+  }
+
   async listUsedPorts(): Promise<PortEntry[]> {
       if (this.service.listUsedPorts) {
           return this.service.listUsedPorts();
@@ -221,6 +228,15 @@ export class UToolsAdapter implements PlatformAPI {
   async gitDeleteBranch(path: string, name: string, force?: boolean): Promise<string> { return this.service.gitDeleteBranch(path, name, force); }
   async gitRenameBranch(path: string, oldName: string, newName: string): Promise<string> { return this.service.gitRenameBranch(path, oldName, newName); }
   async gitHistory(path: string, maxCount?: number): Promise<GitCommit[]> { return this.service.gitHistory(path, maxCount); }
+  async gitOwnCommits(path: string, since: string, until: string): Promise<GitOwnCommitResult> {
+      if ((this.service as any).gitOwnCommits) {
+          return (this.service as any).gitOwnCommits(path, since, until);
+      }
+      void path;
+      void since;
+      void until;
+      return Promise.reject(new Error('gitOwnCommits not supported'));
+  }
   async gitCommitDetail(path: string, hash: string): Promise<GitCommit> {
       if ((this.service as any).gitCommitDetail) {
           return (this.service as any).gitCommitDetail(path, hash);

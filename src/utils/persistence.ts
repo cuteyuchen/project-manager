@@ -160,6 +160,9 @@ export async function loadData() {
         description: typeof p.description === 'string' ? p.description : undefined,
         tags: Array.isArray(p.tags) ? p.tags : undefined,
         groupId: typeof p.groupId === 'string' ? p.groupId : undefined,
+        codeModules: Array.isArray(p.codeModules) ? p.codeModules : undefined,
+        frontendEnvGroups: Array.isArray(p.frontendEnvGroups) ? p.frontendEnvGroups : undefined,
+        frontendEnvScannedAt: typeof p.frontendEnvScannedAt === 'number' ? p.frontendEnvScannedAt : undefined,
       }, installCommandName));
 
       normalizedDataChanged = projectStore.projects.some((project: Project, index: number) => {
@@ -169,7 +172,11 @@ export async function loadData() {
     }
     if (data.settings) {
       const settingsStore = useSettingsStore();
-      settingsStore.settings = { ...settingsStore.settings, ...data.settings };
+      const merged = { ...settingsStore.settings, ...data.settings };
+      // 确保新增的总控能力字段兜底
+      if (!Array.isArray(merged.projectViewPresets)) merged.projectViewPresets = [];
+      if (!Array.isArray(merged.workspaceProfiles)) merged.workspaceProfiles = [];
+      settingsStore.settings = merged;
     }
     if (data.customNodes) {
       const nodeStore = useNodeStore();

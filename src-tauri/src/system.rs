@@ -38,6 +38,12 @@ pub struct TerminalInfo {
 }
 
 #[derive(serde::Serialize, Clone)]
+pub struct EditorInfo {
+    name: String,
+    path: String,
+}
+
+#[derive(serde::Serialize, Clone)]
 pub struct PortEntry {
     protocol: String,
     local_address: String,
@@ -279,6 +285,164 @@ pub async fn detect_available_terminals() -> Result<Vec<TerminalInfo>, String> {
         terminals
     })
     .await
+}
+
+//************* 编辑器检测功能 *************
+
+#[cfg(target_os = "windows")]
+fn clean_registry_path(value: &str) -> String {
+    let trimmed = value.trim().trim_matches('"');
+    let without_arg = trimmed
+        .split("\",")
+        .next()
+        .unwrap_or(trimmed)
+        .trim_matches('"');
+    if let Some((path, icon_index)) = without_arg.rsplit_once(',') {
+        if icon_index.trim().chars().all(|ch| ch.is_ascii_digit()) {
+            return path.trim().trim_matches('"').to_string();
+        }
+    }
+    without_arg.to_string()
+}
+
+#[cfg(target_os = "windows")]
+fn first_existing_path(paths: Vec<PathBuf>) -> Option<String> {
+    paths
+        .into_iter()
+        .find(|path| path.exists())
+        .map(|path| path.to_string_lossy().to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_editor_from_install(name: &str, install_location: &str, display_icon: &str) -> Option<EditorInfo> {
+    let name_lower = name.to_lowercase();
+    let install_dir = PathBuf::from(install_location);
+    let icon_path = PathBuf::from(clean_registry_path(display_icon));
+
+    let (label, candidates): (&str, Vec<PathBuf>) = if name_lower.contains("visual studio code") {
+        ("Visual Studio Code", vec![
+            install_dir.join("bin").join("code.cmd"),
+            install_dir.join("bin").join("code"),
+            install_dir.join("Code.exe"),
+            icon_path,
+        ])
+    } else if name_lower.contains("trae") {
+        ("Trae CN", vec![
+            install_dir.join("bin").join("trae.cmd"),
+            install_dir.join("bin").join("trae"),
+            install_dir.join("Trae.exe"),
+            icon_path,
+        ])
+    } else if name_lower.contains("cursor") {
+        ("Cursor", vec![
+            install_dir.join("bin").join("cursor.cmd"),
+            install_dir.join("bin").join("cursor"),
+            install_dir.join("Cursor.exe"),
+            icon_path,
+        ])
+    } else if name_lower.contains("windsurf") {
+        ("Windsurf", vec![
+            install_dir.join("bin").join("windsurf.cmd"),
+            install_dir.join("bin").join("windsurf"),
+            install_dir.join("Windsurf.exe"),
+            icon_path,
+        ])
+    } else if name_lower.contains("webstorm") {
+        ("WebStorm", vec![install_dir.join("bin").join("webstorm64.exe"), icon_path])
+    } else if name_lower.contains("intellij idea") {
+        ("IntelliJ IDEA", vec![install_dir.join("bin").join("idea64.exe"), icon_path])
+    } else if name_lower.contains("sublime text") {
+        ("Sublime Text", vec![install_dir.join("sublime_text.exe"), icon_path])
+    } else if name_lower.contains("notepad++") {
+        ("Notepad++", vec![install_dir.join("notepad++.exe"), icon_path])
+    } else {
+        return None;
+    };
+
+    first_existing_path(candidates).map(|path| EditorInfo {
+        name: label.to_string(),
+        path,
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn scan_editor_uninstall_key(root: &RegKey, key_path: &str) -> Vec<EditorInfo> {
+    let Ok(uninstall) = root.open_subkey(key_path) else {
+        return Vec::new();
+    };
+
+    uninstall
+        .enum_keys()
+        .filter_map(Result::ok)
+        .filter_map(|app_key| uninstall.open_subkey(app_key).ok())
+        .filter_map(|app| {
+            let display_name: String = app.get_value("DisplayName").unwrap_or_default();
+            if display_name.is_empty() {
+                return None;
+            }
+
+            let install_location: String = app.get_value("InstallLocation").unwrap_or_default();
+            let display_icon: String = app.get_value("DisplayIcon").unwrap_or_default();
+            resolve_editor_from_install(&display_name, &install_location, &display_icon)
+        })
+        .collect()
+}
+
+#[cfg(target_os = "windows")]
+fn dedupe_editors(editors: Vec<EditorInfo>) -> Vec<EditorInfo> {
+    let mut seen = std::collections::HashSet::new();
+    let mut result = Vec::new();
+
+    for editor in editors {
+        let key = editor.path.replace('/', "\\").to_lowercase();
+        if seen.insert(key) {
+            result.push(editor);
+        }
+    }
+
+    result
+}
+
+#[cfg(target_os = "windows")]
+fn detect_available_editors_impl() -> Vec<EditorInfo> {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let keys = [
+        r"Software\Microsoft\Windows\CurrentVersion\Uninstall",
+        r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+    ];
+
+    let mut editors = Vec::new();
+    for key_path in keys {
+        editors.extend(scan_editor_uninstall_key(&hkcu, key_path));
+        editors.extend(scan_editor_uninstall_key(&hklm, key_path));
+    }
+
+    dedupe_editors(editors)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn detect_available_editors_impl() -> Vec<EditorInfo> {
+    let candidates = [
+        ("Visual Studio Code", "code"),
+        ("Cursor", "cursor"),
+        ("Windsurf", "windsurf"),
+        ("Sublime Text", "subl"),
+    ];
+
+    candidates
+        .into_iter()
+        .filter(|(_, command)| check_command_exists(command))
+        .map(|(name, command)| EditorInfo {
+            name: name.to_string(),
+            path: command.to_string(),
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub async fn detect_available_editors() -> Result<Vec<EditorInfo>, String> {
+    run_system_task(detect_available_editors_impl).await
 }
 
 //************* 右键菜单功能 *************

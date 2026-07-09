@@ -3,7 +3,12 @@ import { ref, computed, watch } from 'vue';
 import { useGitStore } from '../../stores/git';
 import { useI18n } from 'vue-i18n';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import type { Project } from '../../types';
+import type { GitBranch, Project } from '../../types';
+import {
+  createBranchGroups,
+  getRemoteCheckoutName,
+  isBranchActionDisabled,
+} from './gitBranchModel';
 import { showPersistentGitError } from './message';
 
 const props = defineProps<{
@@ -14,47 +19,72 @@ const visible = defineModel<boolean>();
 const { t } = useI18n();
 const gitStore = useGitStore();
 
+/***********************分支表单状态*********************/
+
 const newBranchName = ref('');
 const startPoint = ref('');
 const isLoading = ref(false);
 const searchQuery = ref('');
 
-const localBranches = computed(() => gitStore.getLocalBranches(props.project.id));
-const remoteBranches = computed(() => gitStore.getRemoteBranches(props.project.id));
+/***********************分支列表派生*********************/
 
-const filteredLocal = computed(() => {
-  const q = searchQuery.value.toLowerCase();
-  if (!q) return localBranches.value;
-  return localBranches.value.filter(b => b.name.toLowerCase().includes(q));
-});
+const branchGroups = computed(() => createBranchGroups(gitStore.getBranches(props.project.id), searchQuery.value));
+const currentBranch = computed(() => branchGroups.value.current);
+const filteredLocal = computed(() => branchGroups.value.locals);
+const filteredRemote = computed(() => branchGroups.value.remotes);
 
-const filteredRemote = computed(() => {
-  const q = searchQuery.value.toLowerCase();
-  if (!q) return remoteBranches.value;
-  return remoteBranches.value.filter(b => b.name.toLowerCase().includes(q));
-});
+/***********************弹窗打开刷新*********************/
 
 watch(visible, (v) => {
   if (v) {
-    gitStore.refreshBranches(props.project.id, props.project.path);
+    void refreshBranches();
     searchQuery.value = '';
     newBranchName.value = '';
     startPoint.value = '';
   }
 });
 
-async function switchToBranch(name: string) {
+/***********************分支数据刷新*********************/
+
+async function refreshBranches() {
   isLoading.value = true;
   try {
-    await gitStore.switchBranch(props.project.id, props.project.path, name);
-    ElMessage.success(t('git.switchSuccess', { name }));
-    await gitStore.refreshBranches(props.project.id, props.project.path);
+    await gitStore.refreshRepositoryState(props.project.id, props.project.path, { includeBranches: true });
   } catch (e) {
     showPersistentGitError(t('git.operationFailed', { error: String(e) }));
   } finally {
     isLoading.value = false;
   }
 }
+
+/***********************分支切换与检出*********************/
+
+async function switchToBranch(name: string) {
+  isLoading.value = true;
+  try {
+    await gitStore.switchBranch(props.project.id, props.project.path, name);
+    ElMessage.success(t('git.switchSuccess', { name }));
+  } catch (e) {
+    showPersistentGitError(t('git.operationFailed', { error: String(e) }));
+  } finally {
+    isLoading.value = false;
+  }
+}
+
+async function checkoutRemoteBranch(branch: GitBranch) {
+  const localName = getRemoteCheckoutName(branch.name);
+  isLoading.value = true;
+  try {
+    await gitStore.switchBranch(props.project.id, props.project.path, branch.name);
+    ElMessage.success(t('git.checkoutRemoteSuccess', { remote: branch.name, local: localName }));
+  } catch (e) {
+    showPersistentGitError(t('git.operationFailed', { error: String(e) }));
+  } finally {
+    isLoading.value = false;
+  }
+}
+
+/***********************分支创建与维护*********************/
 
 async function createBranch() {
   if (!newBranchName.value.trim()) return;
@@ -69,7 +99,38 @@ async function createBranch() {
     ElMessage.success(t('git.createBranchSuccess', { name: newBranchName.value.trim() }));
     newBranchName.value = '';
     startPoint.value = '';
-    await gitStore.refreshBranches(props.project.id, props.project.path);
+  } catch (e) {
+    showPersistentGitError(t('git.operationFailed', { error: String(e) }));
+  } finally {
+    isLoading.value = false;
+  }
+}
+
+async function renameBranch(branch: GitBranch) {
+  if (isBranchActionDisabled(branch, 'rename')) return;
+
+  let newName = '';
+  try {
+    const result = await ElMessageBox.prompt(
+      t('git.renameBranchPrompt', { name: branch.name }),
+      t('git.renameBranch'),
+      {
+        inputValue: branch.name,
+        inputPattern: /\S+/,
+        inputErrorMessage: t('git.branchNameInvalid'),
+      },
+    ) as unknown as { value?: unknown };
+    newName = String(result.value || '').trim();
+  } catch {
+    return;
+  }
+
+  if (!newName || newName === branch.name) return;
+
+  isLoading.value = true;
+  try {
+    await gitStore.renameBranch(props.project.id, props.project.path, branch.name, newName);
+    ElMessage.success(t('git.renameBranchSuccess', { old: branch.name, name: newName }));
   } catch (e) {
     showPersistentGitError(t('git.operationFailed', { error: String(e) }));
   } finally {
@@ -123,21 +184,41 @@ async function deleteBranch(name: string, force = false) {
     align-center
     class="branch-dialog"
   >
-    <!-- Search -->
-    <div class="mb-3">
+    <div class="branch-dialog-toolbar">
       <el-input
         v-model="searchQuery"
         :placeholder="t('common.search')"
         size="small"
         clearable
+        class="min-w-0 flex-1"
       >
         <template #prefix>
           <div class="i-mdi-magnify text-sm text-slate-400" />
         </template>
       </el-input>
+      <el-button size="small" :loading="isLoading" @click="refreshBranches">
+        <div class="i-mdi-refresh text-sm" />
+        {{ t('git.refresh') }}
+      </el-button>
     </div>
 
-    <!-- Create branch -->
+    <div v-if="currentBranch" class="current-branch-panel">
+      <div class="flex items-center gap-2 min-w-0">
+        <div class="i-mdi-source-branch text-sm text-blue-500" />
+        <div class="min-w-0 flex-1">
+          <div class="truncate text-[12px] font-medium text-blue-600 dark:text-blue-400">{{ currentBranch.name }}</div>
+          <div v-if="currentBranch.upstream" class="truncate text-[10px] text-slate-400 dark:text-slate-500">
+            {{ t('git.upstream') }}：{{ currentBranch.upstream }}
+          </div>
+        </div>
+      </div>
+      <div class="branch-meta">
+        <span v-if="currentBranch.ahead > 0" class="branch-badge branch-badge-ahead">↑{{ currentBranch.ahead }}</span>
+        <span v-if="currentBranch.behind > 0" class="branch-badge branch-badge-behind">↓{{ currentBranch.behind }}</span>
+        <span v-if="currentBranch.ahead === 0 && currentBranch.behind === 0" class="branch-badge">{{ t('git.currentBranch') }}</span>
+      </div>
+    </div>
+
     <div class="mb-4 p-3 rounded-lg bg-slate-50/80 dark:bg-slate-800/40 border border-slate-200/40 dark:border-slate-700/30">
       <div class="text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-2">{{ t('git.newBranch') }}</div>
       <div class="flex flex-col gap-2 sm:flex-row">
@@ -167,7 +248,6 @@ async function deleteBranch(name: string, force = false) {
       </div>
     </div>
 
-    <!-- Local branches -->
     <div class="mb-3">
       <div class="text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1 px-1">
         {{ t('git.localBranches') }} ({{ filteredLocal.length }})
@@ -186,23 +266,39 @@ async function deleteBranch(name: string, force = false) {
             <span v-if="branch.ahead > 0" class="text-[9px] text-green-500 font-mono">↑{{ branch.ahead }}</span>
             <span v-if="branch.behind > 0" class="text-[9px] text-orange-500 font-mono">↓{{ branch.behind }}</span>
           </template>
-          <div v-if="!branch.is_current" class="opacity-0 group-hover:opacity-100 flex gap-1 transition-opacity">
-            <button @click="switchToBranch(branch.name)" class="text-[10px] text-blue-500 hover:text-blue-700 cursor-pointer" :title="t('git.switchBranch')">
+          <div class="opacity-0 group-hover:opacity-100 flex gap-1 transition-opacity">
+            <button
+              @click="switchToBranch(branch.name)"
+              class="text-[10px] text-blue-500 hover:text-blue-700 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              :disabled="isBranchActionDisabled(branch, 'switch') || isLoading"
+              :title="t('git.switchBranch')"
+            >
               <div class="i-mdi-swap-horizontal text-sm" />
             </button>
-            <button @click="deleteBranch(branch.name)" class="text-[10px] text-red-400 hover:text-red-600 cursor-pointer" :title="t('git.deleteBranch')">
+            <button
+              @click="renameBranch(branch)"
+              class="text-[10px] text-slate-400 hover:text-blue-600 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              :disabled="isBranchActionDisabled(branch, 'rename') || isLoading"
+              :title="t('git.renameBranch')"
+            >
+              <div class="i-mdi-pencil-outline text-sm" />
+            </button>
+            <button
+              @click="deleteBranch(branch.name)"
+              class="text-[10px] text-red-400 hover:text-red-600 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              :disabled="isBranchActionDisabled(branch, 'delete') || isLoading"
+              :title="t('git.deleteBranch')"
+            >
               <div class="i-mdi-delete-outline text-sm" />
             </button>
           </div>
-          <span v-else class="text-[9px] text-blue-500/60 bg-blue-500/8 px-1.5 py-0.5 rounded-full">current</span>
         </div>
         <div v-if="filteredLocal.length === 0" class="px-3 py-4 text-center text-slate-400 text-[11px]">
-          {{ t('git.noCommits') }}
+          {{ t('git.noBranches') }}
         </div>
       </div>
     </div>
 
-    <!-- Remote branches -->
     <div v-if="filteredRemote.length > 0">
       <div class="text-[11px] font-medium text-slate-500 dark:text-slate-400 mb-1 px-1">
         {{ t('git.remoteBranches') }} ({{ filteredRemote.length }})
@@ -215,10 +311,14 @@ async function deleteBranch(name: string, force = false) {
         >
           <div class="i-mdi-cloud-outline text-sm text-slate-400" />
           <span class="flex-1 truncate text-slate-600 dark:text-slate-400">{{ branch.name }}</span>
+          <span class="hidden sm:inline text-[9px] text-slate-400 dark:text-slate-500 truncate max-w-[140px]">
+            {{ t('git.checkoutRemoteAs', { name: getRemoteCheckoutName(branch.name) }) }}
+          </span>
           <button
-            @click="switchToBranch(branch.name)"
-            class="opacity-0 group-hover:opacity-100 text-[10px] text-blue-500 hover:text-blue-700 cursor-pointer transition-opacity"
-            :title="t('git.switchBranch')"
+            @click="checkoutRemoteBranch(branch)"
+            class="opacity-0 group-hover:opacity-100 text-[10px] text-blue-500 hover:text-blue-700 cursor-pointer transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+            :disabled="isLoading"
+            :title="t('git.checkoutBranch', { name: branch.name })"
           >
             <div class="i-mdi-download text-sm" />
           </button>
@@ -229,6 +329,48 @@ async function deleteBranch(name: string, force = false) {
 </template>
 
 <style scoped>
+.branch-dialog-toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.current-branch-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(59, 130, 246, 0.22);
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.branch-meta {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.branch-badge {
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 9px;
+  color: rgb(37, 99, 235);
+  background: rgba(59, 130, 246, 0.12);
+}
+
+.branch-badge-ahead {
+  color: rgb(22, 163, 74);
+  background: rgba(34, 197, 94, 0.12);
+}
+
+.branch-badge-behind {
+  color: rgb(234, 88, 12);
+  background: rgba(249, 115, 22, 0.12);
+}
+
 :deep(.branch-dialog .el-dialog) {
   width: min(480px, calc(100vw - 32px));
   max-height: 90vh;

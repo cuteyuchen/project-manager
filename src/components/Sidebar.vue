@@ -3,7 +3,7 @@ import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 
 const emit = defineEmits<{
-  (e: 'navigate', view: 'dashboard' | 'settings' | 'nodes' | 'ports'): void
+  (e: 'navigate', view: 'dashboard' | 'settings' | 'nodes' | 'ports' | 'commitCalendar'): void
 }>();
 
 const { t } = useI18n();
@@ -36,6 +36,12 @@ function handleSelect(key: string) {
     <el-menu-item index="ports" :title="t('sidebar.ports')">
       <el-icon>
         <div class="i-mdi-lan-connect" />
+      </el-icon>
+    </el-menu-item>
+
+    <el-menu-item index="commitCalendar" :title="t('sidebar.commitCalendar')">
+      <el-icon>
+        <div class="i-mdi-calendar-month" />
       </el-icon>
     </el-menu-item>
 

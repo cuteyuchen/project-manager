@@ -1890,6 +1890,75 @@ $result | ConvertTo-Json -Compress`;
         return commits;
     },
 
+    gitOwnCommits: async (projectPath, since, until) => {
+        function readGitConfig(key) {
+            try {
+                const localValue = execFileSync('git', ['config', '--get', key], {
+                    cwd: projectPath, windowsHide: true
+                }).toString().trim();
+                if (localValue) return localValue;
+            } catch (_) {}
+
+            try {
+                const globalValue = execFileSync('git', ['config', '--global', '--get', key], {
+                    windowsHide: true
+                }).toString().trim();
+                if (globalValue) return globalValue;
+            } catch (_) {}
+
+            return undefined;
+        }
+
+        const identity = {
+            name: readGitConfig('user.name'),
+            email: readGitConfig('user.email'),
+        };
+        if (!identity.name && !identity.email) {
+            throw new Error('No Git author identity configured.');
+        }
+
+        let output;
+        try {
+            output = execFileSync('git', [
+                '--no-pager',
+                'log',
+                '--all',
+                `--since=${since}`,
+                `--before=${until}`,
+                '--format=%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s'
+            ], {
+                cwd: projectPath, windowsHide: true, maxBuffer: 10 * 1024 * 1024
+            }).toString();
+        } catch (e) {
+            output = e.stdout ? e.stdout.toString() : '';
+        }
+
+        const commits = [];
+        for (const line of output.split('\n')) {
+            const parts = line.split('\x1f');
+            if (parts.length < 6) continue;
+
+            const author = parts[2];
+            const email = parts[3];
+            const matched = identity.email
+                ? email.toLowerCase() === identity.email.toLowerCase()
+                : author === identity.name;
+            if (!matched) continue;
+
+            commits.push({
+                hash: parts[0],
+                shortHash: parts[1],
+                author,
+                email,
+                date: parts[4],
+                message: parts[5],
+            });
+        }
+
+        commits.sort((a, b) => a.date.localeCompare(b.date));
+        return { identity, commits };
+    },
+
     gitCommitDetail: async (projectPath, hash) => {
         let output;
         try {

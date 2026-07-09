@@ -1,0 +1,364 @@
+<script setup lang="ts">
+import { computed, onActivated, onMounted, shallowRef } from 'vue';
+import { ElMessage } from 'element-plus';
+import { useI18n } from 'vue-i18n';
+import { api } from '../api';
+import { useCommitCalendar } from '../composables/useCommitCalendar';
+import { formatCommitCalendarEntry, hasWeekendCommits } from '../utils/commitCalendar';
+import type { CommitCalendarItem } from '../utils/commitCalendar';
+
+const { t, locale } = useI18n();
+
+/***********************提交日历数据*********************/
+
+const {
+  loading,
+  loaded,
+  range,
+  skippedProjects,
+  calendarDays,
+  totalCommits,
+  refresh,
+} = useCommitCalendar();
+
+const weekdays = computed(() => {
+  if (locale.value.startsWith('zh')) {
+    return ['一', '二', '三', '四', '五', '六', '日'];
+  }
+  return ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+});
+
+const skippedSummary = computed(() => {
+  if (skippedProjects.value.length === 0) return '';
+  return t('commitCalendar.skippedSummary', { count: skippedProjects.value.length });
+});
+
+const shouldCompressWeekend = computed(() => !hasWeekendCommits(calendarDays.value));
+
+const calendarGridColumns = computed(() => (
+  shouldCompressWeekend.value
+    ? 'repeat(5, minmax(160px, 1fr)) 56px 56px'
+    : 'repeat(7, minmax(0, 1fr))'
+));
+
+const calendarGridStyle = computed(() => {
+  const weekCount = Math.max(1, Math.ceil(calendarDays.value.length / 7));
+  const minRowHeight = 112;
+  return {
+    gridTemplateColumns: calendarGridColumns.value,
+    gridTemplateRows: `repeat(${weekCount}, minmax(0, 1fr))`,
+    minHeight: `${weekCount * minRowHeight}px`,
+  };
+});
+
+function getSkipReasonText(reason: string): string {
+  return t(`commitCalendar.skipReasons.${reason}`);
+}
+
+function formatCommitTime(date: string): string {
+  return new Date(date).toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
+function formatCommitDateTime(date: string): string {
+  return new Date(date).toLocaleString('zh-CN', { hour12: false });
+}
+
+/***********************提交详情与复制*********************/
+
+const selectedCommit = shallowRef<CommitCalendarItem | null>(null);
+const selectedCommitDetailMessage = shallowRef('');
+const detailLoading = shallowRef(false);
+let detailRequestId = 0;
+
+const detailVisible = computed({
+  get: () => selectedCommit.value !== null,
+  set: (value: boolean) => {
+    if (!value) {
+      detailRequestId += 1;
+      selectedCommit.value = null;
+      selectedCommitDetailMessage.value = '';
+      detailLoading.value = false;
+    }
+  },
+});
+
+const selectedCommitMessageText = computed(() => {
+  if (!selectedCommit.value) return '';
+  return selectedCommitDetailMessage.value || selectedCommit.value.message;
+});
+
+function openCommitDetail(item: CommitCalendarItem): void {
+  selectedCommit.value = item;
+  selectedCommitDetailMessage.value = '';
+  void loadCommitDetail(item);
+}
+
+async function loadCommitDetail(item: CommitCalendarItem): Promise<void> {
+  const requestId = detailRequestId + 1;
+  detailRequestId = requestId;
+  detailLoading.value = true;
+
+  try {
+    const detail = await api.gitCommitDetail(item.projectPath, item.hash);
+    if (detailRequestId === requestId && selectedCommit.value?.hash === item.hash) {
+      selectedCommitDetailMessage.value = detail.message;
+    }
+  } catch (error) {
+    if (detailRequestId === requestId) {
+      ElMessage.error(t('commitCalendar.loadDetailFailed', { error: String(error) }));
+    }
+  } finally {
+    if (detailRequestId === requestId) {
+      detailLoading.value = false;
+    }
+  }
+}
+
+async function copySelectedCommit(): Promise<void> {
+  if (!selectedCommitMessageText.value) return;
+  try {
+    await navigator.clipboard.writeText(selectedCommitMessageText.value);
+    ElMessage.success(t('commitCalendar.copySuccess'));
+  } catch (error) {
+    ElMessage.error(t('commitCalendar.copyFailed', { error: String(error) }));
+  }
+}
+
+/***********************生命周期加载*********************/
+
+function refreshIfNeeded(): void {
+  if (!loaded.value && !loading.value) {
+    void refresh();
+  }
+}
+
+onMounted(refreshIfNeeded);
+onActivated(refreshIfNeeded);
+</script>
+
+<template>
+  <div class="h-full flex flex-col overflow-hidden bg-slate-100/70 dark:bg-[#0f172a]/80">
+    <div class="shrink-0 px-5 py-3 border-b border-slate-200/70 dark:border-slate-700/40 bg-white/90 dark:bg-[#0f172a]/90 backdrop-blur">
+      <div class="flex items-center justify-between gap-3">
+        <div class="min-w-0">
+          <div class="flex items-center gap-2">
+            <div class="i-mdi-calendar-month text-xl text-blue-500" />
+            <h2 class="m-0 text-base font-semibold text-slate-800 dark:text-slate-100">
+              {{ t('commitCalendar.title') }}
+            </h2>
+          </div>
+          <p class="m-0 mt-1 text-xs text-slate-500 dark:text-slate-400">
+            {{ t('commitCalendar.subtitle', { month: range.title, count: totalCommits }) }}
+          </p>
+        </div>
+
+        <button
+          class="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-blue-500 hover:bg-blue-600 disabled:bg-blue-300 text-white text-xs font-medium transition-colors"
+          :disabled="loading"
+          @click="refresh"
+        >
+          <div class="i-mdi-refresh text-sm" :class="{ 'animate-spin': loading }" />
+          <span>{{ t('common.refresh') }}</span>
+        </button>
+      </div>
+
+      <div
+        v-if="skippedSummary"
+        class="mt-3 rounded-md border border-amber-200/80 dark:border-amber-500/20 bg-amber-50 dark:bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-200"
+      >
+        <div class="font-medium">{{ skippedSummary }}</div>
+        <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1">
+          <span v-for="project in skippedProjects" :key="project.projectId">
+            {{ project.projectName }}：{{ getSkipReasonText(project.reason) }}
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <div
+      class="shrink-0 grid border-b border-slate-200/70 dark:border-slate-700/40 bg-slate-50/90 dark:bg-slate-900/50"
+      :style="{ gridTemplateColumns: calendarGridColumns }"
+    >
+      <div
+        v-for="day in weekdays"
+        :key="day"
+        class="h-8 flex items-center justify-center text-[11px] font-semibold text-slate-500 dark:text-slate-400"
+      >
+        {{ day }}
+      </div>
+    </div>
+
+    <div v-if="loading && !loaded" class="flex-1 flex items-center justify-center text-slate-400 dark:text-slate-500 text-sm">
+      <div class="i-mdi-loading animate-spin text-xl mr-2" />
+      {{ t('common.loading') }}
+    </div>
+
+    <div v-else class="relative flex-1 min-h-0 overflow-auto">
+      <div
+        class="commit-calendar-grid grid gap-px bg-slate-200/80 dark:bg-slate-700/50 p-px"
+        :style="calendarGridStyle"
+      >
+        <div
+          v-for="day in calendarDays"
+          :key="day.date"
+          class="flex min-w-0 flex-col overflow-hidden p-2"
+          :class="day.inCurrentMonth ? 'bg-white dark:bg-slate-950/40' : 'bg-slate-50/80 dark:bg-slate-900/50 text-slate-400'"
+        >
+          <div class="flex items-center justify-between gap-2">
+            <span
+              class="inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-semibold"
+              :class="day.inCurrentMonth ? 'text-slate-600 dark:text-slate-300' : 'text-slate-300 dark:text-slate-600'"
+            >
+              {{ day.day }}
+            </span>
+            <span
+              v-if="day.items.length > 0"
+              class="shrink-0 rounded-full bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600 dark:text-blue-300"
+            >
+              {{ day.items.length }}
+            </span>
+          </div>
+
+          <div class="mt-2 min-h-0 flex-1 space-y-1 overflow-y-auto pr-1 commit-day-scroll">
+            <button
+              v-for="item in day.items"
+              :key="item.projectId + item.hash"
+              type="button"
+              class="commit-entry-btn"
+              :title="formatCommitCalendarEntry(item)"
+              @click="openCommitDetail(item)"
+            >
+              <span class="commit-entry-project">{{ item.projectName }}</span>
+              <span class="commit-entry-message">{{ item.message }}</span>
+              <span class="commit-entry-time">（{{ formatCommitTime(item.date) }}）</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div
+        v-if="loaded && totalCommits === 0"
+        class="pointer-events-none absolute inset-0 flex items-center justify-center text-center"
+      >
+        <div class="rounded-md bg-white/90 dark:bg-slate-900/90 px-5 py-4 shadow-sm border border-slate-200/70 dark:border-slate-700/50">
+          <div class="i-mdi-calendar-blank-outline text-3xl mx-auto mb-2 text-slate-300 dark:text-slate-600" />
+          <div class="text-sm font-medium text-slate-500 dark:text-slate-300">{{ t('commitCalendar.empty') }}</div>
+          <div class="mt-1 text-xs text-slate-400 dark:text-slate-500">{{ t('commitCalendar.emptyHint') }}</div>
+        </div>
+      </div>
+    </div>
+
+    <el-dialog
+      v-model="detailVisible"
+      :title="t('commitCalendar.detailTitle')"
+      width="560px"
+      append-to-body
+      align-center
+      class="commit-calendar-dialog"
+    >
+      <div v-if="selectedCommit" class="space-y-3 text-sm text-slate-600 dark:text-slate-300">
+        <div class="grid grid-cols-[72px_1fr] gap-x-3 gap-y-2 text-xs">
+          <span class="text-slate-400 dark:text-slate-500">{{ t('commitCalendar.project') }}</span>
+          <span class="font-medium text-slate-700 dark:text-slate-100">{{ selectedCommit.projectName }}</span>
+          <span class="text-slate-400 dark:text-slate-500">{{ t('commitCalendar.time') }}</span>
+          <span>{{ formatCommitDateTime(selectedCommit.date) }}</span>
+          <span class="text-slate-400 dark:text-slate-500">{{ t('git.hash') }}</span>
+          <span class="font-mono">{{ selectedCommit.shortHash }}</span>
+        </div>
+
+        <div>
+          <div class="mb-1 text-xs text-slate-400 dark:text-slate-500">{{ t('git.commitMessage') }}</div>
+          <div
+            v-if="detailLoading"
+            class="flex min-h-24 items-center justify-center rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs text-slate-400 dark:text-slate-500"
+          >
+            <div class="i-mdi-loading animate-spin mr-1.5" />
+            {{ t('common.loading') }}
+          </div>
+          <pre v-else class="m-0 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-3 py-2 text-xs leading-5 text-slate-700 dark:text-slate-200">{{ selectedCommitMessageText }}</pre>
+        </div>
+      </div>
+
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <el-button @click="detailVisible = false">{{ t('common.close') }}</el-button>
+          <el-button type="primary" :loading="detailLoading" @click="copySelectedCommit">
+            {{ t('commitCalendar.copy') }}
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<style scoped>
+.commit-calendar-grid {
+  height: 100%;
+}
+
+.commit-entry-btn {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  padding: 2px 4px;
+  text-align: left;
+  font-size: 11px;
+  line-height: 18px;
+  color: rgb(71 85 105);
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.commit-entry-btn:hover {
+  background: rgb(239 246 255);
+  color: rgb(37 99 235);
+}
+
+:global(html.dark) .commit-entry-btn {
+  color: rgb(203 213 225);
+}
+
+:global(html.dark) .commit-entry-btn:hover {
+  background: rgba(59, 130, 246, 0.12);
+  color: rgb(147 197 253);
+}
+
+.commit-entry-project {
+  max-width: 36%;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+.commit-entry-message {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.commit-entry-time {
+  flex: 0 0 auto;
+  color: rgb(100 116 139);
+}
+
+.commit-day-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+
+.commit-day-scroll::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.45);
+  border-radius: 999px;
+}
+</style>
