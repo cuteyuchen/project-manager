@@ -880,25 +880,20 @@ async function cancelClone() {
 }
 
 .script-toggle-active {
-  border-color: rgba(59, 130, 246, 0.35);
-  background: rgba(59, 130, 246, 0.1);
-  color: rgb(37, 99, 235);
+  border-color: color-mix(in srgb, var(--app-primary) 35%, transparent);
+  background: var(--app-primary-soft);
+  color: var(--app-primary);
 }
 
 .script-toggle-inactive {
-  border-color: rgba(148, 163, 184, 0.25);
-  background: rgba(255, 255, 255, 0.85);
-  color: rgb(71, 85, 105);
-}
-
-.dark .script-toggle-inactive {
-  background: rgba(15, 23, 42, 0.72);
-  color: rgb(203, 213, 225);
+  border-color: var(--app-border);
+  background: var(--app-surface-soft);
+  color: var(--app-text-secondary);
 }
 
 .script-toggle:hover {
   transform: translateY(-1px);
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+  box-shadow: var(--app-shadow-md);
 }
 
 .project-modal {

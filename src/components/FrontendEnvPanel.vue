@@ -111,7 +111,7 @@ watch(
 </script>
 
 <template>
-  <div class="flex h-full flex-col bg-white/40 font-sans dark:bg-[#0f172a]/40">
+  <div class="frontend-env-panel flex h-full flex-col font-sans">
     <div class="flex shrink-0 items-center justify-between border-b border-slate-200/70 px-4 py-2 dark:border-slate-700/50">
       <span class="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
         {{ t('dashboard.envSwitcher') }}
@@ -225,7 +225,12 @@ watch(
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.3);
+  background: color-mix(in srgb, var(--app-text-muted) 56%, transparent);
   border-radius: 2px;
+}
+
+.frontend-env-panel {
+  background: var(--app-surface);
+  color: var(--app-text);
 }
 </style>

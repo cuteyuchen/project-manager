@@ -301,7 +301,7 @@ function removeModule(module: CodeModule) {
   background: transparent;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.3);
+  background: color-mix(in srgb, var(--app-text-muted) 56%, transparent);
   border-radius: 2px;
 }
 </style>

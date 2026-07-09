@@ -107,7 +107,7 @@ function isProfileRunning(profile: WorkspaceProfile): boolean {
       <div
         v-for="card in statCards"
         :key="card.key"
-        class="stat-card bg-white dark:bg-slate-800/60 rounded-lg p-3 border border-slate-200/70 dark:border-slate-700/40 shadow-sm shadow-slate-200/40 dark:shadow-none"
+        class="stat-card app-card p-3"
       >
         <div class="text-[10px] text-slate-400 dark:text-slate-500 mb-1">
           {{ t(card.labelKey) }}
@@ -123,9 +123,9 @@ function isProfileRunning(profile: WorkspaceProfile): boolean {
       <section
         v-for="category in categories"
         :key="category.key"
-        class="overview-section bg-white dark:bg-slate-800/60 rounded-lg border border-slate-200/70 dark:border-slate-700/40 overflow-hidden shadow-sm shadow-slate-200/40 dark:shadow-none"
+        class="overview-section app-card overflow-hidden"
       >
-        <div class="flex items-center gap-2 px-3 py-2 border-b border-slate-100 dark:border-slate-700/40">
+        <div class="flex items-center gap-2 px-3 py-2 border-b border-[var(--app-border)]">
           <div
             class="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
             :class="toneIconClass[category.tone]"
@@ -190,7 +190,7 @@ function isProfileRunning(profile: WorkspaceProfile): boolean {
         <div
           v-for="profile in profiles"
           :key="profile.id"
-          class="flex items-center gap-2 px-3 py-2 rounded-lg bg-white dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/40"
+          class="app-card flex items-center gap-2 px-3 py-2"
         >
           <div class="i-mdi-play-circle-outline text-sm text-slate-400 shrink-0" />
           <span class="text-sm text-slate-700 dark:text-slate-200 truncate flex-1">{{ profile.name }}</span>
@@ -250,20 +250,12 @@ function isProfileRunning(profile: WorkspaceProfile): boolean {
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: color-mix(in srgb, var(--app-text-muted) 52%, transparent);
   border-radius: 2px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
-}
-
-:global(html.dark) .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #334155;
-}
-
-:global(html.dark) .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+  background: color-mix(in srgb, var(--app-text-muted) 74%, transparent);
 }
 
 .overview-category-grid {
@@ -298,7 +290,7 @@ function isProfileRunning(profile: WorkspaceProfile): boolean {
   align-items: center;
   justify-content: center;
   padding: 24px 12px;
-  color: rgb(148 163 184);
+  color: var(--app-text-muted);
   font-size: 12px;
 }
 
@@ -311,7 +303,7 @@ function isProfileRunning(profile: WorkspaceProfile): boolean {
   gap: 10px;
   border: 1px solid transparent;
   border-radius: 8px;
-  background: rgb(248 250 252 / 0.78);
+  background: var(--app-surface-soft);
   padding: 8px 10px;
   text-align: left;
   transition:
@@ -329,8 +321,8 @@ function isProfileRunning(profile: WorkspaceProfile): boolean {
   align-items: center;
   justify-content: center;
   border-radius: 7px;
-  background: rgb(241 245 249);
-  color: rgb(100 116 139);
+  background: color-mix(in srgb, var(--app-text-muted) 12%, transparent);
+  color: var(--app-text-secondary);
 }
 
 .overview-project-main {
@@ -340,7 +332,7 @@ function isProfileRunning(profile: WorkspaceProfile): boolean {
 
 .overview-project-name {
   overflow: hidden;
-  color: rgb(51 65 85);
+  color: var(--app-text);
   font-size: 13px;
   font-weight: 600;
   line-height: 18px;
@@ -350,7 +342,7 @@ function isProfileRunning(profile: WorkspaceProfile): boolean {
 
 .overview-project-path {
   overflow: hidden;
-  color: rgb(148 163 184);
+  color: var(--app-text-muted);
   font-size: 10px;
   line-height: 14px;
   text-overflow: ellipsis;
@@ -365,62 +357,26 @@ function isProfileRunning(profile: WorkspaceProfile): boolean {
 }
 
 .overview-project-locate {
-  color: rgb(203 213 225);
+  color: var(--app-text-muted);
   font-size: 13px;
   transition: color 0.15s ease, transform 0.15s ease;
 }
 
 .overview-project-row:hover {
-  border-color: rgb(191 219 254 / 0.72);
-  background: rgb(255 255 255);
-  box-shadow: 0 8px 18px rgb(15 23 42 / 0.06);
+  border-color: color-mix(in srgb, var(--app-primary) 26%, transparent);
+  background: var(--app-surface);
+  box-shadow: var(--app-shadow-sm);
   transform: translateY(-1px);
 }
 
 .overview-project-row:hover .overview-project-icon {
-  background: rgb(239 246 255);
-  color: rgb(37 99 235);
+  background: var(--app-primary-soft);
+  color: var(--app-primary);
 }
 
 .overview-project-row:hover .overview-project-locate {
-  color: rgb(37 99 235);
+  color: var(--app-primary);
   transform: scale(1.06);
-}
-
-:global(html.dark) .overview-project-row {
-  background: rgb(15 23 42 / 0.48);
-}
-
-:global(html.dark) .overview-project-icon {
-  background: rgb(30 41 59 / 0.72);
-  color: rgb(148 163 184);
-}
-
-:global(html.dark) .overview-project-name {
-  color: rgb(226 232 240);
-}
-
-:global(html.dark) .overview-project-path {
-  color: rgb(100 116 139);
-}
-
-:global(html.dark) .overview-category-empty {
-  color: rgb(100 116 139);
-}
-
-:global(html.dark) .overview-project-row:hover {
-  border-color: rgb(96 165 250 / 0.24);
-  background: rgb(30 41 59 / 0.62);
-  box-shadow: 0 10px 22px rgb(2 6 23 / 0.2);
-}
-
-:global(html.dark) .overview-project-row:hover .overview-project-icon {
-  background: rgb(30 64 175 / 0.24);
-  color: rgb(147 197 253);
-}
-
-:global(html.dark) .overview-project-row:hover .overview-project-locate {
-  color: rgb(147 197 253);
 }
 
 @media (max-width: 768px) {

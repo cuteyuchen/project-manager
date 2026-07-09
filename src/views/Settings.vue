@@ -1136,13 +1136,8 @@ async function testAiConnection() {
 <style scoped>
 .settings-page {
   min-height: 100%;
-  background: rgb(255 255 255);
-  color: rgb(15 23 42);
-}
-
-.dark .settings-page {
-  background: rgb(15 23 42);
-  color: rgb(241 245 249);
+  background: var(--app-bg-muted);
+  color: var(--app-text);
 }
 
 .settings-container {
@@ -1164,20 +1159,16 @@ async function testAiConnection() {
   font-size: 30px;
   line-height: 1.2;
   font-weight: 800;
-  color: rgb(15 23 42);
-}
-
-.dark .settings-title {
-  color: rgb(248 250 252);
+  color: var(--app-text);
 }
 
 .settings-dirty {
   border-radius: 999px;
-  background: rgb(245 158 11 / 0.12);
+  background: color-mix(in srgb, var(--app-warning) 12%, transparent);
   padding: 3px 10px;
   font-size: 12px;
   font-weight: 600;
-  color: rgb(217 119 6);
+  color: var(--app-warning);
 }
 
 .settings-actions,
@@ -1189,17 +1180,15 @@ async function testAiConnection() {
 
 .settings-section {
   margin-bottom: 18px;
-  border: 1px solid rgb(226 232 240);
-  border-radius: 8px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  background: var(--app-surface);
   padding: 16px 20px 18px;
+  box-shadow: var(--app-shadow-sm);
 }
 
 .settings-section:last-child {
   margin-bottom: 0;
-}
-
-.dark .settings-section {
-  border-color: rgb(51 65 85);
 }
 
 .settings-section-title {
@@ -1207,21 +1196,16 @@ async function testAiConnection() {
   align-items: center;
   gap: 12px;
   margin-bottom: 0;
-  border-bottom: 1px solid rgb(226 232 240);
+  border-bottom: 1px solid var(--app-border);
   padding-bottom: 14px;
   font-size: 22px;
   font-weight: 800;
-  color: rgb(15 23 42);
-}
-
-.dark .settings-section-title {
-  border-bottom-color: rgb(51 65 85);
-  color: rgb(241 245 249);
+  color: var(--app-text);
 }
 
 .settings-section-icon {
   font-size: 22px;
-  color: rgb(100 116 139);
+  color: var(--app-text-secondary);
 }
 
 .settings-section-head {
@@ -1230,12 +1214,8 @@ async function testAiConnection() {
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 14px;
-  border-bottom: 1px solid rgb(226 232 240);
+  border-bottom: 1px solid var(--app-border);
   padding: 14px 0;
-}
-
-.dark .settings-section-head {
-  border-bottom-color: rgb(51 65 85);
 }
 
 .settings-row-line {
@@ -1252,11 +1232,7 @@ async function testAiConnection() {
 }
 
 .settings-row-line + .settings-row-line {
-  border-top: 1px solid rgb(226 232 240);
-}
-
-.dark .settings-row-line + .settings-row-line {
-  border-top-color: rgb(51 65 85);
+  border-top: 1px solid var(--app-border);
 }
 
 .settings-row-line > :first-child {
@@ -1272,22 +1248,14 @@ async function testAiConnection() {
 .settings-row-title {
   font-size: 16px;
   font-weight: 500;
-  color: rgb(15 23 42);
-}
-
-.dark .settings-row-title {
-  color: rgb(226 232 240);
+  color: var(--app-text);
 }
 
 .settings-row-desc {
   margin-top: 4px;
   font-size: 14px;
   line-height: 1.45;
-  color: rgb(100 116 139);
-}
-
-.dark .settings-row-desc {
-  color: rgb(148 163 184);
+  color: var(--app-text-secondary);
 }
 
 .settings-control {
@@ -1296,20 +1264,14 @@ async function testAiConnection() {
 
 .settings-shortcut {
   width: 172px;
-  border: 1px solid rgb(226 232 240);
-  border-radius: 6px;
-  background: rgb(248 250 252);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-surface-soft);
   padding: 10px 16px;
   text-align: center;
   font-family: var(--font-mono);
   font-size: 14px;
-  color: rgb(51 65 85);
-}
-
-.dark .settings-shortcut {
-  border-color: rgb(51 65 85);
-  background: rgb(30 41 59);
-  color: rgb(203 213 225);
+  color: var(--app-text-secondary);
 }
 
 .editor-list,
@@ -1326,26 +1288,20 @@ async function testAiConnection() {
   align-items: center;
   gap: 12px;
   min-height: 72px;
-  border: 1px solid rgb(226 232 240);
-  border-radius: 8px;
-  background: rgb(249 250 251);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-surface-soft);
   padding: 10px 16px;
-  transition: border-color 0.16s ease, background-color 0.16s ease;
+  transition:
+    border-color var(--app-duration-fast) var(--app-ease),
+    background-color var(--app-duration-fast) var(--app-ease),
+    box-shadow var(--app-duration-fast) var(--app-ease);
 }
 
 .editor-card:hover {
-  border-color: rgb(203 213 225);
-  background: rgb(255 255 255);
-}
-
-.dark .editor-card {
-  border-color: rgb(51 65 85);
-  background: rgb(15 23 42 / 0.7);
-}
-
-.dark .editor-card:hover {
-  border-color: rgb(71 85 105);
-  background: rgb(15 23 42 / 0.9);
+  border-color: var(--app-border-strong);
+  background: var(--app-surface);
+  box-shadow: var(--app-shadow-sm);
 }
 
 .editor-avatar {
@@ -1354,16 +1310,11 @@ async function testAiConnection() {
   justify-content: center;
   width: 42px;
   height: 42px;
-  border-radius: 8px;
-  background: rgb(238 242 255);
-  color: rgb(79 70 229);
+  border-radius: var(--app-radius-md);
+  background: var(--app-primary-soft);
+  color: var(--app-primary);
   font-size: 14px;
   font-weight: 800;
-}
-
-.dark .editor-avatar {
-  background: rgb(49 46 129 / 0.48);
-  color: rgb(199 210 254);
 }
 
 .editor-main {
@@ -1372,29 +1323,21 @@ async function testAiConnection() {
 
 .editor-name {
   overflow: hidden;
-  color: rgb(15 23 42);
+  color: var(--app-text);
   font-size: 17px;
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.dark .editor-name {
-  color: rgb(241 245 249);
-}
-
 .editor-path {
   overflow: hidden;
   margin-top: 3px;
-  color: rgb(100 116 139);
+  color: var(--app-text-secondary);
   font-family: var(--font-mono);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.dark .editor-path {
-  color: rgb(148 163 184);
 }
 
 .editor-actions {
@@ -1419,28 +1362,21 @@ async function testAiConnection() {
 .editor-add-button {
   width: 100%;
   min-height: 44px;
-  border: 1px dashed rgb(203 213 225);
-  border-radius: 8px;
+  border: 1px dashed var(--app-border-strong);
+  border-radius: var(--app-radius-md);
   background: transparent;
-  color: rgb(79 70 229);
+  color: var(--app-primary);
   font-size: 15px;
   cursor: pointer;
-  transition: border-color 0.16s ease, background-color 0.16s ease, color 0.16s ease;
+  transition:
+    border-color var(--app-duration-fast) var(--app-ease),
+    background-color var(--app-duration-fast) var(--app-ease),
+    color var(--app-duration-fast) var(--app-ease);
 }
 
 .editor-add-button:hover {
-  border-color: rgb(129 140 248);
-  background: rgb(238 242 255 / 0.55);
-}
-
-.dark .editor-add-button {
-  border-color: rgb(71 85 105);
-  color: rgb(129 140 248);
-}
-
-.dark .editor-add-button:hover {
-  border-color: rgb(129 140 248);
-  background: rgb(49 46 129 / 0.22);
+  border-color: color-mix(in srgb, var(--app-primary) 48%, transparent);
+  background: var(--app-primary-soft);
 }
 
 .terminal-row {
@@ -1448,28 +1384,17 @@ async function testAiConnection() {
   grid-template-columns: minmax(120px, 180px) minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 10px;
-  border: 1px solid rgb(226 232 240);
-  border-radius: 8px;
-  background: rgb(249 250 251);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-surface-soft);
   padding: 10px;
 }
 
-.dark .terminal-row {
-  border-color: rgb(51 65 85);
-  background: rgb(15 23 42 / 0.7);
-}
-
 .settings-section :deep(.el-segmented) {
-  --el-segmented-bg-color: rgb(241 245 249);
-  --el-segmented-item-selected-bg-color: rgb(255 255 255);
-  --el-segmented-item-selected-color: rgb(15 23 42);
+  --el-segmented-bg-color: var(--app-surface-soft);
+  --el-segmented-item-selected-bg-color: var(--app-surface);
+  --el-segmented-item-selected-color: var(--app-text);
   padding: 4px;
-}
-
-.dark .settings-section :deep(.el-segmented) {
-  --el-segmented-bg-color: rgb(30 41 59);
-  --el-segmented-item-selected-bg-color: rgb(15 23 42);
-  --el-segmented-item-selected-color: rgb(241 245 249);
 }
 
 .settings-section :deep(.el-button + .el-button) {
@@ -1538,37 +1463,24 @@ async function testAiConnection() {
 }
 
 .settings-card {
-  box-shadow: 0 8px 30px rgba(15, 23, 42, 0.06);
-  border-radius: 18px;
-  border: 1px solid rgb(226 232 240 / 0.9) !important;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.96)) !important;
-}
-.dark .settings-card {
-  border-color: rgb(51 65 85 / 0.7) !important;
-  background: linear-gradient(180deg, rgba(30, 41, 59, 0.96), rgba(15, 23, 42, 0.96)) !important;
-  box-shadow: 0 10px 30px rgba(2, 6, 23, 0.3);
+  box-shadow: var(--app-shadow-sm);
+  border-radius: var(--app-radius-lg);
+  border: 1px solid var(--app-border) !important;
+  background: var(--app-surface) !important;
 }
 .section-title { display: flex; align-items: center; gap: 8px; font-weight: 600; }
 .setting-row, .panel, .summary-tile, .conflict-card, .diff-box {
-  border-radius: 14px;
-  border: 1px solid rgb(226 232 240 / 0.8);
-  background: rgb(248 250 252 / 0.88);
-}
-.dark .setting-row, .dark .panel, .dark .summary-tile, .dark .conflict-card, .dark .diff-box {
-  border-color: rgb(51 65 85 / 0.7);
-  background: rgb(15 23 42 / 0.62);
+  border-radius: var(--app-radius-lg);
+  border: 1px solid var(--app-border);
+  background: var(--app-surface-soft);
 }
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; }
 .panel, .conflict-card, .diff-box, .summary-tile { padding: 14px; }
-.setting-label { font-size: 14px; font-weight: 600; color: rgb(51 65 85); }
-.dark .setting-label { color: rgb(226 232 240); }
-.setting-desc, .summary-label, .diff-title { font-size: 12px; color: rgb(100 116 139); }
-.dark .setting-desc, .dark .summary-label, .dark .diff-title { color: rgb(148 163 184); }
-.summary-value { margin-top: 8px; font-size: 24px; line-height: 1; font-weight: 700; color: rgb(15 23 42); }
-.dark .summary-value { color: rgb(248 250 252); }
+.setting-label { font-size: 14px; font-weight: 600; color: var(--app-text-secondary); }
+.setting-desc, .summary-label, .diff-title { font-size: 12px; color: var(--app-text-muted); }
+.summary-value { margin-top: 8px; font-size: 24px; line-height: 1; font-weight: 700; color: var(--app-text); }
 .diff-box { overflow: hidden; }
-.diff-content { margin: 0; max-height: 240px; overflow: auto; font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; color: rgb(30 41 59); font-family: var(--font-mono); }
-.dark .diff-content { color: rgb(226 232 240); }
+.diff-content { margin: 0; max-height: 240px; overflow: auto; font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; color: var(--app-text-secondary); font-family: var(--font-mono); }
 .import-dialog-content { max-height: 72vh; overflow-y: auto; padding-right: 4px; }
 :deep(.el-card__header) { padding: 14px 18px; }
 :deep(.el-card__body) { padding: 18px; }

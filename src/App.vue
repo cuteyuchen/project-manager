@@ -62,7 +62,7 @@ async function handleImportProject(path: string) {
   const loading = ElLoading.service({
     lock: true,
     text: 'Scanning...',
-    background: 'rgba(0, 0, 0, 0.7)',
+    background: 'color-mix(in srgb, black 70%, transparent)',
   });
 
   try {
@@ -637,24 +637,13 @@ watch(
 </script>
 
 <template>
-  <div class="h-screen w-screen flex flex-col bg-slate-50 dark:bg-[#0f172a] text-slate-900 dark:text-gray-100 font-sans overflow-hidden transition-colors duration-200 antialiased">
+  <div class="app-shell">
     <TitleBar v-if="!isPlugin" />
 
-    <div class="flex-1 flex overflow-hidden relative">
+    <div class="app-layout">
       <Sidebar @navigate="v => currentView = v" />
-      <main class="flex-1 h-full overflow-hidden relative">
-        <!-- Modern deep gradient background -->
-        <div
-          class="absolute inset-0 bg-gradient-to-br from-slate-50 via-slate-100 to-slate-50 dark:from-[#0f172a] dark:via-[#131c2e] dark:to-[#0f172a] opacity-100 pointer-events-none transition-colors duration-200" />
-        <!-- Subtle accent glow -->
-        <div
-          class="absolute top-[-20%] right-[-10%] w-[400px] h-[400px] bg-blue-500/5 dark:bg-blue-500/8 rounded-full blur-[100px] pointer-events-none">
-        </div>
-        <div
-          class="absolute bottom-[-20%] left-[-10%] w-[400px] h-[400px] bg-purple-500/5 dark:bg-purple-500/8 rounded-full blur-[100px] pointer-events-none">
-        </div>
-
-        <div class="relative h-full z-10">
+      <main class="app-main">
+        <div class="app-view-stack">
           <Transition name="page-fade" mode="out-in">
           <KeepAlive>
             <Dashboard v-if="currentView === 'dashboard'" key="dashboard" />
@@ -667,9 +656,9 @@ watch(
         </div>
 
         <!-- Drag Overlay -->
-        <div v-if="isDragging" class="absolute inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center border-4 border-blue-500 border-dashed m-4 rounded-xl transition-all duration-300">
-          <div class="text-center text-white">
-             <div class="text-6xl mb-4 text-blue-400 flex justify-center">
+        <div v-if="isDragging" class="app-drag-overlay">
+          <div class="text-center">
+             <div class="text-6xl mb-4 text-blue-500 dark:text-blue-300 flex justify-center">
                <div class="i-mdi-folder-upload" />
              </div>
              <h2 class="text-2xl font-bold">{{ t('dashboard.dropToImport') || 'Drop folder to import' }}</h2>
@@ -725,214 +714,3 @@ watch(
     />
   </div>
 </template>
-
-<style>
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
-
-:root {
-  font-family: 'IBM Plex Sans', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
-}
-
-html.dark {
-  color-scheme: dark;
-  --el-bg-color: #1e293b !important;
-  --el-bg-color-overlay: #1e293b !important;
-  --el-border-color: #334155 !important;
-  --el-border-color-light: #334155 !important;
-  --el-border-color-lighter: #334155 !important;
-  --el-text-color-primary: #f1f5f9 !important;
-  --el-text-color-regular: #cbd5e1 !important;
-  --el-fill-color-blank: #0f172a !important;
-}
-
-html,
-body,
-#app {
-  height: 100%;
-  margin: 0;
-  overflow: hidden;
-  background-color: transparent;
-}
-
-/* Monospace font for all font-mono elements */
-.font-mono, code, pre, kbd, samp {
-  font-family: var(--font-mono);
-}
-
-/* Respect reduced motion preference */
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
-}
-
-/* Focus visible styles for all interactive elements */
-button:focus-visible,
-[role="button"]:focus-visible,
-a:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible {
-  outline: 2px solid rgba(59, 130, 246, 0.5);
-  outline-offset: 1px;
-  border-radius: 4px;
-}
-
-/* Ensure all buttons get cursor-pointer */
-button, [role="button"] {
-  cursor: pointer;
-}
-
-/* Custom Scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  border-radius: 3px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
-}
-
-.dark ::-webkit-scrollbar-thumb {
-  background: #334155;
-}
-
-.dark ::-webkit-scrollbar-thumb:hover {
-  background: #475569;
-}
-
-/* Element Plus refinements */
-.el-button {
-  transition: all 0.2s ease-out !important;
-}
-
-.el-card {
-  transition: box-shadow 0.2s ease-out, border-color 0.2s ease-out !important;
-}
-
-.el-input__wrapper {
-  transition: box-shadow 0.2s ease-out !important;
-}
-
-.app-dialog,
-.project-modal,
-.install-node-dialog,
-.branch-dialog,
-.git-remote-dialog,
-.import-preview-dialog,
-.app-centered-dialog {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  max-width: calc(100vw - 32px);
-}
-
-.app-dialog {
-  width: min(500px, calc(100vw - 32px)) !important;
-  max-height: 90vh;
-}
-
-.project-modal {
-  width: min(750px, calc(100vw - 32px)) !important;
-  max-height: 90vh;
-}
-
-.install-node-dialog {
-  width: min(600px, calc(100vw - 32px)) !important;
-  max-height: 90vh;
-}
-
-.branch-dialog {
-  width: min(480px, calc(100vw - 32px)) !important;
-  max-height: 90vh;
-}
-
-.git-remote-dialog {
-  width: min(640px, calc(100vw - 32px)) !important;
-  max-height: 90vh;
-}
-
-.import-preview-dialog {
-  width: min(960px, calc(100vw - 32px)) !important;
-  max-height: 92vh;
-}
-
-.app-centered-dialog {
-  width: min(420px, calc(100vw - 32px)) !important;
-  max-height: 92vh;
-}
-
-.app-dialog .el-dialog__body,
-.project-modal .el-dialog__body,
-.install-node-dialog .el-dialog__body,
-.branch-dialog .el-dialog__body,
-.git-remote-dialog .el-dialog__body,
-.app-centered-dialog .el-dialog__body {
-  flex: 1;
-  min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-}
-
-.project-modal .el-dialog__body,
-.branch-dialog .el-dialog__body,
-.git-remote-dialog .el-dialog__body,
-.install-node-dialog .el-dialog__body {
-  max-height: calc(90vh - 120px);
-}
-
-.project-modal .el-dialog__footer,
-.import-preview-dialog .el-dialog__footer {
-  padding-top: 12px;
-}
-
-.import-preview-dialog .el-dialog__body {
-  flex: 1;
-  min-height: 0;
-  overflow-x: hidden;
-  overflow: hidden;
-  padding-top: 12px;
-}
-
-.app-dialog .el-dialog__body > *,
-.project-modal .el-dialog__body > *,
-.install-node-dialog .el-dialog__body > *,
-.branch-dialog .el-dialog__body > *,
-.git-remote-dialog .el-dialog__body > *,
-.import-preview-dialog .el-dialog__body > *,
-.app-centered-dialog .el-dialog__body > * {
-  min-width: 0;
-}
-
-/* Smoother tag transitions */
-.el-tag {
-  transition: all 0.15s ease-out !important;
-}
-
-/* Page transition (view switching) */
-.page-fade-enter-active,
-.page-fade-leave-active {
-  transition: opacity 0.18s ease, transform 0.18s ease;
-}
-.page-fade-enter-from {
-  opacity: 0;
-  transform: translateY(8px);
-}
-.page-fade-leave-to {
-  opacity: 0;
-  transform: translateY(-4px);
-}
-</style>

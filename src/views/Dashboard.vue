@@ -887,8 +887,8 @@ async function batchAddProjects() {
 <template>
   <div class="h-full flex overflow-hidden">
     <!-- Project List Sidebar -->
-    <div class="w-72 flex flex-col border-r border-slate-200 dark:border-slate-700/20 bg-white dark:bg-[#0f172a] z-20 transition-colors duration-200">
-        <div class="px-4 py-3 border-b border-slate-200 dark:border-slate-700/20 flex justify-between items-center">
+    <div class="w-72 flex flex-col app-surface-sidebar z-20 transition-colors duration-200">
+        <div class="app-section-divider px-4 py-3 border-b flex justify-between items-center">
             <h2 class="text-xs font-semibold text-slate-500 dark:text-slate-400 tracking-widest uppercase pl-1">{{ t('dashboard.title') }}</h2>
             <div class="sidebar-header-actions">
                 <button
@@ -917,7 +917,7 @@ async function batchAddProjects() {
         </div>
         
         <!-- 搜索框 -->
-        <div class="px-3 py-2 border-b border-slate-200 dark:border-slate-700/20">
+        <div class="app-section-divider px-3 py-2 border-b">
             <el-input
                 v-model="searchQuery"
                 :placeholder="t('dashboard.searchPlaceholder')"
@@ -938,7 +938,7 @@ async function batchAddProjects() {
         </div>
 
         <!-- 筛选区域 -->
-        <div class="px-3 py-2 border-b border-slate-200 dark:border-slate-700/20 space-y-1.5 filter-area">
+        <div class="app-section-divider px-3 py-2 border-b space-y-1.5 filter-area">
             <!-- 快捷筛选 -->
             <el-segmented v-model="activeQuickFilter" :options="quickFilterOptions" size="small" class="w-full" />
             <!-- 分组筛选 + 标签筛选 -->
@@ -988,7 +988,7 @@ async function batchAddProjects() {
         />
 
         <!-- ─── 启动组快捷入口 ──────────────────────────────────────── -->
-        <div class="px-3 py-2 border-b border-slate-200 dark:border-slate-700/20">
+        <div class="app-section-divider px-3 py-2 border-b">
           <WorkspaceProfileMenu
             :profiles="workspaceProfiles"
             :projects="projectStore.projects"
@@ -1106,9 +1106,9 @@ async function batchAddProjects() {
     </div>
 
     <!-- Main Right Panel -->
-    <div class="flex-1 overflow-hidden relative bg-slate-50 dark:bg-[#0b1120] transition-colors duration-200 flex flex-col">
+    <div class="flex-1 overflow-hidden relative app-workspace-panel transition-colors duration-200 flex flex-col">
             <!-- Project Name + Tab Bar -->
-            <div class="workspace-topbar flex items-center border-b border-slate-200 dark:border-slate-700/20 bg-white dark:bg-[#0f172a] px-3 shrink-0 min-w-0">
+            <div class="workspace-topbar app-workspace-topbar flex items-center border-b px-3 shrink-0 min-w-0">
                 <!-- Project Name (always visible) -->
                 <div class="project-title-group flex items-center gap-2 pr-3 mr-2 shrink-0 min-w-0">
                     <button
@@ -1238,17 +1238,11 @@ async function batchAddProjects() {
   background: transparent;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: color-mix(in srgb, var(--app-text-muted) 56%, transparent);
   border-radius: 2px;
 }
-.dark .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #334155;
-}
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
-}
-.dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #475569;
+  background: color-mix(in srgb, var(--app-text-muted) 72%, transparent);
 }
 .scrollbar-none::-webkit-scrollbar {
   display: none;
@@ -1268,12 +1262,12 @@ async function batchAddProjects() {
 }
 
 .workspace-topbar {
-  box-shadow: inset 0 -1px 0 rgba(148, 163, 184, 0.08);
+  box-shadow: inset 0 -1px 0 var(--app-border);
 }
 
 .project-title-group {
   padding: 3px 6px 3px 3px;
-  border-radius: 16px;
+  border-radius: var(--app-radius-lg);
 }
 
 .sidebar-header-actions {
@@ -1281,15 +1275,9 @@ async function batchAddProjects() {
   align-items: center;
   gap: 2px;
   padding: 4px;
-  border-radius: 16px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.58), rgba(248, 250, 252, 0.42));
-  backdrop-filter: blur(18px) saturate(1.08);
-  -webkit-backdrop-filter: blur(18px) saturate(1.08);
-  box-shadow:
-    0 10px 24px rgba(15, 23, 42, 0.06),
-    inset 0 1px 0 rgba(255, 255, 255, 0.5),
-    inset 0 0 0 1px rgba(226, 232, 240, 0.46);
+  border-radius: var(--app-radius-lg);
+  background: var(--app-surface-soft);
+  box-shadow: inset 0 0 0 1px var(--app-border);
 }
 
 .sidebar-header-btn {
@@ -1299,18 +1287,19 @@ async function batchAddProjects() {
   width: 30px;
   height: 30px;
   border: none;
-  border-radius: 12px;
+  border-radius: var(--app-radius-md);
   background: transparent;
-  color: rgb(148 163 184);
-  transition: all 0.2s ease, background-color 0.2s ease, color 0.2s ease;
+  color: var(--app-text-muted);
+  transition:
+    background-color var(--app-duration-fast) var(--app-ease),
+    color var(--app-duration-fast) var(--app-ease),
+    box-shadow var(--app-duration-fast) var(--app-ease);
 }
 
 .sidebar-header-btn:hover:not(:disabled) {
-  color: rgb(37 99 235);
-  background: rgba(255, 255, 255, 0.44);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.38),
-    inset 0 0 0 1px rgba(191, 219, 254, 0.32);
+  color: var(--app-primary);
+  background: var(--app-primary-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-primary) 22%, transparent);
 }
 
 .sidebar-header-btn:disabled {
@@ -1326,27 +1315,21 @@ async function batchAddProjects() {
   height: 32px;
   width: 32px;
   border: none;
-  border-radius: 10px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.54), rgba(248, 250, 252, 0.36));
-  color: rgb(100 116 139);
-  backdrop-filter: blur(16px) saturate(1.08);
-  -webkit-backdrop-filter: blur(16px) saturate(1.08);
-  box-shadow:
-    0 8px 18px rgba(15, 23, 42, 0.05),
-    inset 0 1px 0 rgba(255, 255, 255, 0.42),
-    inset 0 0 0 1px rgba(226, 232, 240, 0.42);
-  transition: all 0.2s ease, background-color 0.2s ease, color 0.2s ease;
+  border-radius: var(--app-radius-md);
+  background: var(--app-surface-soft);
+  color: var(--app-text-secondary);
+  box-shadow: inset 0 0 0 1px var(--app-border);
+  transition:
+    background-color var(--app-duration-fast) var(--app-ease),
+    color var(--app-duration-fast) var(--app-ease),
+    box-shadow var(--app-duration-fast) var(--app-ease);
 }
 
 .toolbar-icon-btn:hover,
 .toolbar-scroll-btn:hover {
-  color: rgb(37 99 235);
-  background: rgba(255, 255, 255, 0.62);
-  box-shadow:
-    0 10px 20px rgba(15, 23, 42, 0.06),
-    inset 0 1px 0 rgba(255, 255, 255, 0.48),
-    inset 0 0 0 1px rgba(191, 219, 254, 0.28);
+  color: var(--app-primary);
+  background: var(--app-primary-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-primary) 22%, transparent);
 }
 
 .workspace-tab-group {
@@ -1354,15 +1337,9 @@ async function batchAddProjects() {
   align-items: center;
   gap: 2px;
   padding: 4px;
-  border-radius: 18px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.56), rgba(248, 250, 252, 0.4));
-  backdrop-filter: blur(18px) saturate(1.08);
-  -webkit-backdrop-filter: blur(18px) saturate(1.08);
-  box-shadow:
-    0 10px 24px rgba(15, 23, 42, 0.06),
-    inset 0 1px 0 rgba(255, 255, 255, 0.48),
-    inset 0 0 0 1px rgba(226, 232, 240, 0.44);
+  border-radius: var(--app-radius-lg);
+  background: var(--app-surface-soft);
+  box-shadow: inset 0 0 0 1px var(--app-border);
 }
 
 .workspace-tab-btn {
@@ -1371,18 +1348,21 @@ async function batchAddProjects() {
   gap: 8px;
   padding: 8px 14px;
   border: none;
-  border-radius: 14px;
+  border-radius: var(--app-radius-md);
   background: transparent;
-  color: rgb(100 116 139);
+  color: var(--app-text-secondary);
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
-  transition: all 0.18s ease, background-color 0.18s ease, color 0.18s ease;
+  transition:
+    background-color var(--app-duration-fast) var(--app-ease),
+    color var(--app-duration-fast) var(--app-ease),
+    box-shadow var(--app-duration-fast) var(--app-ease);
 }
 
 .workspace-tab-btn:hover {
-  color: rgb(51 65 85);
-  background: rgba(255, 255, 255, 0.34);
+  color: var(--app-text);
+  background: color-mix(in srgb, var(--app-surface) 74%, transparent);
 }
 
 .workspace-tab-btn:disabled {
@@ -1391,134 +1371,29 @@ async function batchAddProjects() {
 }
 
 .workspace-tab-btn:disabled:hover {
-  color: rgb(100 116 139);
+  color: var(--app-text-secondary);
   background: transparent;
 }
 
 .workspace-tab-btn-active {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.62), rgba(248, 250, 252, 0.44));
-  color: rgb(37 99 235);
-  backdrop-filter: blur(14px) saturate(1.1);
-  -webkit-backdrop-filter: blur(14px) saturate(1.1);
+  background: var(--app-surface);
+  color: var(--app-primary);
   box-shadow:
-    0 8px 18px rgba(15, 23, 42, 0.05),
-    inset 0 1px 0 rgba(255, 255, 255, 0.42),
-    inset 0 0 0 1px rgba(191, 219, 254, 0.32);
+    var(--app-shadow-sm),
+    inset 0 0 0 1px color-mix(in srgb, var(--app-primary) 26%, transparent);
 }
 
 .workspace-tab-badge {
   margin-left: 2px;
   min-width: 18px;
   border-radius: 999px;
-  background: rgba(249, 115, 22, 0.14);
+  background: color-mix(in srgb, var(--app-warning) 14%, transparent);
   padding: 0 6px;
-  color: rgb(234 88 12);
+  color: var(--app-warning);
   font-size: 10px;
   font-weight: 700;
   line-height: 18px;
   text-align: center;
-}
-
-:global(html.dark) .project-title-group {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.018), rgba(255, 255, 255, 0)),
-    rgba(15, 23, 42, 0.14);
-}
-
-:global(html.dark) .sidebar-header-actions {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.018), rgba(255, 255, 255, 0)),
-    linear-gradient(180deg, rgba(30, 41, 59, 0.24), rgba(15, 23, 42, 0.18));
-  backdrop-filter: blur(18px) saturate(1.02);
-  -webkit-backdrop-filter: blur(18px) saturate(1.02);
-  box-shadow:
-    0 10px 24px rgba(2, 6, 23, 0.2),
-    inset 0 1px 0 rgba(255, 255, 255, 0.035),
-    inset 0 0 0 1px rgba(148, 163, 184, 0.08);
-}
-
-:global(html.dark) .toolbar-icon-btn,
-:global(html.dark) .toolbar-scroll-btn {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0)),
-    linear-gradient(180deg, rgba(30, 41, 59, 0.24), rgba(15, 23, 42, 0.18));
-  color: rgb(148 163 184);
-  backdrop-filter: blur(16px) saturate(1.02);
-  -webkit-backdrop-filter: blur(16px) saturate(1.02);
-  box-shadow:
-    0 8px 18px rgba(2, 6, 23, 0.16),
-    inset 0 1px 0 rgba(255, 255, 255, 0.03),
-    inset 0 0 0 1px rgba(148, 163, 184, 0.08);
-}
-
-:global(html.dark) .sidebar-header-btn {
-  background: transparent;
-  color: rgb(148 163 184);
-}
-
-:global(html.dark) .sidebar-header-btn:hover:not(:disabled) {
-  color: rgb(96 165 250);
-  background: rgba(255, 255, 255, 0.05);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.04),
-    inset 0 0 0 1px rgba(96, 165, 250, 0.12);
-}
-
-:global(html.dark) .toolbar-icon-btn:hover,
-:global(html.dark) .toolbar-scroll-btn:hover {
-  color: rgb(96 165 250);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.028), rgba(255, 255, 255, 0)),
-    linear-gradient(180deg, rgba(30, 41, 59, 0.28), rgba(15, 23, 42, 0.2));
-  box-shadow:
-    0 10px 20px rgba(2, 6, 23, 0.18),
-    inset 0 1px 0 rgba(255, 255, 255, 0.035),
-    inset 0 0 0 1px rgba(96, 165, 250, 0.12);
-}
-
-:global(html.dark) .workspace-tab-group {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.018), rgba(255, 255, 255, 0)),
-    linear-gradient(180deg, rgba(30, 41, 59, 0.24), rgba(15, 23, 42, 0.18));
-  backdrop-filter: blur(18px) saturate(1.02);
-  -webkit-backdrop-filter: blur(18px) saturate(1.02);
-  box-shadow:
-    0 10px 24px rgba(2, 6, 23, 0.18),
-    inset 0 1px 0 rgba(255, 255, 255, 0.03),
-    inset 0 0 0 1px rgba(148, 163, 184, 0.08);
-}
-
-:global(html.dark) .workspace-tab-btn {
-  color: rgb(124 140 164);
-}
-
-:global(html.dark) .workspace-tab-btn:hover {
-  color: rgb(203 213 225);
-  background: rgba(255, 255, 255, 0.045);
-}
-
-:global(html.dark) .workspace-tab-btn:disabled:hover {
-  color: rgb(124 140 164);
-  background: transparent;
-}
-
-:global(html.dark) .workspace-tab-btn-active {
-  background:
-    linear-gradient(180deg, rgba(96, 165, 250, 0.12), rgba(59, 130, 246, 0.04)),
-    linear-gradient(180deg, rgba(51, 65, 85, 0.34), rgba(15, 23, 42, 0.22));
-  color: rgb(165 206 255);
-  backdrop-filter: blur(16px) saturate(1.05);
-  -webkit-backdrop-filter: blur(16px) saturate(1.05);
-  box-shadow:
-    0 8px 18px rgba(2, 6, 23, 0.16),
-    inset 0 1px 0 rgba(255, 255, 255, 0.035),
-    inset 0 0 0 1px rgba(96, 165, 250, 0.12);
-}
-
-:global(html.dark) .workspace-tab-badge {
-  background: rgba(249, 115, 22, 0.16);
-  color: rgb(251 146 60);
 }
 
 /* Draggable list items */
@@ -1532,13 +1407,9 @@ async function batchAddProjects() {
 }
 
 .draggable-item-active {
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
-  border-radius: 8px;
+  box-shadow: var(--app-shadow-md);
+  border-radius: var(--app-radius-sm);
   opacity: 0.92;
-}
-
-.dark .draggable-item-active {
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
 
 /* Drag handle - rendered inline with the project status indicator */

@@ -359,7 +359,7 @@ function getTypeLabel(type: SearchResultType): string {
   align-items: flex-start;
   justify-content: center;
   padding-top: 15vh;
-  background: rgba(15, 23, 42, 0.5);
+  background: color-mix(in srgb, var(--app-bg) 62%, transparent);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
 }
@@ -369,19 +369,11 @@ function getTypeLabel(type: SearchResultType): string {
   max-height: 440px;
   display: flex;
   flex-direction: column;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.98);
-  box-shadow:
-    0 25px 60px rgba(15, 23, 42, 0.2),
-    0 0 0 1px rgba(148, 163, 184, 0.15);
+  border-radius: var(--app-radius-lg);
+  background: var(--app-surface);
+  box-shadow: var(--app-shadow-lg);
+  border: 1px solid var(--app-border);
   overflow: hidden;
-}
-
-:global(html.dark) .quick-search-container {
-  background: rgba(30, 41, 59, 0.98);
-  box-shadow:
-    0 25px 60px rgba(0, 0, 0, 0.5),
-    0 0 0 1px rgba(71, 85, 105, 0.3);
 }
 
 .quick-search-header {
@@ -389,11 +381,7 @@ function getTypeLabel(type: SearchResultType): string {
   align-items: center;
   gap: 10px;
   padding: 14px 16px;
-  border-bottom: 1px solid rgba(226, 232, 240, 0.7);
-}
-
-:global(html.dark) .quick-search-header {
-  border-bottom-color: rgba(51, 65, 85, 0.5);
+  border-bottom: 1px solid var(--app-border);
 }
 
 .quick-search-input {
@@ -403,17 +391,13 @@ function getTypeLabel(type: SearchResultType): string {
   background: transparent;
   font-size: 15px;
   font-weight: 500;
-  color: rgb(30, 41, 59);
+  color: var(--app-text);
   font-family: inherit;
 }
 
 .quick-search-input::placeholder {
-  color: rgb(148, 163, 184);
+  color: var(--app-text-muted);
   font-weight: 400;
-}
-
-:global(html.dark) .quick-search-input {
-  color: rgb(241, 245, 249);
 }
 
 .quick-search-shortcut {
@@ -430,18 +414,12 @@ function getTypeLabel(type: SearchResultType): string {
   min-width: 20px;
   padding: 0 5px;
   border-radius: 5px;
-  background: rgba(241, 245, 249, 0.8);
-  border: 1px solid rgba(226, 232, 240, 0.7);
-  color: rgb(100, 116, 139);
+  background: var(--app-surface-soft);
+  border: 1px solid var(--app-border);
+  color: var(--app-text-secondary);
   font-size: 10px;
   font-family: inherit;
   font-weight: 600;
-}
-
-:global(html.dark) .quick-search-shortcut kbd {
-  background: rgba(51, 65, 85, 0.5);
-  border-color: rgba(71, 85, 105, 0.5);
-  color: rgb(148, 163, 184);
 }
 
 .quick-search-results {
@@ -459,17 +437,13 @@ function getTypeLabel(type: SearchResultType): string {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: rgb(148, 163, 184);
+  color: var(--app-text-muted);
 }
 
 .quick-search-divider {
   height: 1px;
   margin: 4px 10px;
-  background: rgba(226, 232, 240, 0.5);
-}
-
-:global(html.dark) .quick-search-divider {
-  background: rgba(51, 65, 85, 0.5);
+  background: var(--app-border);
 }
 
 .quick-search-item {
@@ -479,23 +453,15 @@ function getTypeLabel(type: SearchResultType): string {
   padding: 8px 10px;
   border-radius: 10px;
   cursor: pointer;
-  transition: background-color 0.1s ease;
+  transition: background-color var(--app-duration-fast) var(--app-ease);
 }
 
 .quick-search-item:hover {
-  background: rgba(241, 245, 249, 0.6);
-}
-
-:global(html.dark) .quick-search-item:hover {
-  background: rgba(51, 65, 85, 0.3);
+  background: var(--app-surface-soft);
 }
 
 .quick-search-item-active {
-  background: rgba(59, 130, 246, 0.08);
-}
-
-:global(html.dark) .quick-search-item-active {
-  background: rgba(59, 130, 246, 0.12);
+  background: var(--app-primary-soft);
 }
 
 .quick-search-item-icon {
@@ -506,11 +472,7 @@ function getTypeLabel(type: SearchResultType): string {
   width: 32px;
   height: 32px;
   border-radius: 8px;
-  background: rgba(241, 245, 249, 0.6);
-}
-
-:global(html.dark) .quick-search-item-icon {
-  background: rgba(51, 65, 85, 0.3);
+  background: var(--app-surface-soft);
 }
 
 .quick-search-item-content {
@@ -521,19 +483,15 @@ function getTypeLabel(type: SearchResultType): string {
 .quick-search-item-name {
   font-size: 13px;
   font-weight: 600;
-  color: rgb(30, 41, 59);
+  color: var(--app-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-:global(html.dark) .quick-search-item-name {
-  color: rgb(241, 245, 249);
-}
-
 .quick-search-item-path {
   font-size: 11px;
-  color: rgb(148, 163, 184);
+  color: var(--app-text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -554,13 +512,8 @@ function getTypeLabel(type: SearchResultType): string {
   border-radius: 4px;
   font-size: 9px;
   font-weight: 600;
-  background: rgba(59, 130, 246, 0.08);
-  color: rgb(37, 99, 235);
-}
-
-:global(html.dark) .quick-search-tag {
-  background: rgba(59, 130, 246, 0.15);
-  color: rgb(96, 165, 250);
+  background: var(--app-primary-soft);
+  color: var(--app-primary);
 }
 
 .quick-search-empty {
@@ -569,6 +522,6 @@ function getTypeLabel(type: SearchResultType): string {
   align-items: center;
   justify-content: center;
   padding: 32px 16px;
-  color: rgb(148, 163, 184);
+  color: var(--app-text-muted);
 }
 </style>

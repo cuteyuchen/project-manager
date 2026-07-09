@@ -123,9 +123,9 @@ async function handleAiGenerate() {
 </script>
 
 <template>
-  <div class="flex flex-col shrink-0 overflow-hidden bg-white/40 dark:bg-[#0f172a]/40 font-sans">
+  <div class="git-commit-area flex flex-col shrink-0 overflow-hidden font-sans">
     <!-- Header -->
-    <div class="flex items-center justify-between px-2.5 py-1 border-b border-slate-200/40 dark:border-slate-700/20 shrink-0">
+    <div class="git-commit-header flex items-center justify-between px-2.5 py-1 shrink-0">
       <span class="text-[10px] font-medium text-slate-500 dark:text-slate-400 flex items-center gap-1">
         <div class="i-mdi-message-text-outline text-xs text-blue-500/60" />
         {{ t('git.commitMessage') }}
@@ -135,13 +135,13 @@ async function handleAiGenerate() {
           v-if="aiEnabled"
           @click="handleAiGenerate"
           :disabled="aiGenerating"
-          class="flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded-full bg-violet-500/10 hover:bg-violet-500/20 text-violet-600 dark:text-violet-400 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          class="git-ai-button flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 rounded-full transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           :title="t('git.aiGenerate')"
         >
           <div :class="aiGenerating ? 'i-mdi-loading animate-spin' : 'i-mdi-auto-fix'" class="text-xs" />
           {{ aiGenerating ? t('git.aiGenerating') : t('git.aiGenerate') }}
         </button>
-        <span v-if="stagedFiles.length > 0" class="text-[9px] text-blue-500/80 bg-blue-500/8 px-1.5 py-0.5 rounded-full leading-none font-medium">{{ stagedFiles.length }} {{ t('git.staged') }}</span>
+        <span v-if="stagedFiles.length > 0" class="git-staged-pill text-[9px] px-1.5 py-0.5 rounded-full leading-none font-medium">{{ stagedFiles.length }} {{ t('git.staged') }}</span>
       </div>
     </div>
     <!-- Textarea -->
@@ -149,7 +149,7 @@ async function handleAiGenerate() {
       <textarea
         v-model="commitMessage"
         :placeholder="t('git.commitPlaceholder')"
-        class="w-full h-full box-border px-2 py-1.5 text-[11px] rounded-md border border-slate-200/60 dark:border-slate-700/30 bg-slate-50/50 dark:bg-slate-900/20 text-slate-700 dark:text-slate-300 resize-none focus:outline-none focus:ring-1 focus:ring-blue-500/30 focus:border-blue-500/30 placeholder:text-slate-400/40 transition-all duration-150"
+        class="git-commit-textarea w-full h-full box-border px-2 py-1.5 text-[11px] rounded-md resize-none focus:outline-none transition-all duration-150"
         @keydown.ctrl.enter="handleCommit"
       />
     </div>
@@ -157,13 +157,13 @@ async function handleAiGenerate() {
     <div class="px-1.5 pb-1.5 shrink-0 flex gap-1.5">
       <button @click="handleCommit"
         :disabled="!commitMessage.trim() || stagedFiles.length === 0"
-        class="flex-1 py-1.5 rounded-md text-[11px] font-medium bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white transition-all duration-200 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-1 shadow-sm hover:shadow">
+        class="git-commit-primary flex-1 py-1.5 rounded-md text-[11px] font-medium transition-all duration-200 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-1">
         <div class="i-mdi-check text-xs" />
         {{ t('git.commit') }}
       </button>
       <button @click="handleCommitAndPush"
         :disabled="!commitMessage.trim() || stagedFiles.length === 0"
-        class="flex-1 py-1.5 rounded-md text-[11px] font-medium bg-emerald-500 hover:bg-emerald-600 active:bg-emerald-700 text-white transition-all duration-200 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-1 shadow-sm hover:shadow"
+        class="git-commit-success flex-1 py-1.5 rounded-md text-[11px] font-medium transition-all duration-200 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-1"
         :title="t('git.commitAndPush')">
         <div class="i-mdi-source-commit text-xs" />
         {{ t('git.commitAndPush') }}
@@ -171,3 +171,63 @@ async function handleAiGenerate() {
     </div>
   </div>
 </template>
+
+<style scoped>
+.git-commit-area {
+  background: var(--app-surface);
+  color: var(--app-text);
+}
+
+.git-commit-header {
+  border-bottom: 1px solid var(--app-border);
+}
+
+.git-ai-button {
+  background: color-mix(in srgb, var(--app-primary) 10%, transparent);
+  color: var(--app-primary);
+}
+
+.git-ai-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--app-primary) 16%, transparent);
+}
+
+.git-staged-pill {
+  background: var(--app-primary-soft);
+  color: var(--app-primary);
+}
+
+.git-commit-textarea {
+  border: 1px solid var(--app-border);
+  background: var(--app-surface-soft);
+  color: var(--app-text-secondary);
+}
+
+.git-commit-textarea:focus {
+  border-color: color-mix(in srgb, var(--app-primary) 36%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--app-primary) 20%, transparent);
+}
+
+.git-commit-textarea::placeholder {
+  color: var(--app-text-muted);
+}
+
+.git-commit-primary {
+  background: var(--app-primary);
+  color: white;
+  box-shadow: var(--app-shadow-sm);
+}
+
+.git-commit-primary:hover:not(:disabled) {
+  background: var(--app-primary-hover);
+}
+
+.git-commit-success {
+  background: var(--app-success);
+  color: white;
+  box-shadow: var(--app-shadow-sm);
+}
+
+.git-commit-success:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--app-success) 86%, black);
+}
+</style>

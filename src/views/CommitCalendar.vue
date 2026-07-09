@@ -141,23 +141,23 @@ onActivated(refreshIfNeeded);
 </script>
 
 <template>
-  <div class="h-full flex flex-col overflow-hidden bg-slate-100/70 dark:bg-[#0f172a]/80">
-    <div class="shrink-0 px-5 py-3 border-b border-slate-200/70 dark:border-slate-700/40 bg-white/90 dark:bg-[#0f172a]/90 backdrop-blur">
+  <div class="app-page">
+    <div class="app-page-header">
       <div class="flex items-center justify-between gap-3">
         <div class="min-w-0">
           <div class="flex items-center gap-2">
             <div class="i-mdi-calendar-month text-xl text-blue-500" />
-            <h2 class="m-0 text-base font-semibold text-slate-800 dark:text-slate-100">
+            <h2 class="app-page-title !mt-0 !text-base">
               {{ t('commitCalendar.title') }}
             </h2>
           </div>
-          <p class="m-0 mt-1 text-xs text-slate-500 dark:text-slate-400">
+          <p class="app-page-description !text-xs">
             {{ t('commitCalendar.subtitle', { month: range.title, count: totalCommits }) }}
           </p>
         </div>
 
         <button
-          class="inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-blue-500 hover:bg-blue-600 disabled:bg-blue-300 text-white text-xs font-medium transition-colors"
+          class="app-primary-action !min-h-8 !rounded-md !px-3 !py-1.5 !text-xs"
           :disabled="loading"
           @click="refresh"
         >
@@ -168,7 +168,7 @@ onActivated(refreshIfNeeded);
 
       <div
         v-if="skippedSummary"
-        class="mt-3 rounded-md border border-amber-200/80 dark:border-amber-500/20 bg-amber-50 dark:bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-200"
+        class="app-alert-warning mt-3 px-3 py-2 text-xs"
       >
         <div class="font-medium">{{ skippedSummary }}</div>
         <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1">
@@ -180,7 +180,7 @@ onActivated(refreshIfNeeded);
     </div>
 
     <div
-      class="shrink-0 grid border-b border-slate-200/70 dark:border-slate-700/40 bg-slate-50/90 dark:bg-slate-900/50"
+      class="app-card-soft shrink-0 grid !rounded-none border-x-0 border-t-0"
       :style="{ gridTemplateColumns: calendarGridColumns }"
     >
       <div
@@ -199,14 +199,14 @@ onActivated(refreshIfNeeded);
 
     <div v-else class="relative flex-1 min-h-0 overflow-auto">
       <div
-        class="commit-calendar-grid grid gap-px bg-slate-200/80 dark:bg-slate-700/50 p-px"
+        class="commit-calendar-grid grid gap-px p-px"
         :style="calendarGridStyle"
       >
         <div
           v-for="day in calendarDays"
           :key="day.date"
           class="flex min-w-0 flex-col overflow-hidden p-2"
-          :class="day.inCurrentMonth ? 'bg-white dark:bg-slate-950/40' : 'bg-slate-50/80 dark:bg-slate-900/50 text-slate-400'"
+          :class="day.inCurrentMonth ? 'commit-day-current' : 'commit-day-muted'"
         >
           <div class="flex items-center justify-between gap-2">
             <span
@@ -244,7 +244,7 @@ onActivated(refreshIfNeeded);
         v-if="loaded && totalCommits === 0"
         class="pointer-events-none absolute inset-0 flex items-center justify-center text-center"
       >
-        <div class="rounded-md bg-white/90 dark:bg-slate-900/90 px-5 py-4 shadow-sm border border-slate-200/70 dark:border-slate-700/50">
+        <div class="app-card px-5 py-4">
           <div class="i-mdi-calendar-blank-outline text-3xl mx-auto mb-2 text-slate-300 dark:text-slate-600" />
           <div class="text-sm font-medium text-slate-500 dark:text-slate-300">{{ t('commitCalendar.empty') }}</div>
           <div class="mt-1 text-xs text-slate-400 dark:text-slate-500">{{ t('commitCalendar.emptyHint') }}</div>
@@ -274,12 +274,12 @@ onActivated(refreshIfNeeded);
           <div class="mb-1 text-xs text-slate-400 dark:text-slate-500">{{ t('git.commitMessage') }}</div>
           <div
             v-if="detailLoading"
-            class="flex min-h-24 items-center justify-center rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-xs text-slate-400 dark:text-slate-500"
+            class="app-code-block flex min-h-24 items-center justify-center text-xs"
           >
             <div class="i-mdi-loading animate-spin mr-1.5" />
             {{ t('common.loading') }}
           </div>
-          <pre v-else class="m-0 max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-3 py-2 text-xs leading-5 text-slate-700 dark:text-slate-200">{{ selectedCommitMessageText }}</pre>
+          <pre v-else class="app-code-block m-0 max-h-60 overflow-auto whitespace-pre-wrap px-3 py-2 text-xs leading-5">{{ selectedCommitMessageText }}</pre>
         </div>
       </div>
 
@@ -298,6 +298,16 @@ onActivated(refreshIfNeeded);
 <style scoped>
 .commit-calendar-grid {
   height: 100%;
+  background: var(--app-border);
+}
+
+.commit-day-current {
+  background: var(--app-surface);
+}
+
+.commit-day-muted {
+  background: var(--app-surface-soft);
+  color: var(--app-text-muted);
 }
 
 .commit-entry-btn {
@@ -313,22 +323,15 @@ onActivated(refreshIfNeeded);
   text-align: left;
   font-size: 11px;
   line-height: 18px;
-  color: rgb(71 85 105);
-  transition: background-color 0.15s ease, color 0.15s ease;
+  color: var(--app-text-secondary);
+  transition:
+    background-color var(--app-duration-fast) var(--app-ease),
+    color var(--app-duration-fast) var(--app-ease);
 }
 
 .commit-entry-btn:hover {
-  background: rgb(239 246 255);
-  color: rgb(37 99 235);
-}
-
-:global(html.dark) .commit-entry-btn {
-  color: rgb(203 213 225);
-}
-
-:global(html.dark) .commit-entry-btn:hover {
-  background: rgba(59, 130, 246, 0.12);
-  color: rgb(147 197 253);
+  background: var(--app-primary-soft);
+  color: var(--app-primary);
 }
 
 .commit-entry-project {
@@ -350,7 +353,7 @@ onActivated(refreshIfNeeded);
 
 .commit-entry-time {
   flex: 0 0 auto;
-  color: rgb(100 116 139);
+  color: var(--app-text-muted);
 }
 
 .commit-day-scroll::-webkit-scrollbar {
@@ -358,7 +361,7 @@ onActivated(refreshIfNeeded);
 }
 
 .commit-day-scroll::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.45);
+  background: color-mix(in srgb, var(--app-text-muted) 56%, transparent);
   border-radius: 999px;
 }
 </style>

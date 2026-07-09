@@ -1,18 +1,18 @@
 <template>
-  <div class="fixed bottom-4 right-4 z-50 w-80 bg-white dark:bg-slate-800 rounded-lg shadow-lg border border-slate-200 dark:border-slate-700 p-4 transition-all duration-300">
+  <div class="app-card fixed bottom-4 right-4 z-50 w-80 p-4 transition-all duration-300">
     <div class="flex items-center justify-between mb-2">
-      <h3 class="font-medium text-slate-900 dark:text-slate-100">{{ t('update.downloading') }}</h3>
+      <h3 class="font-medium text-primary">{{ t('update.downloading') }}</h3>
       <div class="flex items-center gap-2">
         <button 
           @click="$emit('background')" 
-          class="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 cursor-pointer"
+          class="app-icon-btn !h-7 !min-w-7"
           :title="t('update.background')"
         >
           <div class="i-mdi-minus" />
         </button>
         <button 
           @click="$emit('cancel')"
-          class="p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-200 cursor-pointer"
+          class="app-danger-action !h-7 !px-1"
           :title="t('update.cancel')"
         >
           <div class="i-mdi-close" />
@@ -20,10 +20,10 @@
       </div>
     </div>
     
-    <div class="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2.5 mb-1">
-      <div class="bg-blue-600 h-2.5 rounded-full transition-all duration-300" :style="{ width: `${percentage}%` }"></div>
+    <div class="w-full rounded-full h-2.5 mb-1" style="background: var(--app-surface-soft);">
+      <div class="h-2.5 rounded-full transition-all duration-300" style="background: var(--app-primary);" :style="{ width: `${percentage}%` }"></div>
     </div>
-    <div class="text-right text-xs text-slate-500 dark:text-slate-400">{{ percentage }}%</div>
+    <div class="text-right text-xs text-muted">{{ percentage }}%</div>
   </div>
 </template>
 

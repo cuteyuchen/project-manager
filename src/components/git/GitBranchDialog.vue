@@ -342,9 +342,9 @@ async function deleteBranch(name: string, force = false) {
   gap: 12px;
   margin-bottom: 12px;
   padding: 10px 12px;
-  border-radius: 8px;
-  border: 1px solid rgba(59, 130, 246, 0.22);
-  background: rgba(59, 130, 246, 0.08);
+  border-radius: var(--app-radius-md);
+  border: 1px solid color-mix(in srgb, var(--app-primary) 24%, transparent);
+  background: var(--app-primary-soft);
 }
 
 .branch-meta {
@@ -357,18 +357,18 @@ async function deleteBranch(name: string, force = false) {
   padding: 2px 6px;
   border-radius: 999px;
   font-size: 9px;
-  color: rgb(37, 99, 235);
-  background: rgba(59, 130, 246, 0.12);
+  color: var(--app-primary);
+  background: var(--app-primary-soft);
 }
 
 .branch-badge-ahead {
-  color: rgb(22, 163, 74);
-  background: rgba(34, 197, 94, 0.12);
+  color: var(--app-success);
+  background: color-mix(in srgb, var(--app-success) 12%, transparent);
 }
 
 .branch-badge-behind {
-  color: rgb(234, 88, 12);
-  background: rgba(249, 115, 22, 0.12);
+  color: var(--app-warning);
+  background: color-mix(in srgb, var(--app-warning) 12%, transparent);
 }
 
 :deep(.branch-dialog .el-dialog) {

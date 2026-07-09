@@ -110,20 +110,20 @@ function handleMarkdownClick(e: MouseEvent) {
 </script>
 
 <template>
-    <div class="absolute inset-0 flex flex-col bg-slate-50 dark:bg-[#0f172a] overflow-hidden">
+    <div class="app-page absolute inset-0">
         <!-- Toolbar -->
-        <div class="flex items-center justify-between px-3 py-1.5 border-b border-slate-200 dark:border-slate-700/20 bg-white dark:bg-[#1e293b] shrink-0">
+        <div class="app-panel-toolbar flex items-center justify-between px-3 py-1.5 shrink-0">
             <div class="flex items-center gap-2">
                 <div class="i-mdi-note-text text-sm text-slate-400" />
                 <span class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">{{ t('memo.title') }}</span>
-                <span class="text-[9px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 font-mono">Markdown</span>
+                <span class="app-muted-pill text-[9px] px-1.5 py-0.5 font-mono">Markdown</span>
                 <span v-if="isDirty" class="text-[10px] text-amber-500 font-bold">●</span>
             </div>
             <div class="flex items-center gap-1.5">
                 <!-- Preview mode: show Edit button -->
                 <template v-if="editorMode === 'preview'">
                     <button @click="enterEditMode"
-                        class="px-2 py-0.5 text-[11px] rounded border transition-all duration-150 flex items-center gap-1 bg-blue-500/8 text-blue-600 dark:text-blue-400 border-blue-500/15 hover:bg-blue-500/15">
+                        class="app-primary-action !min-h-0 px-2 py-0.5 text-[11px]">
                         <div class="i-mdi-pencil text-xs" />
                         {{ t('memo.edit') }}
                     </button>
@@ -131,12 +131,12 @@ function handleMarkdownClick(e: MouseEvent) {
                 <!-- Edit/Split mode: show mode toggle + back + save -->
                 <template v-else>
                     <button v-if="editorMode === 'edit'" @click="enterSplitMode"
-                        class="px-2 py-0.5 text-[11px] rounded border transition-all duration-150 flex items-center gap-1 bg-slate-50 dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700/30 hover:bg-slate-100 dark:hover:bg-slate-700">
+                        class="app-outline-action px-2 py-0.5 text-[11px]">
                         <div class="i-mdi-view-split-vertical text-xs" />
                         {{ t('memo.split') }}
                     </button>
                     <button v-else @click="enterEditMode"
-                        class="px-2 py-0.5 text-[11px] rounded border transition-all duration-150 flex items-center gap-1 bg-slate-50 dark:bg-slate-800 text-slate-500 border-slate-200 dark:border-slate-700/30 hover:bg-slate-100 dark:hover:bg-slate-700">
+                        class="app-outline-action px-2 py-0.5 text-[11px]">
                         <div class="i-mdi-pencil text-xs" />
                         {{ t('memo.edit') }}
                     </button>
@@ -146,7 +146,7 @@ function handleMarkdownClick(e: MouseEvent) {
                         {{ t('common.save') }}
                     </button>
                     <button @click="backToPreview"
-                        class="px-2 py-0.5 text-[11px] rounded border transition-all duration-150 flex items-center gap-1 bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-300 border-slate-200 dark:border-slate-700/30 hover:bg-slate-100 dark:hover:bg-slate-700">
+                        class="app-outline-action px-2 py-0.5 text-[11px]">
                         <div class="i-mdi-eye text-xs" />
                         {{ t('memo.preview') }}
                     </button>
@@ -161,7 +161,7 @@ function handleMarkdownClick(e: MouseEvent) {
                 <textarea
                     :value="memoContent"
                     @input="handleInput"
-                    class="flex-1 w-full p-4 bg-white dark:bg-[#0f172a] text-slate-700 dark:text-slate-300 font-mono text-xs leading-relaxed resize-none outline-none border-none"
+                    class="memo-editor flex-1 w-full p-4 font-mono text-xs leading-relaxed resize-none outline-none border-none"
                     :placeholder="t('memo.placeholder')"
                     spellcheck="false"
                 />
@@ -181,11 +181,11 @@ function handleMarkdownClick(e: MouseEvent) {
 
             <!-- Split mode: editor + preview side by side -->
             <template v-if="editorMode === 'split'">
-                <div class="flex-1 flex flex-col overflow-hidden border-r border-slate-200 dark:border-slate-700/20">
+                <div class="flex-1 flex flex-col overflow-hidden border-r border-[var(--app-border)]">
                     <textarea
                         :value="memoContent"
                         @input="handleInput"
-                        class="flex-1 w-full p-4 bg-white dark:bg-[#0f172a] text-slate-700 dark:text-slate-300 font-mono text-xs leading-relaxed resize-none outline-none border-none"
+                        class="memo-editor flex-1 w-full p-4 font-mono text-xs leading-relaxed resize-none outline-none border-none"
                         :placeholder="t('memo.placeholder')"
                         spellcheck="false"
                     />
@@ -210,11 +210,7 @@ function handleMarkdownClick(e: MouseEvent) {
     font-weight: 700;
     margin: 0.8em 0 0.4em;
     padding-bottom: 0.3em;
-    border-bottom: 1px solid #e2e8f0;
-}
-
-.dark .markdown-body :deep(h1) {
-    border-bottom-color: #1e293b;
+    border-bottom: 1px solid var(--app-border);
 }
 
 .markdown-body :deep(h2) {
@@ -222,11 +218,7 @@ function handleMarkdownClick(e: MouseEvent) {
     font-weight: 600;
     margin: 0.8em 0 0.4em;
     padding-bottom: 0.2em;
-    border-bottom: 1px solid #e2e8f0;
-}
-
-.dark .markdown-body :deep(h2) {
-    border-bottom-color: #1e293b;
+    border-bottom: 1px solid var(--app-border);
 }
 
 .markdown-body :deep(h3) {
@@ -254,23 +246,15 @@ function handleMarkdownClick(e: MouseEvent) {
     font-size: 0.85em;
     padding: 0.15em 0.4em;
     border-radius: 4px;
-    background: #f1f5f9;
-}
-
-.dark .markdown-body :deep(code) {
-    background: #1e293b;
+    background: var(--app-surface-soft);
 }
 
 .markdown-body :deep(pre) {
     padding: 1em;
     border-radius: 8px;
     overflow-x: auto;
-    background: #f1f5f9;
+    background: var(--app-surface-soft);
     margin: 0.5em 0;
-}
-
-.dark .markdown-body :deep(pre) {
-    background: #1e293b;
 }
 
 .markdown-body :deep(pre code) {
@@ -281,14 +265,9 @@ function handleMarkdownClick(e: MouseEvent) {
 .markdown-body :deep(blockquote) {
     padding: 0.5em 1em;
     margin: 0.5em 0;
-    border-left: 4px solid #3b82f6;
-    background: #f8fafc;
-    color: #64748b;
-}
-
-.dark .markdown-body :deep(blockquote) {
-    background: #1e293b;
-    color: #94a3b8;
+    border-left: 4px solid var(--app-primary);
+    background: var(--app-surface-soft);
+    color: var(--app-text-secondary);
 }
 
 .markdown-body :deep(table) {
@@ -299,27 +278,18 @@ function handleMarkdownClick(e: MouseEvent) {
 
 .markdown-body :deep(th),
 .markdown-body :deep(td) {
-    border: 1px solid #e2e8f0;
+    border: 1px solid var(--app-border);
     padding: 0.4em 0.8em;
     text-align: left;
 }
 
-.dark .markdown-body :deep(th),
-.dark .markdown-body :deep(td) {
-    border-color: #334155;
-}
-
 .markdown-body :deep(th) {
-    background: #f1f5f9;
+    background: var(--app-surface-soft);
     font-weight: 600;
 }
 
-.dark .markdown-body :deep(th) {
-    background: #1e293b;
-}
-
 .markdown-body :deep(a) {
-    color: #3b82f6;
+    color: var(--app-primary);
     text-decoration: none;
 }
 
@@ -329,12 +299,8 @@ function handleMarkdownClick(e: MouseEvent) {
 
 .markdown-body :deep(hr) {
     border: none;
-    border-top: 1px solid #e2e8f0;
+    border-top: 1px solid var(--app-border);
     margin: 1em 0;
-}
-
-.dark .markdown-body :deep(hr) {
-    border-top-color: #334155;
 }
 
 .markdown-body :deep(img) {
@@ -349,10 +315,12 @@ textarea::-webkit-scrollbar-track {
     background: transparent;
 }
 textarea::-webkit-scrollbar-thumb {
-    background: #cbd5e1;
+    background: color-mix(in srgb, var(--app-text-muted) 52%, transparent);
     border-radius: 2px;
 }
-.dark textarea::-webkit-scrollbar-thumb {
-    background: #334155;
+
+.memo-editor {
+    background: var(--app-surface);
+    color: var(--app-text-secondary);
 }
 </style>

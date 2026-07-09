@@ -286,9 +286,9 @@ async function openFolder() {
 <template>
     <div @click="handleClick"
         class="p-3.5 rounded-lg cursor-pointer transition-all duration-200 border group relative overflow-hidden mb-2" :class="isActive
-            ? 'bg-blue-50/80 dark:bg-blue-500/8 border-blue-200/90 dark:border-blue-500/20 shadow-sm'
-            : 'bg-white dark:bg-slate-800/30 border-slate-200/95 dark:border-slate-700/20 shadow-[0_1px_2px_rgba(15,23,42,0.04)] hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:border-slate-300/95 dark:hover:border-slate-600/30 hover:shadow-sm'">
-        <div class="project-actions absolute right-0 top-0 opacity-0 group-hover:opacity-100 transition-opacity duration-150 z-20 flex bg-white/92 dark:bg-slate-900/88 backdrop-blur-xl rounded-xl px-0.5 py-0.5 shadow-[0_10px_24px_rgba(15,23,42,0.12)]">
+            ? 'project-card-active'
+            : 'project-card-idle'">
+        <div class="project-actions absolute right-0 top-0 opacity-0 group-hover:opacity-100 transition-opacity duration-150 z-20 flex rounded-xl px-0.5 py-0.5">
             <button @click.stop="handleTogglePin"
                 class="project-action-btn transition-colors duration-150"
                 :class="project.pinned ? 'text-amber-500' : 'text-slate-400 hover:text-amber-500'"
@@ -343,7 +343,7 @@ async function openFolder() {
             </div>
             <div class="flex-shrink-0">
                 <div v-if="isRunning"
-                    class="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.7)] animate-pulse">
+                    class="project-running-dot">
                 </div>
             </div>
         </div>
@@ -359,13 +359,13 @@ async function openFolder() {
             <span
                 v-for="tag in displayTags"
                 :key="tag"
-                class="inline-flex items-center px-1.5 py-0 rounded text-[9px] font-medium bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-400 border border-blue-200/50 dark:border-blue-500/20"
+                class="project-tag-chip project-tag-chip-primary"
             >
                 {{ tag }}
             </span>
             <span v-if="extraTagsCount > 0" class="text-[9px] text-slate-400 dark:text-slate-500">+{{ extraTagsCount }}</span>
             <span v-if="displayTags.length > 0 && groupName" class="text-slate-300 dark:text-slate-600 text-[10px]">·</span>
-            <span v-if="groupName" class="inline-flex items-center gap-0.5 px-1.5 py-0 rounded text-[9px] font-medium bg-slate-100 text-slate-500 dark:bg-slate-700/40 dark:text-slate-400 border border-slate-200/50 dark:border-slate-600/30">
+            <span v-if="groupName" class="project-tag-chip project-tag-chip-muted inline-flex items-center gap-0.5">
                 <div class="i-mdi-folder-network text-[8px]" />
                 {{ groupName }}
             </span>
@@ -379,7 +379,7 @@ async function openFolder() {
                 <!-- PM 不可用提示条 -->
                 <div v-if="pmUnavailable" class="w-full mb-1">
                     <el-tooltip :content="pmDisabledTooltip" placement="top" :show-after="200">
-                        <div class="flex items-center gap-1 text-[10px] text-amber-500 dark:text-amber-400 bg-amber-50/80 dark:bg-amber-500/10 rounded px-2 py-0.5 cursor-help">
+                        <div class="project-warning-chip flex items-center gap-1 cursor-help">
                             <div class="i-mdi-alert-circle text-xs" />
                             <span>{{ t('project.commandDisabled') }}：{{ pmDisabledTooltip }}</span>
                         </div>
@@ -390,7 +390,7 @@ async function openFolder() {
                     <button v-for="cmd in project.customCommands" :key="cmd.id" @click.stop="handleRunCustom(cmd.id)"
                         class="px-2 py-0.5 text-[10px] rounded border border-dashed transition-all duration-150 uppercase tracking-wider font-medium cursor-pointer"
                         :class="pmUnavailable
-                            ? 'opacity-40 cursor-not-allowed bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 border-slate-200 dark:border-slate-700'
+                            ? 'project-script-disabled opacity-40 cursor-not-allowed'
                             : store.runningStatus[`${project.id}:${cmd.id}`]
                                 ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 animate-pulse'
                                 : 'bg-blue-500/8 text-blue-600 dark:text-blue-400 border-blue-500/15 hover:bg-blue-500/15'"
@@ -403,12 +403,12 @@ async function openFolder() {
                     <button v-for="script in displayScripts" :key="script" @click.stop="handleRun(script)"
                         class="px-2 py-0.5 text-[10px] rounded border transition-all duration-150 uppercase tracking-wider font-medium cursor-pointer"
                         :class="pmUnavailable
-                            ? 'opacity-40 cursor-not-allowed bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-600 border-slate-200 dark:border-slate-700'
+                            ? 'project-script-disabled opacity-40 cursor-not-allowed'
                             : store.runningStatus[`${project.id}:${script}`]
                                 ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 animate-pulse'
                                 : (script === 'dev' || script === 'start' || script === 'serve'
                                     ? 'bg-emerald-500/8 text-emerald-600 dark:text-emerald-400 border-emerald-500/15 hover:bg-emerald-500/15'
-                                    : 'bg-slate-100 dark:bg-slate-700/40 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-600/40 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-700 dark:hover:text-slate-200')"
+                                    : 'project-script-muted')"
                         :disabled="pmUnavailable">
                         {{ script }}
                     </button>
@@ -440,9 +440,11 @@ async function openFolder() {
 }
 
 .project-actions {
+  background: var(--app-surface-raised);
+  backdrop-filter: blur(12px);
   box-shadow:
-    0 10px 24px rgba(15, 23, 42, 0.12),
-    inset 0 0 0 1px rgba(226, 232, 240, 0.7);
+    var(--app-shadow-md),
+    inset 0 0 0 1px var(--app-border);
 }
 
 .project-action-btn {
@@ -454,21 +456,77 @@ async function openFolder() {
   border: none;
   border-radius: 8px;
   background: transparent;
-  transition: all 0.16s ease;
+  color: var(--app-text-muted);
+  transition:
+    background-color var(--app-duration-fast) var(--app-ease),
+    color var(--app-duration-fast) var(--app-ease),
+    transform var(--app-duration-fast) var(--app-ease);
 }
 
 .project-action-btn:hover {
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--app-primary-soft);
   transform: translateY(-1px);
 }
 
-.dark .project-actions {
-  box-shadow:
-    0 12px 28px rgba(2, 6, 23, 0.28),
-    inset 0 0 0 1px rgba(51, 65, 85, 0.72);
+.project-card-active {
+  background: var(--app-primary-soft);
+  border-color: color-mix(in srgb, var(--app-primary) 30%, transparent);
+  box-shadow: var(--app-shadow-sm);
 }
 
-.dark .project-action-btn:hover {
-  background: rgba(30, 41, 59, 0.78);
+.project-card-idle {
+  background: var(--app-surface);
+  border-color: var(--app-border);
+  box-shadow: var(--app-shadow-sm);
+}
+
+.project-card-idle:hover {
+  background: var(--app-surface-soft);
+  border-color: var(--app-border-strong);
+}
+
+.project-running-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--app-success);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--app-success) 58%, transparent);
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.project-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  border-radius: var(--app-radius-xs);
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.project-tag-chip-primary {
+  background: var(--app-primary-soft);
+  border: 1px solid color-mix(in srgb, var(--app-primary) 24%, transparent);
+  color: var(--app-primary);
+}
+
+.project-tag-chip-muted,
+.project-script-muted {
+  background: var(--app-surface-soft);
+  border-color: var(--app-border);
+  color: var(--app-text-secondary);
+}
+
+.project-warning-chip {
+  background: color-mix(in srgb, var(--app-warning) 10%, transparent);
+  border-radius: var(--app-radius-xs);
+  color: var(--app-warning);
+  font-size: 10px;
+  padding: 2px 8px;
+}
+
+.project-script-disabled {
+  background: var(--app-surface-soft);
+  border-color: var(--app-border);
+  color: var(--app-text-muted);
 }
 </style>

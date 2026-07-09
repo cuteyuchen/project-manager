@@ -74,15 +74,15 @@ function handleRemove(path: string, source: string, version?: string) {
 </script>
 
 <template>
-    <div class="p-6 h-full flex flex-col">
-        <div class="flex justify-between items-center mb-6">
+    <div class="app-page">
+        <div class="app-page-header flex justify-between items-center gap-4">
             <div>
             <h1
                 :class="isPlugin 
-                    ? 'text-2xl font-bold text-purple-500 mb-1' 
-                    : 'text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-400 mb-1'">
+                    ? 'app-page-title !text-purple-500'
+                    : 'app-page-title'">
                 {{ t('nodes.title') }}</h1>
-                <p class="text-slate-400 dark:text-slate-500 text-xs">Manage Node.js environments</p>
+                <p class="app-page-description">Manage Node.js environments</p>
             </div>
             <div class="grid grid-cols-2 gap-2 w-fit">
                 <el-button type="primary" @click="showInstallModal = true" class="!rounded-lg !ml-0" size="small">
@@ -108,8 +108,8 @@ function handleRemove(path: string, source: string, version?: string) {
             </div>
         </div>
 
-        <div
-            class="flex-1 bg-white dark:bg-[#1e293b] rounded-lg border border-slate-200 dark:border-slate-700/30 overflow-hidden shadow-sm transition-colors duration-200 min-h-0">
+        <div class="app-page-content">
+        <div class="app-table-panel h-full">
             <el-table :data="nodeStore.versions" style="width: 100%" height="100%"
                 :row-style="{ background: 'transparent' }" class="custom-table">
                 <el-table-column prop="version" :label="t('nodes.version')">
@@ -155,6 +155,7 @@ function handleRemove(path: string, source: string, version?: string) {
                 </el-table-column>
             </el-table>
         </div>
+        </div>
 
         <AddNodeModal v-model="showAddModal" />
         <InstallNodeModal v-model="showInstallModal" />
@@ -164,41 +165,14 @@ function handleRemove(path: string, source: string, version?: string) {
 
 <style scoped>
 :deep(.el-table) {
-    --el-table-border-color: #e2e8f0;
     --el-table-header-bg-color: transparent;
-    --el-table-header-text-color: #475569;
-    --el-table-bg-color: transparent;
-    --el-table-tr-bg-color: transparent;
 }
 
 :deep(.el-table th.el-table__cell) {
     background-color: transparent !important;
 }
 
-:global(html.dark) :deep(.el-table th.el-table__cell) {
-    background-color: transparent !important;
-}
-
-:global(html.dark) :deep(.el-table) {
-    --el-table-border-color: #334155;
-    --el-table-header-bg-color: transparent;
-    --el-table-header-text-color: #94a3b8;
-}
-
-:deep(.el-table__inner-wrapper::before) {
-    background-color: var(--el-table-border-color) !important;
-}
-
-:deep(.el-table__border-left-patch) {
-    background-color: var(--el-table-border-color) !important;
-}
-
-/* Row hover effect */
 :deep(.el-table__body tr:hover > td) {
-    background-color: rgba(241, 245, 249, 0.5) !important;
-}
-
-:global(html.dark) :deep(.el-table__body tr:hover > td) {
-    background-color: rgba(30, 41, 59, 0.5) !important;
+    background-color: var(--app-primary-soft) !important;
 }
 </style>

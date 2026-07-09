@@ -153,23 +153,23 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="h-full flex flex-col overflow-hidden bg-slate-50 dark:bg-[#0b1120]">
-    <div class="shrink-0 border-b border-slate-200 dark:border-slate-700/20 bg-white dark:bg-[#0f172a]">
+  <div class="app-page">
+    <div class="app-page-header">
       <div class="px-5 pt-5 pb-3 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <div class="text-xs font-semibold tracking-[0.24em] uppercase text-slate-400 dark:text-slate-500">
+          <div class="app-page-kicker">
             {{ t('ports.section') }}
           </div>
-          <h2 class="mt-2 text-xl font-semibold text-slate-800 dark:text-slate-100">
+          <h2 class="app-page-title">
             {{ t('ports.title') }}
           </h2>
-          <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+          <p class="app-page-description">
             {{ t('ports.description') }}
           </p>
         </div>
 
         <button
-            class="inline-flex items-center gap-2 rounded-xl border border-blue-200/70 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-600 transition-colors hover:bg-blue-100 dark:border-blue-400/20 dark:bg-blue-500/10 dark:text-blue-300 dark:hover:bg-blue-500/15"
+            class="app-primary-action"
             :disabled="loading"
             @click="loadPorts"
         >
@@ -229,7 +229,7 @@ onMounted(() => {
     <div class="flex-1 min-h-0 overflow-hidden px-5 py-4">
       <div
           v-if="unsupportedMessage"
-          class="h-full rounded-2xl border border-amber-200/80 bg-amber-50/80 p-6 text-sm text-amber-700 dark:border-amber-400/20 dark:bg-amber-500/10 dark:text-amber-200"
+          class="app-alert-warning h-full p-6 text-sm"
       >
         <div class="flex items-start gap-3">
           <div class="i-mdi-alert-circle-outline mt-0.5 text-xl"/>
@@ -240,8 +240,7 @@ onMounted(() => {
         </div>
       </div>
 
-      <div v-else
-           class="h-full rounded-2xl border border-slate-200/80 bg-white/90 shadow-sm shadow-slate-200/40 dark:border-slate-700/20 dark:bg-slate-900/70 dark:shadow-black/20 overflow-hidden">
+      <div v-else class="app-table-panel h-full">
         <el-table
             v-loading="loading"
             :data="filteredPorts"
@@ -362,17 +361,16 @@ onMounted(() => {
 
 <style scoped>
 .summary-card {
-  border: 1px solid rgba(226, 232, 240, 0.9);
-  border-radius: 16px;
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  box-shadow: var(--app-shadow-sm);
   padding: 14px 16px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(248, 250, 252, 0.78));
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05),
-  inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
 
 .summary-label {
   font-size: 11px;
-  color: rgb(100 116 139);
+  color: var(--app-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.18em;
 }
@@ -381,22 +379,7 @@ onMounted(() => {
   margin-top: 8px;
   font-size: 28px;
   font-weight: 700;
-  color: rgb(15 23 42);
-}
-
-:global(html.dark) .summary-card {
-  border-color: rgba(51, 65, 85, 0.7);
-  background: linear-gradient(180deg, rgba(30, 41, 59, 0.58), rgba(15, 23, 42, 0.72));
-  box-shadow: 0 16px 28px rgba(2, 6, 23, 0.24),
-  inset 0 1px 0 rgba(255, 255, 255, 0.03);
-}
-
-:global(html.dark) .summary-label {
-  color: rgb(148 163 184);
-}
-
-:global(html.dark) .summary-value {
-  color: rgb(241 245 249);
+  color: var(--app-text);
 }
 
 .port-table :deep(.el-table__cell) {
@@ -425,38 +408,16 @@ onMounted(() => {
 /* Light mode fixed column styles */
 .port-table :deep(.el-table__fixed-right),
 .port-table :deep(.el-table__fixed-right-patch) {
-  background: rgba(255, 255, 255, 0.98) !important;
+  background: var(--app-surface) !important;
 }
 
 .port-table :deep(.el-table__fixed-right .el-table__cell),
 .port-table :deep(.el-table-fixed-column--right),
 .port-table :deep(.el-table-fixed-column--right .el-table__cell) {
-  background: rgba(255, 255, 255, 0.98) !important;
+  background: var(--app-surface) !important;
 }
 
 .port-table :deep(.el-table__fixed-right) {
-  box-shadow: -16px 0 20px -18px rgba(15, 23, 42, 0.22);
-}
-
-/* Dark mode fixed column styles - must come after light styles */
-html.dark .port-table :deep(.el-table__fixed-right),
-html.dark .port-table :deep(.el-table__fixed-right-patch),
-html.dark .port-table :deep(.el-table__fixed-right .el-table__cell),
-html.dark .port-table :deep(.el-table-fixed-column--right),
-html.dark .port-table :deep(.el-table-fixed-column--right .el-table__cell) {
-  background: rgba(15, 23, 42, 0.98) !important;
-}
-
-html.dark .port-table :deep(.el-table__fixed-right .el-table__header .el-table__cell),
-html.dark .port-table :deep(.el-table-fixed-column--right.is-last-column) {
-  background: rgba(15, 23, 42, 0.98) !important;
-}
-
-html.dark .port-table :deep(.el-table__fixed-right .el-table__row--striped .el-table__cell) {
-  background: rgba(15, 23, 42, 0.98) !important;
-}
-
-html.dark .port-table :deep(.el-table__fixed-right) {
-  box-shadow: -16px 0 20px -18px rgba(2, 6, 23, 0.65);
+  box-shadow: -16px 0 20px -18px color-mix(in srgb, var(--app-text) 24%, transparent);
 }
 </style>

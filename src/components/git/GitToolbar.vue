@@ -183,7 +183,8 @@ async function handleCancel() {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+  border-bottom: 1px solid var(--app-border);
+  background: var(--app-surface-raised);
 }
 .git-toolbar-status {
   display: flex;
@@ -191,7 +192,8 @@ async function handleCancel() {
   justify-content: space-between;
   gap: 8px;
   padding: 0 12px 8px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  border-bottom: 1px solid var(--app-border);
+  background: var(--app-surface-raised);
 }
 .status-pill {
   display: inline-flex;
@@ -201,13 +203,13 @@ async function handleCancel() {
   padding: 4px 10px;
   border-radius: 999px;
   font-size: 10px;
-  color: rgb(71, 85, 105);
-  background: rgba(59, 130, 246, 0.08);
+  color: var(--app-text-secondary);
+  background: var(--app-primary-soft);
 }
 .status-cancel {
   border: none;
   background: transparent;
-  color: rgb(239, 68, 68);
+  color: var(--app-danger);
   font-size: 10px;
   font-weight: 600;
   cursor: pointer;
@@ -221,26 +223,22 @@ async function handleCancel() {
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  border-radius: 12px;
-  background: linear-gradient(180deg, rgba(255,255,255,0.68), rgba(248,250,252,0.5));
-  border: none;
-  backdrop-filter: blur(14px) saturate(1.16);
-  -webkit-backdrop-filter: blur(14px) saturate(1.16);
-  box-shadow:
-    0 8px 18px rgba(15,23,42,0.05),
-    inset 0 1px 0 rgba(255,255,255,0.42),
-    inset 0 0 0 1px rgba(191,219,254,0.5);
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-lg);
+  background: var(--app-surface-soft);
+  color: var(--app-text-secondary);
   cursor: pointer;
-  transition: all 0.22s ease, backdrop-filter 0.22s ease, -webkit-backdrop-filter 0.22s ease;
+  transition:
+    background-color var(--app-duration-fast) var(--app-ease),
+    border-color var(--app-duration-fast) var(--app-ease),
+    color var(--app-duration-fast) var(--app-ease),
+    box-shadow var(--app-duration-fast) var(--app-ease);
 }
 .branch-chip:hover {
-  transform: translateY(-1px);
-  backdrop-filter: blur(18px) saturate(1.28);
-  -webkit-backdrop-filter: blur(18px) saturate(1.28);
-  box-shadow:
-    0 12px 24px rgba(15,23,42,0.08),
-    inset 0 1px 0 rgba(255,255,255,0.46),
-    inset 0 0 0 1px rgba(96,165,250,0.4);
+  border-color: color-mix(in srgb, var(--app-primary) 30%, transparent);
+  background: var(--app-primary-soft);
+  color: var(--app-primary);
+  box-shadow: var(--app-shadow-sm);
 }
 .toolbar-action {
   position: relative;
@@ -251,24 +249,16 @@ async function handleCancel() {
   height: 32px;
   border-radius: 10px;
   cursor: pointer;
-  transition: all 0.22s ease, backdrop-filter 0.22s ease, -webkit-backdrop-filter 0.22s ease;
-  border: none;
-  background: linear-gradient(180deg, rgba(255,255,255,0.66), rgba(248,250,252,0.48));
-  backdrop-filter: blur(14px) saturate(1.16);
-  -webkit-backdrop-filter: blur(14px) saturate(1.16);
-  box-shadow:
-    0 8px 18px rgba(15,23,42,0.05),
-    inset 0 1px 0 rgba(255,255,255,0.42),
-    inset 0 0 0 1px rgba(226,232,240,0.5);
+  transition:
+    background-color var(--app-duration-fast) var(--app-ease),
+    border-color var(--app-duration-fast) var(--app-ease),
+    color var(--app-duration-fast) var(--app-ease);
+  border: 1px solid var(--app-border);
+  background: var(--app-surface-soft);
 }
 .toolbar-action:hover:not(:disabled) {
-  transform: translateY(-1px);
-  backdrop-filter: blur(18px) saturate(1.28);
-  -webkit-backdrop-filter: blur(18px) saturate(1.28);
-  box-shadow:
-    0 12px 24px rgba(15,23,42,0.08),
-    inset 0 1px 0 rgba(255,255,255,0.48),
-    inset 0 0 0 1px rgba(191,219,254,0.64);
+  border-color: color-mix(in srgb, var(--app-primary) 30%, transparent);
+  background: var(--app-primary-soft);
 }
 .toolbar-action:disabled {
   opacity: 0.4;
@@ -276,48 +266,11 @@ async function handleCancel() {
 }
 .action-icon {
   font-size: 14px;
-  color: rgb(100, 116, 139);
+  color: var(--app-text-secondary);
+  transition: color var(--app-duration-fast) var(--app-ease);
 }
-:global(.dark) .branch-chip {
-  background:
-    linear-gradient(180deg, rgba(96,165,250,0.03), rgba(96,165,250,0)),
-    linear-gradient(180deg, rgba(15,23,42,0.84), rgba(2,6,23,0.74));
-  backdrop-filter: blur(20px) saturate(1.18);
-  -webkit-backdrop-filter: blur(20px) saturate(1.18);
-  box-shadow:
-    0 16px 30px rgba(2,6,23,0.32),
-    inset 0 1px 0 rgba(255,255,255,0.06),
-    inset 0 0 0 1px rgba(96,165,250,0.18);
-}
-:global(.dark) .branch-chip:hover {
-  backdrop-filter: blur(24px) saturate(1.26);
-  -webkit-backdrop-filter: blur(24px) saturate(1.26);
-  box-shadow:
-    0 18px 34px rgba(2,6,23,0.36),
-    inset 0 1px 0 rgba(255,255,255,0.08),
-    inset 0 0 0 1px rgba(96,165,250,0.24);
-}
-:global(.dark) .toolbar-action {
-  background:
-    linear-gradient(180deg, rgba(45,212,191,0.02), rgba(45,212,191,0)),
-    linear-gradient(180deg, rgba(15,23,42,0.82), rgba(2,6,23,0.72));
-  backdrop-filter: blur(20px) saturate(1.18);
-  -webkit-backdrop-filter: blur(20px) saturate(1.18);
-  box-shadow:
-    0 16px 28px rgba(2,6,23,0.3),
-    inset 0 1px 0 rgba(255,255,255,0.05),
-    inset 0 0 0 1px rgba(148,163,184,0.12);
-}
-:global(.dark) .toolbar-action:hover:not(:disabled) {
-  backdrop-filter: blur(24px) saturate(1.26);
-  -webkit-backdrop-filter: blur(24px) saturate(1.26);
-  box-shadow:
-    0 18px 34px rgba(2,6,23,0.36),
-    inset 0 1px 0 rgba(255,255,255,0.08),
-    inset 0 0 0 1px rgba(96,165,250,0.24);
-}
-:global(.dark) .action-icon {
-  color: rgb(148, 163, 184);
+.toolbar-action:hover:not(:disabled) .action-icon {
+  color: var(--app-primary);
 }
 .action-badge {
   position: absolute;
@@ -335,19 +288,11 @@ async function handleCancel() {
   font-weight: 600;
 }
 .toolbar-cancel {
-  box-shadow:
-    0 8px 18px rgba(239,68,68,0.12),
-    inset 0 1px 0 rgba(255,255,255,0.42),
-    inset 0 0 0 1px rgba(252,165,165,0.5);
+  border-color: color-mix(in srgb, var(--app-danger) 34%, transparent);
+  background: color-mix(in srgb, var(--app-danger) 8%, transparent);
 }
-:global(.dark) .git-toolbar-status {
-  border-bottom-color: rgba(148, 163, 184, 0.1);
-}
-:global(.dark) .status-pill {
-  color: rgb(203, 213, 225);
-  background: rgba(59, 130, 246, 0.14);
-}
-:global(.dark) .status-cancel {
-  color: rgb(248, 113, 113);
+.toolbar-cancel .action-icon,
+.toolbar-cancel:hover:not(:disabled) .action-icon {
+  color: var(--app-danger);
 }
 </style>

@@ -45,7 +45,7 @@ function handleTagChange(v: string) {
 </script>
 
 <template>
-  <div class="batch-action-bar fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur border-t border-slate-200 dark:border-slate-700/40 px-3 py-2 flex items-center gap-2 shadow-[0_-2px_8px_rgba(0,0,0,0.06)]">
+  <div class="batch-action-bar fixed bottom-0 left-0 right-0 z-40 px-3 py-2 flex items-center gap-2">
     <!-- 退出 -->
     <button
       class="text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 flex items-center gap-1 shrink-0"
@@ -61,13 +61,13 @@ function handleTagChange(v: string) {
 
     <!-- 全选 -->
     <button
-      class="text-[11px] px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
+      class="app-outline-action text-[11px] px-1.5 py-0.5 shrink-0"
       @click="emit('toggleSelectAll')"
     >
       {{ isAllSelected ? t('dashboard.batchDeselectAll') : t('dashboard.batchSelectAll') }}
     </button>
 
-    <div class="h-4 w-px bg-slate-200 dark:bg-slate-700 shrink-0" />
+    <div class="h-4 w-px bg-[var(--app-border)] shrink-0" />
 
     <!-- 分组 -->
     <el-select
@@ -114,18 +114,18 @@ function handleTagChange(v: string) {
       />
     </div>
 
-    <div class="h-4 w-px bg-slate-200 dark:bg-slate-700 shrink-0" />
+    <div class="h-4 w-px bg-[var(--app-border)] shrink-0" />
 
     <!-- 置顶/取消置顶 -->
     <button
-      class="text-[11px] px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
+      class="app-outline-action text-[11px] px-1.5 py-0.5 shrink-0"
       @click="emit('batchPin')"
     >
       <div class="i-mdi-pin text-[10px] inline mr-0.5" />
       {{ t('dashboard.batchPin') }}
     </button>
     <button
-      class="text-[11px] px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
+      class="app-outline-action text-[11px] px-1.5 py-0.5 shrink-0"
       @click="emit('batchUnpin')"
     >
       <div class="i-mdi-pin-off text-[10px] inline mr-0.5" />
@@ -136,21 +136,21 @@ function handleTagChange(v: string) {
 
     <!-- 右侧危险/辅助操作 -->
     <button
-      class="text-[11px] px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
+      class="app-outline-action text-[11px] px-1.5 py-0.5 shrink-0"
       @click="emit('batchRefresh')"
     >
       <div class="i-mdi-refresh text-[10px] inline mr-0.5" />
       {{ t('common.refresh') }}
     </button>
     <button
-      class="text-[11px] px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
+      class="app-outline-action text-[11px] px-1.5 py-0.5 shrink-0"
       @click="emit('batchOpenFolder')"
     >
       <div class="i-mdi-folder-open-outline text-[10px] inline mr-0.5" />
       {{ t('dashboard.batchOpenFolder') }}
     </button>
     <button
-      class="text-[11px] px-1.5 py-0.5 rounded border border-red-300 dark:border-red-800 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 shrink-0"
+      class="app-danger-action text-[11px] px-1.5 py-0.5 shrink-0"
       @click="emit('batchRemove')"
     >
       <div class="i-mdi-delete-outline text-[10px] inline mr-0.5" />
@@ -158,3 +158,12 @@ function handleTagChange(v: string) {
     </button>
   </div>
 </template>
+
+<style scoped>
+.batch-action-bar {
+  background: var(--app-surface-raised);
+  border-top: 1px solid var(--app-border);
+  box-shadow: 0 -8px 24px color-mix(in srgb, var(--app-text) 8%, transparent);
+  backdrop-filter: blur(12px);
+}
+</style>
