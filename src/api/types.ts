@@ -19,6 +19,27 @@ export interface ProjectInfo {
     projectType: string;
 }
 
+/** 子项目识别候选（前后端识别） */
+export interface SubProjectCandidate {
+    name: string;
+    path: string;
+    /** frontend / backend / node / go / rust / python / dotnet / static / unknown */
+    kind: string;
+    framework?: string;
+    hasPackageJson: boolean;
+    scripts: string[];
+}
+
+/** 预扫描导入候选 */
+export interface ImportCandidate {
+    name: string;
+    path: string;
+    /** 已识别的子模块数量 */
+    subModuleCount: number;
+    /** 是否为 Git 仓库 */
+    hasGit: boolean;
+}
+
 export interface TerminalInfo {
     id: string;
     name: string;
@@ -53,6 +74,10 @@ export interface PlatformAPI {
 
     // Project
     scanProject(path: string): Promise<ProjectInfo>;
+    /** 扫描目录识别子项目（前后端识别） */
+    scanSubProjects(path: string): Promise<SubProjectCandidate[]>;
+    /** 预扫描根目录下的子目录，返回导入候选 */
+    scanImportPreview(path: string): Promise<ImportCandidate[]>;
     gitListRemoteBranches(url: string): Promise<string[]>;
     gitCloneBranch(url: string, branch: string, destination: string, operationId?: string): Promise<string>;
     gitCancelOperation(operationId: string): Promise<void>;

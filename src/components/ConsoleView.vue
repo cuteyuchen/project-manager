@@ -170,6 +170,35 @@ const availableTabs = computed(() => {
     return Array.from(openTabs.value);
 });
 
+/** *********************可运行命令列表（无输出 tab 时展示）*********************/
+
+/** 可见脚本（遵循 visibleScripts 白名单） */
+const runnableScripts = computed(() => {
+    const project = activeProject.value;
+    if (!project || project.type !== 'node' || !project.scripts?.length) return [];
+    if (project.visibleScripts?.length) {
+        return project.scripts.filter(s => project.visibleScripts!.includes(s));
+    }
+    return project.scripts;
+});
+
+/** 自定义命令 */
+const runnableCustomCommands = computed(() => activeProject.value?.customCommands ?? []);
+
+/** 是否有任何可运行命令 */
+const hasRunnableCommands = computed(() =>
+    runnableScripts.value.length > 0 || runnableCustomCommands.value.length > 0
+);
+
+function isCommandRunning(id: string): boolean {
+    if (!activeProject.value) return false;
+    return !!projectStore.runningStatus[`${activeProject.value.id}:${id}`];
+}
+
+function getCustomCmdLabel(cmd: { name: string; builtinId?: 'install_dependencies' }): string {
+    return getCustomCommandDisplayName(cmd, t);
+}
+
 function getTabLabel(tabId: string): string {
     if (!activeProject.value) return tabId;
     const customCmd = activeProject.value.customCommands?.find(c => c.id === tabId);
@@ -315,6 +344,18 @@ function handleRun(script: string) {
     }
 }
 
+/** 启动器点击：运行中则停止，否则运行 */
+function toggleRun(id: string) {
+    if (!activeProject.value) return;
+    if (isCommandRunning(id)) {
+        projectStore.stopProject(activeProject.value, id);
+    } else {
+        handleRun(id);
+        // 运行后自动切到该命令的输出标签
+        activeScript.value = id;
+    }
+}
+
 function handleCloseTab(script: string) {
     // Stop the script if running
     if (activeProject.value && projectStore.runningStatus[`${activeProject.value.id}:${script}`]) {
@@ -330,6 +371,35 @@ function handleCloseTab(script: string) {
 
 <template>
     <div class="app-page absolute inset-0">
+        <!-- 可运行命令启动器（常驻显示）-->
+        <div v-if="activeProject && hasRunnableCommands" class="command-launcher app-panel-toolbar flex flex-wrap items-center gap-1.5 px-3 py-2 border-b">
+            <span class="text-[11px] text-slate-400 dark:text-slate-500 mr-1 shrink-0">{{ t('dashboard.runnableCommands') }}</span>
+            <!-- 自定义命令 -->
+            <button
+                v-for="cmd in runnableCustomCommands"
+                :key="cmd.id"
+                @click="toggleRun(cmd.id)"
+                class="launcher-btn"
+                :class="isCommandRunning(cmd.id) ? 'launcher-btn-running' : 'launcher-btn-custom'"
+            >
+                <div :class="isCommandRunning(cmd.id) ? 'i-mdi-stop' : 'i-mdi-play'" class="text-[11px]" />
+                {{ getCustomCmdLabel(cmd) }}
+            </button>
+            <!-- node 脚本 -->
+            <button
+                v-for="script in runnableScripts"
+                :key="script"
+                @click="toggleRun(script)"
+                class="launcher-btn"
+                :class="isCommandRunning(script)
+                    ? 'launcher-btn-running'
+                    : (script === 'dev' || script === 'start' || script === 'serve' ? 'launcher-btn-primary' : 'launcher-btn-muted')"
+            >
+                <div :class="isCommandRunning(script) ? 'i-mdi-stop' : 'i-mdi-play'" class="text-[11px]" />
+                {{ script }}
+            </button>
+        </div>
+
         <!-- Header -->
         <div v-if="activeProject"
             class="app-panel-toolbar flex flex-col z-10">
@@ -417,8 +487,9 @@ function handleCloseTab(script: string) {
             <div class="w-20 h-20 rounded-full flex items-center justify-center mb-4" style="background: var(--app-surface-soft);">
                 <div class="i-mdi-monitor-dashboard text-4xl opacity-25" />
             </div>
-            <p class="text-sm font-medium text-slate-500 dark:text-slate-500">{{ t('dashboard.selectScript') }}</p>
-            <p class="text-xs opacity-40 mt-1">{{ t('dashboard.clickRunHint') }}</p>
+            <p class="text-sm font-medium text-slate-500 dark:text-slate-500">
+                {{ !activeProject ? t('dashboard.selectScript') : (hasRunnableCommands ? t('dashboard.clickRunHint') : t('dashboard.noRunnableCommands')) }}
+            </p>
         </div>
     </div>
 </template>
@@ -459,5 +530,83 @@ function handleCloseTab(script: string) {
 .console-log-row:hover {
   background: color-mix(in srgb, var(--app-text-muted) 10%, transparent);
   border-left-color: var(--app-border);
+}
+
+/* 命令启动器按钮 */
+.launcher-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: var(--app-radius-md);
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background-color var(--app-duration-fast) var(--app-ease), color var(--app-duration-fast) var(--app-ease);
+}
+.launcher-btn-custom {
+  background: color-mix(in srgb, var(--app-primary) 8%, transparent);
+  color: var(--app-primary);
+  border-color: color-mix(in srgb, var(--app-primary) 18%, transparent);
+  border-style: dashed;
+}
+.launcher-btn-custom:hover {
+  background: color-mix(in srgb, var(--app-primary) 16%, transparent);
+}
+.launcher-btn-primary {
+  background: color-mix(in srgb, var(--app-success) 10%, transparent);
+  color: var(--app-success);
+  border-color: color-mix(in srgb, var(--app-success) 20%, transparent);
+}
+.launcher-btn-primary:hover {
+  background: color-mix(in srgb, var(--app-success) 18%, transparent);
+}
+.launcher-btn-muted {
+  background: var(--app-surface-soft);
+  color: var(--app-text-secondary);
+  border-color: var(--app-border);
+}
+.launcher-btn-muted:hover {
+  background: var(--app-surface);
+  color: var(--app-text);
+}
+.launcher-btn-running {
+  background: color-mix(in srgb, var(--app-danger, #ef4444) 12%, transparent);
+  color: var(--app-danger, #ef4444);
+  border-color: color-mix(in srgb, var(--app-danger, #ef4444) 22%, transparent);
+}
+
+/* 可运行命令 chip */
+.run-cmd-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  border-radius: var(--app-radius-md);
+  border: 1px solid var(--app-border);
+  background: var(--app-surface);
+  color: var(--app-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  transition:
+    background-color var(--app-duration-fast) var(--app-ease),
+    color var(--app-duration-fast) var(--app-ease),
+    border-color var(--app-duration-fast) var(--app-ease);
+}
+.run-cmd-chip:hover {
+  color: var(--app-primary);
+  border-color: color-mix(in srgb, var(--app-primary) 40%, transparent);
+  background: var(--app-primary-soft);
+}
+.run-cmd-chip-primary {
+  color: var(--app-success);
+  border-color: color-mix(in srgb, var(--app-success) 30%, transparent);
+  background: color-mix(in srgb, var(--app-success) 8%, transparent);
+}
+.run-cmd-chip-running {
+  color: var(--app-success);
+  border-color: color-mix(in srgb, var(--app-success) 40%, transparent);
+  background: color-mix(in srgb, var(--app-success) 12%, transparent);
 }
 </style>

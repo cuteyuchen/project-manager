@@ -5,6 +5,11 @@ import type { TerminalInfo } from '../api/types';
 import { api } from '../api';
 import i18n from '../i18n';
 import { normalizeTerminalConfigs } from '../utils/terminalConfig';
+import {
+  DEFAULT_QUICK_SEARCH_APP_SHORTCUT,
+  DEFAULT_QUICK_SEARCH_GLOBAL_SHORTCUT,
+  normalizeShortcut,
+} from '../utils/shortcut';
 
 function createDefaultAiService(overrides: Partial<AiServiceConfig> = {}): AiServiceConfig {
   return {
@@ -42,6 +47,9 @@ export const useSettingsStore = defineStore('settings', () => {
     trayEnabled: true,
     closeAction: 'ask',
     autoLaunch: false,
+    quickSearchAppShortcut: DEFAULT_QUICK_SEARCH_APP_SHORTCUT,
+    quickSearchGlobalShortcutEnabled: false,
+    quickSearchGlobalShortcut: DEFAULT_QUICK_SEARCH_GLOBAL_SHORTCUT,
     gitAiEnabled: false,
     gitAiPrimaryService: createDefaultAiService(),
     gitAiStream: true,
@@ -135,6 +143,19 @@ export const useSettingsStore = defineStore('settings', () => {
   }
   if (!settings.value.layoutState || typeof settings.value.layoutState !== 'object' || Array.isArray(settings.value.layoutState)) {
     settings.value.layoutState = {};
+  }
+  if (typeof settings.value.quickSearchAppShortcut !== 'string') {
+    settings.value.quickSearchAppShortcut = DEFAULT_QUICK_SEARCH_APP_SHORTCUT;
+  } else {
+    settings.value.quickSearchAppShortcut = normalizeShortcut(settings.value.quickSearchAppShortcut);
+  }
+  if (typeof settings.value.quickSearchGlobalShortcutEnabled !== 'boolean') {
+    settings.value.quickSearchGlobalShortcutEnabled = false;
+  }
+  if (typeof settings.value.quickSearchGlobalShortcut !== 'string') {
+    settings.value.quickSearchGlobalShortcut = DEFAULT_QUICK_SEARCH_GLOBAL_SHORTCUT;
+  } else {
+    settings.value.quickSearchGlobalShortcut = normalizeShortcut(settings.value.quickSearchGlobalShortcut);
   }
   
   const systemThemeMedia = window.matchMedia('(prefers-color-scheme: dark)');

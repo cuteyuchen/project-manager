@@ -530,6 +530,11 @@ function buildProjectPayload(): Project {
     project.pinned = props.editProject.pinned;
     project.pinOrder = props.editProject.pinOrder;
     project.sortOrder = props.editProject.sortOrder;
+    // 保留嵌套关系与收藏等编辑表单未覆盖的字段
+    project.parentId = props.editProject.parentId;
+    project.favorite = props.editProject.favorite;
+    project.moduleKind = props.editProject.moduleKind;
+    project.subScannedAt = props.editProject.subScannedAt;
   }
 
   return ensureNodeInstallCommand(project, t('project.installDependencies'));

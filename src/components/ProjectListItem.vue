@@ -1,16 +1,14 @@
 <script setup lang="ts">
 import type { Project } from '../types';
-import type { PackageManagerResolveResult } from '../api/types';
 import { useProjectStore } from '../stores/project';
 import { useNodeStore } from '../stores/node';
 import { useSettingsStore } from '../stores/settings';
 import HealthBadge from './dashboard/HealthBadge.vue';
 import type { ProjectHealthSnapshot } from '../types';
-import { computed, ref, watch, onMounted } from 'vue';
+import { computed } from 'vue';
 import { api } from '../api';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { useI18n } from 'vue-i18n';
-import { getCustomCommandDisplayName } from '../utils/projectCommands';
 import { resolveNodePathFromVersion, resolveProjectNodePath, isExplicitNodeVersion } from '../utils/nodeRuntime';
 import { normalizeNvmVersion } from '../utils/nvm';
 import { resolveTerminalCommand } from '../utils/terminalConfig';
@@ -20,21 +18,33 @@ const props = defineProps<{
     project: Project;
     healthSnapshot?: ProjectHealthSnapshot;
     healthLevel?: 'healthy' | 'warn' | 'error' | 'unknown';
+    /** 外部指定选中态（用于子项目列表高亮）；不传时回退到 store.activeProjectId 比较 */
+    active?: boolean;
+    /** 是否显示行首多选框 */
+    selectable?: boolean;
+    /** 多选是否选中 */
+    selected?: boolean;
+    /** 卡片布局：inline 用于主列表，stacked 用于窄侧栏子项目列表 */
+    layout?: 'inline' | 'stacked';
 }>();
-const emit = defineEmits(['edit']);
+const emit = defineEmits(['edit', 'open', 'toggle-select']);
 const store = useProjectStore();
 const nodeStore = useNodeStore();
 const settingsStore = useSettingsStore();
 
-const isActive = computed(() => store.activeProjectId === props.project.id);
+const isActive = computed(() =>
+    props.active !== undefined ? props.active : store.activeProjectId === props.project.id
+);
 
-const displayScripts = computed(() => {
-    if (!props.project.scripts?.length) return [];
-    if (props.project.visibleScripts?.length) {
-        return props.project.scripts.filter(s => props.project.visibleScripts!.includes(s));
-    }
-    return props.project.scripts;
-});
+/** 直接子项目数量：>0 时该卡片可下钻 */
+const childCount = computed(() =>
+    store.projects.filter(p => p.parentId === props.project.id).length
+);
+
+/** 模块类型徽章文案（前端/后端等） */
+const moduleKindLabel = computed(() =>
+    props.project.moduleKind ? t(`project.moduleKind.${props.project.moduleKind}`) : ''
+);
 
 const isRunning = computed(() => {
     return (store.runningProjectCount[props.project.id] || 0) > 0;
@@ -61,124 +71,19 @@ const extraTagsCount = computed(() => {
     return Math.max(0, props.project.tags.length - 3);
 });
 
-/** ********************* 包管理器可用性检查 *********************/
-
-/** PM 解析结果缓存（reactive） */
-const pmResult = ref<PackageManagerResolveResult>({ available: true });
-/** PM 禁用原因 i18n key */
-const pmDisabledKey = ref('');
-/** PM 禁用原因参数 */
-const pmDisabledParams = ref<Record<string, string>>({});
-
-/** 是否有需要 PM 的命令（脚本或安装依赖） */
-const hasPmCommands = computed(() => {
-    return props.project.type === 'node' &&
-        props.project.packageManager &&
-        (displayScripts.value.length > 0 || (props.project.customCommands?.length || 0) > 0);
-});
-
-/** 包管理器是否不可用 */
-const pmUnavailable = computed(() => {
-    return hasPmCommands.value && !pmResult.value.available;
-});
-
-/** 禁用提示文本 */
-const pmDisabledTooltip = computed(() => {
-    if (!pmUnavailable.value) return '';
-    if (pmDisabledKey.value) {
-        return t(pmDisabledKey.value, pmDisabledParams.value);
-    }
-    return t('project.cmdDisabledUnknown', { pm: props.project.packageManager || 'npm' });
-});
-
-/** 刷新 PM 可用性状态 */
-async function refreshPmStatus() {
-    if (!hasPmCommands.value) {
-        pmResult.value = { available: true };
-        pmDisabledKey.value = '';
-        pmDisabledParams.value = {};
-        return;
-    }
-
-    try {
-        const result = await store.resolvePmForProject(props.project);
-        pmResult.value = result;
-
-        if (!result.available) {
-            // 构建禁用原因
-            const pm = props.project.packageManager || 'npm';
-            const nodeVersion = props.project.nodeVersion || 'default';
-
-            // 获取默认 Node 版本
-            let defaultNodeVersion = '';
-            try {
-                const defaultPath = await api.getSystemNodePath();
-                if (defaultPath) defaultNodeVersion = await api.getNodeVersion(defaultPath);
-            } catch (_) {}
-
-            switch (result.reason) {
-                case 'project_node_unavailable':
-                    pmDisabledKey.value = 'project.cmdDisabledNoNode';
-                    pmDisabledParams.value = { pm };
-                    break;
-                case 'pm_not_installed_in_project_node':
-                    pmDisabledKey.value = 'project.cmdDisabledPmNotInstalled';
-                    pmDisabledParams.value = { pm, version: nodeVersion };
-                    break;
-                case 'default_node_unavailable':
-                    pmDisabledKey.value = 'project.cmdDisabledDefaultNodeUnavailable';
-                    pmDisabledParams.value = { pm };
-                    break;
-                case 'pm_not_installed_in_default_node':
-                    pmDisabledKey.value = 'project.cmdDisabledPmNotInstalledDefault';
-                    pmDisabledParams.value = { pm, version: defaultNodeVersion || 'default' };
-                    break;
-                default:
-                    pmDisabledKey.value = 'project.cmdDisabledUnknown';
-                    pmDisabledParams.value = { pm };
-            }
-        } else {
-            pmDisabledKey.value = '';
-            pmDisabledParams.value = {};
-        }
-    } catch (_) {
-        pmResult.value = { available: true };
-    }
-}
-
-// 项目变化时刷新 PM 状态
-watch(() => [props.project.packageManager, props.project.packageManagerSource, props.project.nodeVersion], () => {
-    refreshPmStatus();
-});
-
-onMounted(() => {
-    refreshPmStatus();
-});
+/***********************交互*********************/
 
 function handleClick() {
-    store.activeProjectId = props.project.id;
+    // 由父组件决定语义：列表页 = 钻取进入工作区；子项目列表 = 选中
+    emit('open', props.project);
 }
 
-function handleRun(script: string) {
-    const runId = `${props.project.id}:${script}`;
-    if (store.runningStatus[runId]) {
-        store.stopProject(props.project, script);
-    } else {
-        store.runProject(props.project, script);
-    }
+function handleToggleSelect() {
+    emit('toggle-select', props.project.id);
 }
 
-function handleRunCustom(commandId: string) {
-    const runId = `${props.project.id}:${commandId}`;
-    if (store.runningStatus[runId]) {
-        store.stopProject(props.project, commandId);
-    } else {
-        store.runCustomCommand(props.project, commandId);
-    }
-}
-
-function getCommandLabel(name: string, builtinId?: 'install_dependencies') {
-    return getCustomCommandDisplayName({ name, builtinId }, t);
+function handleToggleFavorite() {
+    store.toggleFavorite(props.project.id);
 }
 
 function handleTogglePin() {
@@ -190,8 +95,11 @@ function handleTogglePin() {
 }
 
 function handleDelete() {
+    const hasChildren = childCount.value > 0;
     ElMessageBox.confirm(
-        t('dashboard.deleteProjectConfirm', { name: props.project.name }),
+        hasChildren
+            ? t('dashboard.deleteProjectWithChildrenConfirm', { name: props.project.name, count: childCount.value })
+            : t('dashboard.deleteProjectConfirm', { name: props.project.name }),
         t('dashboard.deleteProject'),
         {
             confirmButtonText: t('common.confirm'),
@@ -236,7 +144,6 @@ async function openTerminal() {
         if (props.project.type === 'node') {
             nodePath = resolveProjectNodePath(props.project, nodeStore.versions);
 
-            // If a specific version is configured but not installed, auto-install it
             if (!nodePath && isExplicitNodeVersion(props.project.nodeVersion)) {
                 const version = normalizeNvmVersion(props.project.nodeVersion!)!;
                 try {
@@ -284,205 +191,308 @@ async function openFolder() {
 </script>
 
 <template>
-    <div @click="handleClick"
-        class="p-3.5 rounded-lg cursor-pointer transition-all duration-200 border group relative overflow-hidden mb-2" :class="isActive
-            ? 'project-card-active'
-            : 'project-card-idle'">
-        <div class="project-actions absolute right-0 top-0 opacity-0 group-hover:opacity-100 transition-opacity duration-150 z-20 flex rounded-xl px-0.5 py-0.5">
-            <button @click.stop="handleTogglePin"
-                class="project-action-btn transition-colors duration-150"
-                :class="project.pinned ? 'text-amber-500' : 'text-slate-400 hover:text-amber-500'"
-                :title="project.pinned ? t('dashboard.unpin') : t('dashboard.pin')">
-                <div :class="project.pinned ? 'i-mdi-pin' : 'i-mdi-pin-outline'" class="text-xs" />
-            </button>
-            <button @click.stop="openEditor"
-                class="project-action-btn text-slate-400 hover:text-blue-500 transition-colors duration-150"
-                :title="t('dashboard.openInEditor')">
-                <div class="i-mdi-code-tags text-xs" />
-            </button>
-            <button @click.stop="openTerminal"
-                class="project-action-btn text-slate-400 hover:text-purple-500 transition-colors duration-150"
-                :title="t('dashboard.openInTerminal')">
-                <div class="i-mdi-console-line text-xs" />
-            </button>
-            <button @click.stop="openFolder"
-                class="project-action-btn text-slate-400 hover:text-amber-500 transition-colors duration-150"
-                :title="t('dashboard.openInExplorer')">
-                <div class="i-mdi-folder-open text-xs" />
-            </button>
-            <button @click.stop="$emit('edit')"
-                class="project-action-btn text-slate-400 hover:text-emerald-500 transition-colors duration-150"
-                :title="t('project.editProject')">
-                <div class="i-mdi-pencil text-xs" />
-            </button>
-            <button @click.stop="handleDelete"
-                class="project-action-btn text-slate-400 hover:text-red-500 transition-colors duration-150"
-                :title="t('dashboard.deleteProject')">
-                <div class="i-mdi-delete text-xs" />
-            </button>
-        </div>
-
-        <div class="flex justify-between items-center mb-1">
-            <div class="flex items-center gap-1.5 min-w-0">
-                <!-- ─── 左上角状态与拖拽入口，保持同一行相邻显示 ───────────────── -->
-                <div
-                    v-if="$slots.leading || healthSnapshot || project.pinned"
-                    class="flex items-center gap-1.5 shrink-0"
+    <div
+        class="project-row group"
+        :class="[
+            isActive ? 'project-row-active' : 'project-row-idle',
+            {
+                'project-row-selected': selected,
+                'project-row-stacked': layout === 'stacked',
+            },
+        ]"
+        @click="handleClick"
+    >
+        <div class="project-row-content">
+            <!-- ─── 行首：多选框 + 拖拽手柄 + 收藏星 ─────────────── -->
+            <div class="project-row-leading" @click.stop>
+                <label v-if="selectable" class="row-checkbox" @click.stop>
+                    <input type="checkbox" :checked="selected" @change="handleToggleSelect" />
+                    <span class="row-checkbox-box">
+                        <div v-if="selected" class="i-mdi-check text-white text-sm" />
+                    </span>
+                </label>
+                <slot name="leading" />
+                <button
+                    class="row-star"
+                    :class="project.favorite ? 'text-amber-400' : 'text-slate-300 dark:text-slate-600 hover:text-amber-400'"
+                    :title="project.favorite ? t('project.unfavorite') : t('project.favorite')"
+                    @click.stop="handleToggleFavorite"
                 >
-                    <slot name="leading" />
-                    <HealthBadge
-                        v-if="healthSnapshot"
-                        :snapshot="healthSnapshot"
-                        :level="healthLevel ?? 'unknown'"
-                    />
-                    <div v-if="project.pinned" class="i-mdi-pin text-amber-500 text-[10px] flex-shrink-0" />
-                </div>
-                <h3 class="font-semibold text-xs truncate pr-16" :class="isActive ? 'text-blue-700 dark:text-blue-400' : 'text-slate-700 dark:text-slate-200'">
-                    {{ project.name }}
-                </h3>
+                    <div :class="project.favorite ? 'i-mdi-star' : 'i-mdi-star-outline'" class="text-xl" />
+                </button>
             </div>
-            <div class="flex-shrink-0">
-                <div v-if="isRunning"
-                    class="project-running-dot">
+
+            <!-- ─── 健康状态点 + pin ─────────────── -->
+            <div v-if="healthSnapshot || project.pinned" class="project-row-status">
+                <HealthBadge v-if="healthSnapshot" :snapshot="healthSnapshot" :level="healthLevel ?? 'unknown'" />
+                <div v-if="project.pinned" class="i-mdi-pin text-amber-500 text-base" />
+            </div>
+
+            <!-- ─── 主体：名称 / 路径 / 标签 ─────────────── -->
+            <div class="project-row-main">
+                <div class="project-row-title-line">
+                    <h3 class="project-row-title" :class="isActive ? 'text-blue-700 dark:text-blue-400' : 'text-slate-700 dark:text-slate-200'">
+                        {{ project.name }}
+                    </h3>
+                    <span v-if="moduleKindLabel" class="project-kind-chip shrink-0">{{ moduleKindLabel }}</span>
+                    <span class="project-row-path">{{ project.path }}</span>
+                    <div v-if="isRunning" class="project-running-dot shrink-0" />
                 </div>
+                <div v-if="project.description || displayTags.length > 0 || groupName" class="project-row-meta">
+                    <span v-if="project.description" class="text-[10px] text-slate-400 dark:text-slate-500 truncate max-w-40" :title="project.description">
+                        {{ project.description }}
+                    </span>
+                    <span
+                        v-for="tag in displayTags"
+                        :key="tag"
+                        class="project-tag-chip project-tag-chip-primary"
+                    >
+                        {{ tag }}
+                    </span>
+                    <span v-if="extraTagsCount > 0" class="text-[9px] text-slate-400 dark:text-slate-500">+{{ extraTagsCount }}</span>
+                    <span v-if="groupName" class="project-tag-chip project-tag-chip-muted inline-flex items-center gap-0.5">
+                        <div class="i-mdi-folder-network text-[8px]" />
+                        {{ groupName }}
+                    </span>
+                </div>
+            </div>
+
+            <!-- ─── 子项目数量 + 下钻箭头 ─────────────── -->
+            <div v-if="childCount > 0" class="project-row-child">
+                <span class="project-child-chip inline-flex items-center gap-0.5" :title="t('dashboard.subProjectCount', { count: childCount })">
+                    <div class="i-mdi-file-tree text-[9px]" />
+                    {{ childCount }}
+                </span>
+                <div class="i-mdi-chevron-right text-base text-slate-400 dark:text-slate-500" />
             </div>
         </div>
 
-        <div class="text-[10px] text-slate-400 dark:text-slate-500 truncate font-mono mb-2 pr-4">{{ project.path }}</div>
-
-        <!-- 描述摘要 + 标签 + 分组 -->
-        <div v-if="project.description || displayTags.length > 0 || groupName" class="flex flex-wrap items-center gap-1 mb-1.5 pr-4 overflow-hidden max-h-5">
-            <span v-if="project.description" class="text-[10px] text-slate-400 dark:text-slate-500 truncate max-w-32" :title="project.description">
-                {{ project.description }}
-            </span>
-            <span v-if="project.description && (displayTags.length > 0 || groupName)" class="text-slate-300 dark:text-slate-600 text-[10px]">·</span>
-            <span
-                v-for="tag in displayTags"
-                :key="tag"
-                class="project-tag-chip project-tag-chip-primary"
-            >
-                {{ tag }}
-            </span>
-            <span v-if="extraTagsCount > 0" class="text-[9px] text-slate-400 dark:text-slate-500">+{{ extraTagsCount }}</span>
-            <span v-if="displayTags.length > 0 && groupName" class="text-slate-300 dark:text-slate-600 text-[10px]">·</span>
-            <span v-if="groupName" class="project-tag-chip project-tag-chip-muted inline-flex items-center gap-0.5">
-                <div class="i-mdi-folder-network text-[8px]" />
-                {{ groupName }}
-            </span>
+        <!-- ─── 行尾：操作按钮（常驻，不再悬浮）─────────────── -->
+        <div class="project-row-actions" @click.stop>
+            <button class="row-action-btn hover:text-amber-500" :class="{ 'text-amber-500': project.pinned }" :title="project.pinned ? t('dashboard.unpin') : t('dashboard.pin')" @click.stop="handleTogglePin">
+                <div :class="project.pinned ? 'i-mdi-pin' : 'i-mdi-pin-outline'" class="text-sm" />
+            </button>
+            <button class="row-action-btn hover:text-blue-500" :title="t('dashboard.openInEditor')" @click.stop="openEditor">
+                <div class="i-mdi-code-tags text-sm" />
+            </button>
+            <button class="row-action-btn hover:text-purple-500" :title="t('dashboard.openInTerminal')" @click.stop="openTerminal">
+                <div class="i-mdi-console-line text-sm" />
+            </button>
+            <button class="row-action-btn hover:text-amber-500" :title="t('dashboard.openInExplorer')" @click.stop="openFolder">
+                <div class="i-mdi-folder-open text-sm" />
+            </button>
+            <button class="row-action-btn hover:text-emerald-500" :title="t('project.editProject')" @click.stop="$emit('edit')">
+                <div class="i-mdi-pencil text-sm" />
+            </button>
+            <button class="row-action-btn hover:text-red-500" :title="t('dashboard.deleteProject')" @click.stop="handleDelete">
+                <div class="i-mdi-delete text-sm" />
+            </button>
         </div>
 
-        <Transition name="project-scripts">
-            <div
-                v-if="(isActive || isRunning) && (displayScripts.length || (project.customCommands && project.customCommands.length))"
-                class="flex flex-wrap gap-1.5 relative z-10 overflow-hidden pt-1"
-            >
-                <!-- PM 不可用提示条 -->
-                <div v-if="pmUnavailable" class="w-full mb-1">
-                    <el-tooltip :content="pmDisabledTooltip" placement="top" :show-after="200">
-                        <div class="project-warning-chip flex items-center gap-1 cursor-help">
-                            <div class="i-mdi-alert-circle text-xs" />
-                            <span>{{ t('project.commandDisabled') }}：{{ pmDisabledTooltip }}</span>
-                        </div>
-                    </el-tooltip>
-                </div>
-                <!-- Custom commands (shown first) -->
-                <template v-if="project.customCommands && project.customCommands.length">
-                    <button v-for="cmd in project.customCommands" :key="cmd.id" @click.stop="handleRunCustom(cmd.id)"
-                        class="px-2 py-0.5 text-[10px] rounded border border-dashed transition-all duration-150 uppercase tracking-wider font-medium cursor-pointer"
-                        :class="pmUnavailable
-                            ? 'project-script-disabled opacity-40 cursor-not-allowed'
-                            : store.runningStatus[`${project.id}:${cmd.id}`]
-                                ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 animate-pulse'
-                                : 'bg-blue-500/8 text-blue-600 dark:text-blue-400 border-blue-500/15 hover:bg-blue-500/15'"
-                        :disabled="pmUnavailable">
-                        {{ getCommandLabel(cmd.name, cmd.builtinId) }}
-                    </button>
-                </template>
-                <!-- Node scripts -->
-                <template v-if="project.type === 'node' && displayScripts.length">
-                    <button v-for="script in displayScripts" :key="script" @click.stop="handleRun(script)"
-                        class="px-2 py-0.5 text-[10px] rounded border transition-all duration-150 uppercase tracking-wider font-medium cursor-pointer"
-                        :class="pmUnavailable
-                            ? 'project-script-disabled opacity-40 cursor-not-allowed'
-                            : store.runningStatus[`${project.id}:${script}`]
-                                ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 animate-pulse'
-                                : (script === 'dev' || script === 'start' || script === 'serve'
-                                    ? 'bg-emerald-500/8 text-emerald-600 dark:text-emerald-400 border-emerald-500/15 hover:bg-emerald-500/15'
-                                    : 'project-script-muted')"
-                        :disabled="pmUnavailable">
-                        {{ script }}
-                    </button>
-                </template>
-            </div>
-        </Transition>
     </div>
 </template>
 
 <style scoped>
-.project-scripts-enter-active,
-.project-scripts-leave-active {
-  transition: max-height 0.24s ease, opacity 0.2s ease, transform 0.24s ease, padding-top 0.24s ease;
+.project-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--app-radius-lg);
+  border: 1px solid var(--app-border);
+  background: var(--app-surface);
+  box-shadow: var(--app-shadow-sm);
+  cursor: pointer;
+  transition:
+    background-color var(--app-duration-fast) var(--app-ease),
+    border-color var(--app-duration-fast) var(--app-ease);
 }
 
-.project-scripts-enter-from,
-.project-scripts-leave-to {
-  max-height: 0;
-  opacity: 0;
-  transform: translateY(-6px);
+.project-row-content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.project-row-leading,
+.project-row-status,
+.project-row-actions,
+.project-row-child {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.project-row-leading {
+  gap: 8px;
+}
+
+.project-row-status {
+  gap: 6px;
+}
+
+.project-row-actions {
+  gap: 2px;
+}
+
+.project-row-child {
+  gap: 4px;
+  padding-left: 4px;
+  border-left: 1px solid var(--app-border);
+}
+
+.project-row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.project-row-title-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.project-row-title {
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-row-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  color: rgb(148 163 184);
+}
+
+.project-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  max-height: 20px;
+  margin-top: 2px;
+  overflow: hidden;
+}
+
+.project-row-stacked {
+  min-height: 112px;
+  align-items: stretch;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 12px 12px;
+}
+
+.project-row-stacked .project-row-content {
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.project-row-stacked .project-row-main {
   padding-top: 0;
 }
 
-.project-scripts-enter-to,
-.project-scripts-leave-from {
-  max-height: 160px;
-  opacity: 1;
-  transform: translateY(0);
+.project-row-stacked .project-row-title-line {
+  flex-wrap: wrap;
+  row-gap: 4px;
 }
 
-.project-actions {
-  background: var(--app-surface-raised);
-  backdrop-filter: blur(12px);
-  box-shadow:
-    var(--app-shadow-md),
-    inset 0 0 0 1px var(--app-border);
+.project-row-stacked .project-row-title {
+  flex: 1 1 0;
+  font-size: 14px;
 }
 
-.project-action-btn {
+.project-row-stacked .project-row-path {
+  flex-basis: 100%;
+}
+
+.project-row-stacked .project-row-actions {
+  width: 100%;
+  justify-content: flex-end;
+  padding-top: 8px;
+  border-top: 1px solid var(--app-border);
+}
+
+.project-row-stacked .row-action-btn {
+  width: 32px;
+  height: 32px;
+}
+
+.project-row-idle:hover {
+  background: var(--app-surface-soft);
+  border-color: var(--app-border-strong);
+}
+
+.project-row-active {
+  background: var(--app-primary-soft);
+  border-color: color-mix(in srgb, var(--app-primary) 30%, transparent);
+}
+
+.project-row-selected {
+  border-color: color-mix(in srgb, var(--app-primary) 45%, transparent);
+  background: color-mix(in srgb, var(--app-primary) 8%, transparent);
+}
+
+/* 多选框 */
+.row-checkbox {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+.row-checkbox input {
+  display: none;
+}
+.row-checkbox-box {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  border: 1.5px solid var(--app-border-strong);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color var(--app-duration-fast) var(--app-ease), border-color var(--app-duration-fast) var(--app-ease);
+}
+.row-checkbox input:checked + .row-checkbox-box {
+  background: var(--app-primary);
+  border-color: var(--app-primary);
+}
+
+.row-star {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 20px;
+  width: 30px;
+  height: 30px;
   border: none;
-  border-radius: 8px;
+  background: transparent;
+  transition: color var(--app-duration-fast) var(--app-ease);
+}
+
+.row-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--app-radius-md);
   background: transparent;
   color: var(--app-text-muted);
   transition:
     background-color var(--app-duration-fast) var(--app-ease),
-    color var(--app-duration-fast) var(--app-ease),
-    transform var(--app-duration-fast) var(--app-ease);
+    color var(--app-duration-fast) var(--app-ease);
 }
-
-.project-action-btn:hover {
-  background: var(--app-primary-soft);
-  transform: translateY(-1px);
-}
-
-.project-card-active {
-  background: var(--app-primary-soft);
-  border-color: color-mix(in srgb, var(--app-primary) 30%, transparent);
-  box-shadow: var(--app-shadow-sm);
-}
-
-.project-card-idle {
-  background: var(--app-surface);
-  border-color: var(--app-border);
-  box-shadow: var(--app-shadow-sm);
-}
-
-.project-card-idle:hover {
+.row-action-btn:hover {
   background: var(--app-surface-soft);
-  border-color: var(--app-border-strong);
 }
 
 .project-running-dot {
@@ -502,31 +512,36 @@ async function openFolder() {
   font-size: 9px;
   font-weight: 600;
 }
-
 .project-tag-chip-primary {
   background: var(--app-primary-soft);
   border: 1px solid color-mix(in srgb, var(--app-primary) 24%, transparent);
   color: var(--app-primary);
 }
-
-.project-tag-chip-muted,
-.project-script-muted {
+.project-tag-chip-muted {
   background: var(--app-surface-soft);
-  border-color: var(--app-border);
+  border: 1px solid var(--app-border);
   color: var(--app-text-secondary);
 }
 
-.project-warning-chip {
-  background: color-mix(in srgb, var(--app-warning) 10%, transparent);
+.project-kind-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
   border-radius: var(--app-radius-xs);
-  color: var(--app-warning);
-  font-size: 10px;
-  padding: 2px 8px;
+  font-size: 9px;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--app-primary) 12%, transparent);
+  color: var(--app-primary);
+  border: 1px solid color-mix(in srgb, var(--app-primary) 22%, transparent);
 }
 
-.project-script-disabled {
+.project-child-chip {
+  padding: 0 5px;
+  border-radius: var(--app-radius-xs);
+  font-size: 9px;
+  font-weight: 600;
   background: var(--app-surface-soft);
-  border-color: var(--app-border);
-  color: var(--app-text-muted);
+  border: 1px solid var(--app-border);
+  color: var(--app-text-secondary);
 }
 </style>

@@ -54,6 +54,11 @@ export function useProjectBatch(options: {
     }
   }
 
+  /** 清空选择 */
+  function clearSelection() {
+    projectStore.clearSelection();
+  }
+
   /***********************批量操作*********************/
 
   /** 批量设置分组 */
@@ -162,6 +167,7 @@ export function useProjectBatch(options: {
     exitBatchMode,
     toggleSelect,
     toggleSelectAll,
+    clearSelection,
     batchSetGroup,
     batchAddTag,
     batchRemoveTag,

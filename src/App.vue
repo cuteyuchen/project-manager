@@ -24,6 +24,12 @@ import { normalizeNvmVersion, findInstalledNodeVersion } from './utils/nvm';
 import { DEFAULT_NETWORK_TIMEOUT_MS, fetchWithTimeout, isAbortError } from './utils/network';
 import { ensureNodeInstallCommand } from './utils/projectCommands';
 import { selectReleaseAsset } from './utils/updateReleaseAsset';
+import {
+  DEFAULT_QUICK_SEARCH_APP_SHORTCUT,
+  DEFAULT_QUICK_SEARCH_GLOBAL_SHORTCUT,
+  isShortcutEvent,
+  normalizeShortcut,
+} from './utils/shortcut';
 
 const target = import.meta.env.VITE_TARGET;
 const isPlugin = target === 'utools' || target === 'ztools';
@@ -47,6 +53,7 @@ const rememberCloseAction = ref(false);
 let trayIcon: { close?: () => Promise<void> } | null = null;
 let pendingCloseResolver: ((action: 'tray' | 'exit' | 'cancel') => void) | null = null;
 let unlistenCloseRequested: UnlistenFn | null = null;
+let registeredQuickSearchGlobalShortcut = '';
 let allowWindowClose = false;
 let traySetupToken = 0;
 let exiting = false;
@@ -131,17 +138,68 @@ async function handleImportProject(path: string) {
   }
 }
 
-/***********************Ctrl+K 快速搜索*********************/
+/***********************快速搜索快捷键*********************/
 
-/** 全局键盘事件处理：Ctrl+K / Cmd+K 打开快速搜索 */
-function handleGlobalKeydown(event: KeyboardEvent) {
-  // Ctrl+K 或 Cmd+K 打开快速搜索
-  if ((event.ctrlKey || event.metaKey) && event.key === 'k') {
-    event.preventDefault();
-    showQuickSearch.value = true;
+function openQuickSearch() {
+  showQuickSearch.value = true;
+}
+
+async function openQuickSearchFromGlobalShortcut() {
+  await showMainWindow();
+  openQuickSearch();
+}
+
+async function unregisterQuickSearchGlobalShortcut() {
+  if (!registeredQuickSearchGlobalShortcut) return;
+  const shortcut = registeredQuickSearchGlobalShortcut;
+  registeredQuickSearchGlobalShortcut = '';
+  try {
+    const { unregister } = await import('@tauri-apps/plugin-global-shortcut');
+    await unregister(shortcut);
+  } catch (error) {
+    console.error('Failed to unregister quick search global shortcut:', error);
+  }
+}
+
+async function syncQuickSearchGlobalShortcut() {
+  if (isPlugin) return;
+
+  const enabled = settingsStore.settings.quickSearchGlobalShortcutEnabled === true;
+  const shortcut = normalizeShortcut(
+    settingsStore.settings.quickSearchGlobalShortcut || DEFAULT_QUICK_SEARCH_GLOBAL_SHORTCUT,
+  );
+
+  if (!enabled || !shortcut) {
+    await unregisterQuickSearchGlobalShortcut();
     return;
   }
-  // Esc 仅在快速搜索打开时关闭
+
+  if (registeredQuickSearchGlobalShortcut === shortcut) return;
+
+  await unregisterQuickSearchGlobalShortcut();
+  try {
+    const { register } = await import('@tauri-apps/plugin-global-shortcut');
+    await register(shortcut, (event) => {
+      if (event.state === 'Pressed') {
+        void openQuickSearchFromGlobalShortcut();
+      }
+    });
+    registeredQuickSearchGlobalShortcut = shortcut;
+  } catch (error) {
+    console.error('Failed to register quick search global shortcut:', error);
+    ElMessage.warning(t('settings.quickSearchGlobalShortcutRegisterFailed'));
+  }
+}
+
+/** 应用内键盘事件处理：按设置项打开快速搜索 */
+function handleGlobalKeydown(event: KeyboardEvent) {
+  const shortcut = settingsStore.settings.quickSearchAppShortcut || DEFAULT_QUICK_SEARCH_APP_SHORTCUT;
+  if (isShortcutEvent(event, shortcut)) {
+    event.preventDefault();
+    openQuickSearch();
+    return;
+  }
+
   if (event.key === 'Escape' && showQuickSearch.value) {
     event.preventDefault();
     showQuickSearch.value = false;
@@ -599,6 +657,7 @@ onUnmounted(() => {
   if (manualUpdateCheckListener) manualUpdateCheckListener();
   if (unlistenCloseRequested) unlistenCloseRequested();
   document.removeEventListener('keydown', handleGlobalKeydown);
+  void unregisterQuickSearchGlobalShortcut();
   void destroyTray();
   void flushPendingSave();
 });
@@ -632,6 +691,18 @@ watch(
   async ([isLoaded]) => {
     if (!isLoaded || isPlugin) return;
     await setupCloseRequestedHandler();
+  }
+);
+
+watch(
+  () => [
+    loaded.value,
+    settingsStore.settings.quickSearchGlobalShortcutEnabled,
+    settingsStore.settings.quickSearchGlobalShortcut,
+  ],
+  async ([isLoaded]) => {
+    if (!isLoaded || isPlugin) return;
+    await syncQuickSearchGlobalShortcut();
   }
 );
 </script>

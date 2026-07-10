@@ -1,7 +1,7 @@
 import { ref, computed } from 'vue';
 import type { Ref } from 'vue';
 import { useSettingsStore } from '../../stores/settings';
-import type { ProjectViewPreset } from '../../types';
+import type { ProjectViewPreset, ProjectQuickFilter } from '../../types';
 import { ElMessage } from 'element-plus';
 import { useI18n } from 'vue-i18n';
 
@@ -11,7 +11,7 @@ import { useI18n } from 'vue-i18n';
  */
 export function useViewPresets(options: {
   searchQuery: Ref<string>;
-  activeQuickFilter: Ref<'all' | 'pinned' | 'recent'>;
+  activeQuickFilter: Ref<ProjectQuickFilter>;
   selectedGroupId: Ref<string>;
   selectedTags: Ref<string[]>;
   sortMode: Ref<'default' | 'smart'>;

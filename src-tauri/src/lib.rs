@@ -51,6 +51,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None
@@ -79,6 +80,8 @@ pub fn run() {
             nvm::uninstall_node,
             nvm::use_node,
             project::scan_project,
+            project::scan_sub_projects,
+            project::scan_import_preview,
             project::read_dir,
             project::read_text_file,
             project::write_text_file,

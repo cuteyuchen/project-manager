@@ -50,6 +50,18 @@ export type CodeModuleFramework =
   | 'dotnet'
   | 'unknown';
 
+/** 子项目模块类型：由特征文件识别得出（前端/后端等），用于类型徽章展示 */
+export type ProjectModuleKind =
+  | 'frontend'
+  | 'backend'
+  | 'node'
+  | 'go'
+  | 'rust'
+  | 'python'
+  | 'dotnet'
+  | 'static'
+  | 'unknown';
+
 export interface Project {
   id: string;
   name: string;
@@ -74,6 +86,14 @@ export interface Project {
   description?: string;
   tags?: string[];
   groupId?: string;
+  /** 父项目 id：为空表示一级项目（根）；非空表示嵌套子项目，用单向引用建模父子关系 */
+  parentId?: string;
+  /** 收藏：独立于 pinned（置顶排序），仅用于「收藏」筛选 */
+  favorite?: boolean;
+  /** 子项目模块类型：由特征文件识别得出，用于列表/卡片上的类型徽章 */
+  moduleKind?: ProjectModuleKind;
+  /** 子项目扫描时间戳：用于「重新扫描」提示 */
+  subScannedAt?: number;
   /** 代码模块列表：扫描到的子模块快捷入口 */
   codeModules?: CodeModule[];
   /** 前端环境变量与 Vite 代理扫描缓存 */
@@ -113,6 +133,12 @@ export interface Settings {
   trayEnabled?: boolean;
   closeAction?: 'ask' | 'tray' | 'exit';
   autoLaunch?: boolean;
+  /** 应用内呼出快速搜索的快捷键 */
+  quickSearchAppShortcut?: string;
+  /** 是否注册系统级快捷键呼出快速搜索 */
+  quickSearchGlobalShortcutEnabled?: boolean;
+  /** 系统级呼出快速搜索的快捷键，仅桌面 Tauri 环境生效 */
+  quickSearchGlobalShortcut?: string;
   // AI commit message generation
   gitAiEnabled?: boolean;
   gitAiPrimaryService?: AiServiceConfig;
@@ -133,12 +159,23 @@ export interface Settings {
   workspaceProfiles?: WorkspaceProfile[];
 }
 
+/** 项目列表快捷筛选类型：基础 + 健康状态 */
+export type ProjectQuickFilter =
+  | 'all'
+  | 'pinned'
+  | 'recent'
+  | 'favorite'
+  | 'running'
+  | 'dirty'
+  | 'unhealthy'
+  | 'missing';
+
 /** 保存视图：把当前过滤/排序状态打包命名后保存 */
 export interface ProjectViewPreset {
   id: string;
   name: string;
   searchQuery: string;
-  quickFilter: 'all' | 'pinned' | 'recent';
+  quickFilter: ProjectQuickFilter;
   /** null 表示全部分组 */
   groupId: string | null;
   tags: string[];

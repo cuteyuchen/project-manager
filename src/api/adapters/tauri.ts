@@ -41,6 +41,14 @@ export class TauriAdapter implements PlatformAPI {
         return invoke('scan_project', { path });
     }
 
+    async scanSubProjects(path: string): Promise<import('../types').SubProjectCandidate[]> {
+        return invoke('scan_sub_projects', { path });
+    }
+
+    async scanImportPreview(path: string): Promise<import('../types').ImportCandidate[]> {
+        return invoke('scan_import_preview', { path });
+    }
+
     async gitListRemoteBranches(url: string): Promise<string[]> {
         return invoke('git_list_remote_branches', { url });
     }

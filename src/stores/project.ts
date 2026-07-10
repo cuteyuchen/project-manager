@@ -11,6 +11,7 @@ import { resolveNodePathFromVersion, resolveProjectNodePath, isExplicitNodeVersi
 import { normalizeNvmVersion } from '../utils/nvm';
 import { scanFrontendEnvProject } from '../utils/frontendEnvSwitcher';
 import { normalizeProjectTags } from '../utils/projectTags';
+import { createProjectId } from '../utils/projectId';
 import { ElMessage } from 'element-plus';
 
 type WorkspaceTab = 'console' | 'git' | 'files' | 'memo' | 'env';
@@ -21,7 +22,10 @@ export const useProjectStore = defineStore('project', () => {
   const runningStatus = ref<Record<string, boolean>>({});
   const runningProjectCount = ref<Record<string, number>>({});
   const logs = ref<Record<string, string[]>>({});
+  // activeProjectId 语义为「当前叶子/子项目」：命令运行、git、环境切换绑定它（ConsoleView/GitView 读取此值）
   const activeProjectId = ref<string | null>(null);
+  // activeRootId 语义为「当前钻取进入的一级项目」：文件、备忘录绑定它
+  const activeRootId = ref<string | null>(null);
   const requestedRightTab = ref<WorkspaceTab | null>(null);
   const requestedRightTabToken = ref(0);
 
@@ -111,9 +115,102 @@ export const useProjectStore = defineStore('project', () => {
   }
 
   function removeProject(id: string) {
-    projects.value = projects.value.filter((p) => p.id !== id);
-    if (activeProjectId.value === id) activeProjectId.value = null;
+    // 级联删除：收集自身 + 所有后代项目 id 一并移除
+    const idsToRemove = collectDescendantIds(id);
+    idsToRemove.add(id);
+    projects.value = projects.value.filter((p) => !idsToRemove.has(p.id));
+    if (activeProjectId.value && idsToRemove.has(activeProjectId.value)) activeProjectId.value = null;
+    if (activeRootId.value && idsToRemove.has(activeRootId.value)) activeRootId.value = null;
     try { useUsageStore().cleanupRemovedProjects(projects.value.map(p => p.id)); } catch {}
+  }
+
+  /***********************项目嵌套（多级）辅助*********************/
+
+  /** 获取指定父项目的直接子项目（按 sortOrder 升序） */
+  function getChildren(parentId: string): Project[] {
+    return projects.value
+      .filter((p) => p.parentId === parentId)
+      .sort((a, b) => (a.sortOrder ?? Infinity) - (b.sortOrder ?? Infinity));
+  }
+
+  /** 获取所有一级项目（无 parentId 的根项目） */
+  function getRootProjects(): Project[] {
+    return projects.value.filter((p) => !p.parentId);
+  }
+
+  /** 是否存在直接子项目 */
+  function hasChildren(id: string): boolean {
+    return projects.value.some((p) => p.parentId === id);
+  }
+
+  /** 计算项目深度：一级项目为 1，其子为 2，以此类推（含循环保护） */
+  function getProjectDepth(id: string): number {
+    let depth = 1;
+    const seen = new Set<string>();
+    let current = projects.value.find((p) => p.id === id);
+    while (current?.parentId && !seen.has(current.id)) {
+      seen.add(current.id);
+      depth += 1;
+      const parentId: string = current.parentId;
+      current = projects.value.find((p) => p.id === parentId);
+    }
+    return depth;
+  }
+
+  /** 递归收集某项目的所有后代 id（不含自身） */
+  function collectDescendantIds(id: string): Set<string> {
+    const result = new Set<string>();
+    const walk = (parentId: string) => {
+      for (const p of projects.value) {
+        if (p.parentId === parentId && !result.has(p.id)) {
+          result.add(p.id);
+          walk(p.id);
+        }
+      }
+    };
+    walk(id);
+    return result;
+  }
+
+  /** 批量创建子项目（挂到指定父项目下），跳过路径重复的项 */
+  function addSubProjects(parentId: string, children: Omit<Project, 'id' | 'parentId'>[]): Project[] {
+    const existingPaths = new Set(projects.value.map((p) => p.path));
+    const created: Project[] = [];
+    let order = getChildren(parentId).length;
+    for (const child of children) {
+      if (existingPaths.has(child.path)) continue;
+      const newProject: Project = {
+        ...child,
+        id: createProjectId(),
+        parentId,
+        sortOrder: order++,
+      };
+      projects.value.push(newProject);
+      existingPaths.add(newProject.path);
+      created.push(newProject);
+      try { useUsageStore().markAdded(newProject.id); } catch {}
+    }
+    // 更新父项目扫描时间戳
+    const parent = projects.value.find((p) => p.id === parentId);
+    if (parent) parent.subScannedAt = Date.now();
+    return created;
+  }
+
+  /***********************收藏*********************/
+
+  function favoriteProject(id: string) {
+    const project = projects.value.find((p) => p.id === id);
+    if (project) project.favorite = true;
+  }
+
+  function unfavoriteProject(id: string) {
+    const project = projects.value.find((p) => p.id === id);
+    if (project) project.favorite = false;
+  }
+
+  function toggleFavorite(id: string) {
+    const project = projects.value.find((p) => p.id === id);
+    if (project) project.favorite = !project.favorite;
   }
 
   function requestRightTab(tab: WorkspaceTab) {
@@ -502,11 +599,21 @@ export const useProjectStore = defineStore('project', () => {
     runningProjectCount,
     logs,
     activeProjectId,
+    activeRootId,
     requestedRightTab,
     requestedRightTabToken,
     addProject,
     updateProject,
     removeProject,
+    getChildren,
+    getRootProjects,
+    hasChildren,
+    getProjectDepth,
+    collectDescendantIds,
+    addSubProjects,
+    favoriteProject,
+    unfavoriteProject,
+    toggleFavorite,
     requestRightTab,
     runProject,
     runCustomCommand,

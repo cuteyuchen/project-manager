@@ -12,6 +12,11 @@ import { mergeDetectedEditors } from '../utils/editorDetection';
 import { isAbortError } from '../utils/network';
 import { ensureNodeInstallCommand } from '../utils/projectCommands';
 import { createTerminalConfig, getTerminalDuplicateKey, normalizeTerminalConfigs } from '../utils/terminalConfig';
+import {
+  DEFAULT_QUICK_SEARCH_APP_SHORTCUT,
+  DEFAULT_QUICK_SEARCH_GLOBAL_SHORTCUT,
+  normalizeShortcut,
+} from '../utils/shortcut';
 
 type ImportChoice = 'keep' | 'incoming';
 type ImportDiff = { key: string; label: string; current: string; incoming: string };
@@ -103,12 +108,28 @@ function resetDraft() {
 }
 
 function handleSave() {
+  normalizeQuickSearchAppShortcut();
+  normalizeQuickSearchGlobalShortcut();
   Object.assign(settingsStore.settings, normalizeDefaultTerminalId(normalizeAiSettings(deepClone(toRaw(draft.value)))));
   ElMessage.success(t('common.success'));
 }
 
 function handleCancel() {
   resetDraft();
+}
+
+/***********************快捷键设置*********************/
+
+function normalizeQuickSearchAppShortcut() {
+  draft.value.quickSearchAppShortcut = normalizeShortcut(
+    draft.value.quickSearchAppShortcut || DEFAULT_QUICK_SEARCH_APP_SHORTCUT,
+  ) || DEFAULT_QUICK_SEARCH_APP_SHORTCUT;
+}
+
+function normalizeQuickSearchGlobalShortcut() {
+  draft.value.quickSearchGlobalShortcut = normalizeShortcut(
+    draft.value.quickSearchGlobalShortcut || DEFAULT_QUICK_SEARCH_GLOBAL_SHORTCUT,
+  ) || DEFAULT_QUICK_SEARCH_GLOBAL_SHORTCUT;
 }
 
 onMounted(async () => {
@@ -822,10 +843,34 @@ async function testAiConnection() {
         </div>
         <div class="settings-row-line">
           <div>
-            <div class="settings-row-title">{{ t('settings.quickSearchShortcut') }}</div>
-            <div class="settings-row-desc">{{ t('settings.quickSearchShortcutHint') }}</div>
+            <div class="settings-row-title">{{ t('settings.quickSearchAppShortcut') }}</div>
+            <div class="settings-row-desc">{{ t('settings.quickSearchAppShortcutHint') }}</div>
           </div>
-          <kbd class="settings-shortcut">Ctrl+K</kbd>
+          <el-input
+            v-model="draft.quickSearchAppShortcut"
+            class="settings-control"
+            :placeholder="DEFAULT_QUICK_SEARCH_APP_SHORTCUT"
+            @blur="normalizeQuickSearchAppShortcut"
+          />
+        </div>
+        <div v-if="!isPlugin" class="settings-row-line">
+          <div>
+            <div class="settings-row-title">{{ t('settings.quickSearchGlobalShortcutEnabled') }}</div>
+            <div class="settings-row-desc">{{ t('settings.quickSearchGlobalShortcutEnabledHint') }}</div>
+          </div>
+          <el-switch v-model="draft.quickSearchGlobalShortcutEnabled" />
+        </div>
+        <div v-if="!isPlugin && draft.quickSearchGlobalShortcutEnabled" class="settings-row-line">
+          <div>
+            <div class="settings-row-title">{{ t('settings.quickSearchGlobalShortcut') }}</div>
+            <div class="settings-row-desc">{{ t('settings.quickSearchGlobalShortcutHint') }}</div>
+          </div>
+          <el-input
+            v-model="draft.quickSearchGlobalShortcut"
+            class="settings-control"
+            :placeholder="DEFAULT_QUICK_SEARCH_GLOBAL_SHORTCUT"
+            @blur="normalizeQuickSearchGlobalShortcut"
+          />
         </div>
       </section>
 
@@ -1143,7 +1188,7 @@ async function testAiConnection() {
 .settings-container {
   width: min(1050px, calc(100vw - 80px));
   margin: 0 auto;
-  padding: 28px 0 44px;
+  padding: 20px 0 32px;
 }
 
 .settings-header {
@@ -1151,12 +1196,12 @@ async function testAiConnection() {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 30px;
+  margin-bottom: 20px;
 }
 
 .settings-title {
   margin: 0;
-  font-size: 30px;
+  font-size: 24px;
   line-height: 1.2;
   font-weight: 800;
   color: var(--app-text);
@@ -1179,11 +1224,11 @@ async function testAiConnection() {
 }
 
 .settings-section {
-  margin-bottom: 18px;
+  margin-bottom: 14px;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-lg);
   background: var(--app-surface);
-  padding: 16px 20px 18px;
+  padding: 12px 18px 14px;
   box-shadow: var(--app-shadow-sm);
 }
 
@@ -1194,17 +1239,17 @@ async function testAiConnection() {
 .settings-section-title {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   margin-bottom: 0;
   border-bottom: 1px solid var(--app-border);
-  padding-bottom: 14px;
-  font-size: 22px;
-  font-weight: 800;
+  padding-bottom: 10px;
+  font-size: 18px;
+  font-weight: 700;
   color: var(--app-text);
 }
 
 .settings-section-icon {
-  font-size: 22px;
+  font-size: 18px;
   color: var(--app-text-secondary);
 }
 
@@ -1212,23 +1257,23 @@ async function testAiConnection() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 14px;
+  gap: 14px;
+  margin-bottom: 10px;
   border-bottom: 1px solid var(--app-border);
-  padding: 14px 0;
+  padding: 10px 0;
 }
 
 .settings-row-line {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
-  min-height: 72px;
-  padding: 12px 0;
+  gap: 18px;
+  min-height: 56px;
+  padding: 8px 0;
 }
 
 .settings-section-title + .settings-row-line {
-  margin-top: 4px;
+  margin-top: 2px;
 }
 
 .settings-row-line + .settings-row-line {
@@ -1246,15 +1291,15 @@ async function testAiConnection() {
 }
 
 .settings-row-title {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 500;
   color: var(--app-text);
 }
 
 .settings-row-desc {
-  margin-top: 4px;
-  font-size: 14px;
-  line-height: 1.45;
+  margin-top: 2px;
+  font-size: 13px;
+  line-height: 1.4;
   color: var(--app-text-secondary);
 }
 
@@ -1279,7 +1324,7 @@ async function testAiConnection() {
 .ai-settings {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .editor-card {
@@ -1287,11 +1332,11 @@ async function testAiConnection() {
   grid-template-columns: 42px minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  min-height: 72px;
+  min-height: 60px;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-md);
   background: var(--app-surface-soft);
-  padding: 10px 16px;
+  padding: 8px 14px;
   transition:
     border-color var(--app-duration-fast) var(--app-ease),
     background-color var(--app-duration-fast) var(--app-ease),
@@ -1308,8 +1353,8 @@ async function testAiConnection() {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 42px;
-  height: 42px;
+  width: 36px;
+  height: 36px;
   border-radius: var(--app-radius-md);
   background: var(--app-primary-soft);
   color: var(--app-primary);
@@ -1324,7 +1369,7 @@ async function testAiConnection() {
 .editor-name {
   overflow: hidden;
   color: var(--app-text);
-  font-size: 17px;
+  font-size: 15px;
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1332,7 +1377,7 @@ async function testAiConnection() {
 
 .editor-path {
   overflow: hidden;
-  margin-top: 3px;
+  margin-top: 2px;
   color: var(--app-text-secondary);
   font-family: var(--font-mono);
   font-size: 12px;
@@ -1387,7 +1432,7 @@ async function testAiConnection() {
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-md);
   background: var(--app-surface-soft);
-  padding: 10px;
+  padding: 8px;
 }
 
 .settings-section :deep(.el-segmented) {
@@ -1440,11 +1485,11 @@ async function testAiConnection() {
 
 @media (max-width: 640px) {
   .settings-title {
-    font-size: 28px;
+    font-size: 24px;
   }
 
   .settings-section-title {
-    font-size: 21px;
+    font-size: 18px;
   }
 
   .settings-row-line {
@@ -1453,12 +1498,12 @@ async function testAiConnection() {
 
   .editor-card {
     grid-template-columns: 1fr;
-    padding: 14px;
+    padding: 12px;
   }
 
   .editor-avatar {
-    width: 40px;
-    height: 40px;
+    width: 36px;
+    height: 36px;
   }
 }
 
