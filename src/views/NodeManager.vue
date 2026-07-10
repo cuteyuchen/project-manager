@@ -75,8 +75,9 @@ function handleRemove(path: string, source: string, version?: string) {
 
 <template>
     <div class="app-page">
-        <div class="app-page-header flex justify-between items-center gap-4">
-            <div>
+        <div class="app-page-header">
+          <div class="app-content-container app-page-header-main">
+            <div class="app-page-heading">
             <h1
                 :class="isPlugin 
                     ? 'app-page-title !text-purple-500'
@@ -84,7 +85,7 @@ function handleRemove(path: string, source: string, version?: string) {
                 {{ t('nodes.title') }}</h1>
                 <p class="app-page-description">Manage Node.js environments</p>
             </div>
-            <div class="grid grid-cols-2 gap-2 w-fit">
+            <div class="app-page-actions grid !grid-cols-2 w-fit">
                 <el-button type="primary" @click="showInstallModal = true" class="!rounded-lg !ml-0" size="small">
                     <el-icon class="mr-1">
                         <div class="i-mdi-download" />
@@ -106,10 +107,11 @@ function handleRemove(path: string, source: string, version?: string) {
                     </el-icon> Refresh NVM
                 </el-button>
             </div>
+          </div>
         </div>
 
         <div class="app-page-content">
-        <div class="app-table-panel h-full">
+        <div class="app-content-container h-full"><div class="app-table-panel h-full">
             <el-table :data="nodeStore.versions" style="width: 100%" height="100%"
                 :row-style="{ background: 'transparent' }" class="custom-table">
                 <el-table-column prop="version" :label="t('nodes.version')">
@@ -154,7 +156,7 @@ function handleRemove(path: string, source: string, version?: string) {
                     </template>
                 </el-table-column>
             </el-table>
-        </div>
+        </div></div>
         </div>
 
         <AddNodeModal v-model="showAddModal" />

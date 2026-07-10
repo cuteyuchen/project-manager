@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, h } from 'vue';
+import { computed, ref, onMounted, onUnmounted, watch, h } from 'vue';
 import { api } from './api';
 import { ElMessageBox, ElMessage, ElLoading } from 'element-plus';
 import type { UnlistenFn } from '@tauri-apps/api/event';
@@ -665,6 +665,12 @@ onUnmounted(() => {
 // Watch stores and save
 const projectStore = useProjectStore();
 const settingsStore = useSettingsStore();
+const appBackgroundStyle = computed(() => ({
+  backgroundImage: settingsStore.backgroundImageDataUrl
+    ? `url("${settingsStore.backgroundImageDataUrl}")`
+    : 'none',
+  opacity: String(settingsStore.backgroundImagePreviewOpacity),
+}));
 const nodeStore = useNodeStore();
 const usageStore = useUsageStore();
 
@@ -709,13 +715,14 @@ watch(
 
 <template>
   <div class="app-shell">
+    <div class="app-background-layer" :style="appBackgroundStyle" aria-hidden="true" />
     <TitleBar v-if="!isPlugin" />
 
     <div class="app-layout">
       <Sidebar @navigate="v => currentView = v" />
       <main class="app-main">
         <div class="app-view-stack">
-          <Transition name="page-fade" mode="out-in">
+          <Transition name="page-fade">
           <KeepAlive>
             <Dashboard v-if="currentView === 'dashboard'" key="dashboard" />
             <CommitCalendar v-else-if="currentView === 'commitCalendar'" key="commitCalendar" />

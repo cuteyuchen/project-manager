@@ -4,13 +4,14 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import { useI18n } from 'vue-i18n';
 import { api } from '../api';
 import type { Project, CustomCommand } from '../types';
-import type { ProjectInfo } from '../api/types';
+import type { ProjectInfo, SubProjectCandidate } from '../api/types';
 import { normalizeNvmVersion, findInstalledNodeVersion } from '../utils/nvm';
 import { ensureNodeInstallCommand, getInstallDependenciesCommand } from '../utils/projectCommands';
 import { useSettingsStore } from '../stores/settings';
 import { useProjectStore } from '../stores/project';
 import type { PackageManagerResolveResult } from '../api/types';
 import { collectProjectTags, normalizeProjectTags } from '../utils/projectTags';
+import { convertSubProjectCandidates } from '../utils/importProjectTree';
 
 type ProjectForm = {
   id: string;
@@ -39,7 +40,11 @@ const props = defineProps<{
   modelValue: boolean;
   editProject?: Project | null;
 }>();
-const emit = defineEmits(['update:modelValue', 'add', 'update']);
+const emit = defineEmits<{
+  (e: 'update:modelValue', value: boolean): void;
+  (e: 'add', project: Project, children: Omit<Project, 'id' | 'parentId'>[]): void;
+  (e: 'update', project: Project): void;
+}>();
 
 const visible = computed({
   get: () => props.modelValue,
@@ -74,6 +79,7 @@ const remoteBranches = ref<string[]>([]);
 const loadingRemoteBranches = ref(false);
 const cloneOperationId = ref<string | null>(null);
 const cloneCancelling = ref(false);
+const scannedSubProjects = ref<SubProjectCandidate[]>([]);
 
 const form = ref<ProjectForm>({
   id: '',
@@ -161,6 +167,7 @@ function resetPathScanState() {
   pathIsGitRepo.value = false;
   pathEntryCount.value = 0;
   remoteBranches.value = [];
+  scannedSubProjects.value = [];
 }
 
 async function applyDetectedNodeVersion(rawVersion?: string | null) {
@@ -403,14 +410,19 @@ async function selectFolder() {
 
     loading.value = true;
     try {
-      const [isGitRepo, entries, info] = await Promise.all([
+      const [isGitRepo, entries, info, subProjects] = await Promise.all([
         api.gitCheck(selected).catch(() => false),
         api.readDir(selected).catch(() => []),
         api.scanProject(selected),
+        api.scanSubProjects(selected).catch((error) => {
+          console.error('Failed to scan sub projects for manual import', error);
+          return [];
+        }),
       ]);
 
       pathIsGitRepo.value = isGitRepo;
       pathEntryCount.value = entries.length;
+      scannedSubProjects.value = subProjects;
       await applyScanResult(info, { preferDetectedName: !form.value.name });
     } catch (error) {
       console.error('Failed to scan project', error);
@@ -562,13 +574,17 @@ async function submit() {
 
       const info = await api.scanProject(form.value.path);
       await applyScanResult(info, { preferDetectedName: true });
+      scannedSubProjects.value = await api.scanSubProjects(form.value.path).catch((error) => {
+        console.error('Failed to scan cloned project sub projects', error);
+        return [];
+      });
     }
 
     const project = buildProjectPayload();
     if (isEdit.value) {
       emit('update', project);
     } else {
-      emit('add', project);
+      emit('add', project, convertSubProjectCandidates(scannedSubProjects.value));
     }
 
     visible.value = false;

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onActivated, onMounted, shallowRef } from 'vue';
+import { computed, onActivated, onMounted, ref, shallowRef, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import { useI18n } from 'vue-i18n';
 import { api } from '../api';
@@ -32,6 +32,13 @@ const skippedSummary = computed(() => {
   if (skippedProjects.value.length === 0) return '';
   return t('commitCalendar.skippedSummary', { count: skippedProjects.value.length });
 });
+const skippedExpanded = ref(false);
+const SKIPPED_PREVIEW_LIMIT = 8;
+const visibleSkippedProjects = computed(() => (
+  skippedExpanded.value ? skippedProjects.value : skippedProjects.value.slice(0, SKIPPED_PREVIEW_LIMIT)
+));
+const hiddenSkippedCount = computed(() => Math.max(0, skippedProjects.value.length - visibleSkippedProjects.value.length));
+watch(skippedProjects, () => { skippedExpanded.value = false; });
 
 const shouldCompressWeekend = computed(() => !hasWeekendCommits(calendarDays.value));
 
@@ -143,8 +150,9 @@ onActivated(refreshIfNeeded);
 <template>
   <div class="app-page">
     <div class="app-page-header">
-      <div class="flex items-center justify-between gap-3">
-        <div class="min-w-0">
+      <div class="app-content-container">
+      <div class="app-page-header-main">
+        <div class="app-page-heading">
           <div class="flex items-center gap-2">
             <div class="i-mdi-calendar-month text-xl text-blue-500" />
             <h2 class="app-page-title !mt-0 !text-base">
@@ -168,14 +176,24 @@ onActivated(refreshIfNeeded);
 
       <div
         v-if="skippedSummary"
-        class="app-alert-warning mt-3 px-3 py-2 text-xs"
+        class="app-alert-warning app-page-header-extra px-3 py-2 text-xs"
       >
         <div class="font-medium">{{ skippedSummary }}</div>
-        <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1">
-          <span v-for="project in skippedProjects" :key="project.projectId">
+        <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 overflow-hidden">
+          <span v-for="project in visibleSkippedProjects" :key="project.projectId" class="max-w-56 truncate" :title="`${project.projectName}：${getSkipReasonText(project.reason)}`">
             {{ project.projectName }}：{{ getSkipReasonText(project.reason) }}
           </span>
         </div>
+        <button
+          v-if="skippedProjects.length > SKIPPED_PREVIEW_LIMIT"
+          type="button"
+          class="mt-2 text-xs font-semibold text-amber-700 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200"
+          :aria-expanded="skippedExpanded"
+          @click="skippedExpanded = !skippedExpanded"
+        >
+          {{ skippedExpanded ? t('commitCalendar.collapseSkipped') : t('commitCalendar.expandSkipped', { count: hiddenSkippedCount }) }}
+        </button>
+      </div>
       </div>
     </div>
 

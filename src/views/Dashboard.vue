@@ -48,6 +48,13 @@ function backToList() {
     drilledRootId.value = null;
     projectStore.activeRootId = null;
     projectStore.activeProjectId = null;
+    void nextTick(() => {
+        const container = projectListContainer.value;
+        if (!container) return;
+        container.scrollTop = projectListScrollTop.value;
+        projectListResizeObserver?.observe(container);
+        updateProjectListViewport();
+    });
 }
 
 /** 工作区内请求编辑项目 */
@@ -633,8 +640,11 @@ const visibleProjectMetrics = computed(() => {
     return metrics.slice(startIndex, endIndex);
 });
 
-function handleAdd(project: Project) {
+function handleAdd(project: Project, children: Omit<Project, 'id' | 'parentId'>[] = []) {
   projectStore.addProject(project);
+  if (children.length > 0) {
+    projectStore.addSubProjects(project.id, children);
+  }
 }
 
 function handleUpdate(project: Project) {
@@ -675,12 +685,13 @@ async function refreshProjects() {
     <!-- ═══ 默认：项目列表页（全宽） ═══ -->
     <div v-else class="h-full flex flex-col app-surface-sidebar">
         <!-- 顶部工具栏 -->
-        <div class="app-section-divider px-6 py-4 border-b flex justify-between items-center">
-            <div class="flex items-baseline gap-2.5">
-                <h2 class="text-xl font-bold text-slate-700 dark:text-slate-200 tracking-tight">{{ t('dashboard.title') }}</h2>
-                <span class="text-sm text-slate-400 dark:text-slate-500">{{ t('dashboard.projectCount', { count: rootProjects.length }) }}</span>
+        <div class="app-page-header">
+          <div class="app-content-container app-page-header-main">
+            <div class="app-page-heading">
+                <h2 class="app-page-title">{{ t('dashboard.title') }}</h2>
+                <p class="app-page-description">{{ t('dashboard.projectCount', { count: rootProjects.length }) }}</p>
             </div>
-            <div class="flex items-center gap-2">
+            <div class="app-page-actions">
                 <button @click="showImportModal = true" class="toolbar-text-btn">
                     <div class="i-mdi-folder-search-outline text-base" />
                     <span>{{ t('dashboard.batchAddProject') }}</span>
@@ -698,6 +709,7 @@ async function refreshProjects() {
                     <span>{{ t('dashboard.addProject') }}</span>
                 </button>
             </div>
+          </div>
         </div>
 
         <!-- 选择操作栏（有选中项时显示） -->
@@ -716,7 +728,7 @@ async function refreshProjects() {
 
         <!-- 筛选工具栏 -->
         <div class="app-section-divider px-6 py-3 border-b filter-toolbar">
-          <div class="max-w-6xl mx-auto space-y-3">
+          <div class="app-content-container space-y-3">
             <!-- 第一行：搜索 + 分组/标签 + 排序 -->
             <div class="flex items-center gap-3">
                 <el-input
@@ -787,7 +799,7 @@ async function refreshProjects() {
         <!-- 项目列表 -->
         <div class="flex-1 overflow-y-auto px-6 py-4 custom-scrollbar" ref="projectListContainer" @scroll="handleProjectListScroll">
              <!-- Draggable list (default sort mode, no search) -->
-             <div v-if="isDraggable && draggableList.length > 0" class="draggable-list max-w-6xl mx-auto space-y-2">
+             <div v-if="isDraggable && draggableList.length > 0" class="draggable-list app-content-container space-y-2">
                  <div
                      v-for="project in draggableList"
                      :key="project.id"
@@ -822,7 +834,7 @@ async function refreshProjects() {
              </div>
 
              <!-- Virtual scroll list (smart sort mode or searching) -->
-             <div v-else-if="filteredProjects.length > 0" class="relative min-h-full max-w-6xl mx-auto" :style="{ height: `${totalProjectListHeight}px` }">
+             <div v-else-if="filteredProjects.length > 0" class="relative min-h-full app-content-container" :style="{ height: `${totalProjectListHeight}px` }">
                 <div
                     v-for="item in visibleProjectMetrics"
                     :key="item.project.id"

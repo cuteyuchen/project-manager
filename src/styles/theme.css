@@ -10,6 +10,10 @@
   --app-surface: #ffffff;
   --app-surface-soft: #f8fafc;
   --app-surface-raised: rgba(255, 255, 255, 0.94);
+  --app-dialog-surface: rgba(255, 255, 255, 0.9);
+  --app-dialog-overlay: rgba(15, 23, 42, 0.38);
+  --app-content-max: 1440px;
+  --app-glass-blur: 12px;
   --app-border: rgba(148, 163, 184, 0.28);
   --app-border-strong: rgba(100, 116, 139, 0.3);
   --app-text: #0f172a;
@@ -58,6 +62,8 @@ html.dark {
   --app-surface: #111827;
   --app-surface-soft: #172033;
   --app-surface-raised: rgba(17, 24, 39, 0.94);
+  --app-dialog-surface: rgba(17, 24, 39, 0.92);
+  --app-dialog-overlay: rgba(2, 6, 23, 0.56);
   --app-border: rgba(100, 116, 139, 0.28);
   --app-border-strong: rgba(148, 163, 184, 0.26);
   --app-text: #f8fafc;
@@ -90,6 +96,22 @@ body,
   margin: 0;
   overflow: hidden;
   background: var(--app-bg);
+}
+
+html.has-custom-background {
+  --app-bg: rgba(244, 247, 251, 0.44);
+  --app-bg-muted: rgba(238, 243, 248, 0.54);
+  --app-surface: rgba(255, 255, 255, 0.68);
+  --app-surface-soft: rgba(248, 250, 252, 0.58);
+  --app-surface-raised: rgba(255, 255, 255, 0.72);
+}
+
+html.dark.has-custom-background {
+  --app-bg: rgba(15, 23, 42, 0.54);
+  --app-bg-muted: rgba(11, 17, 32, 0.62);
+  --app-surface: rgba(17, 24, 39, 0.7);
+  --app-surface-soft: rgba(23, 32, 51, 0.64);
+  --app-surface-raised: rgba(17, 24, 39, 0.74);
 }
 
 /***********************基础交互与可访问性*********************/
@@ -130,6 +152,7 @@ textarea:focus-visible {
 
 /***********************工作台壳层*********************/
 .app-shell {
+  position: relative;
   width: 100vw;
   min-width: 1120px;
   height: 100vh;
@@ -142,6 +165,62 @@ textarea:focus-visible {
   -webkit-font-smoothing: antialiased;
   text-rendering: geometricPrecision;
   transition: background-color var(--app-duration-base) var(--app-ease), color var(--app-duration-base) var(--app-ease);
+}
+
+.app-background-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+  transition: opacity var(--app-duration-base) var(--app-ease);
+}
+
+.app-shell > :not(.app-background-layer) {
+  position: relative;
+  z-index: 1;
+}
+
+html.has-custom-background .app-shell {
+  background: transparent;
+}
+
+html.has-custom-background .app-main {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--app-surface-soft) 58%, transparent), color-mix(in srgb, var(--app-bg) 46%, transparent));
+}
+
+html.has-custom-background .app-surface-sidebar {
+  background: color-mix(in srgb, var(--app-surface) 72%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+html.has-custom-background .app-workspace-panel {
+  background: color-mix(in srgb, var(--app-bg-muted) 82%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+html.has-custom-background .app-page,
+html.has-custom-background .settings-page {
+  background: transparent;
+}
+
+html.has-custom-background .app-page-header,
+html.has-custom-background .app-table-panel,
+html.has-custom-background .app-summary-card,
+html.has-custom-background .summary-card,
+html.has-custom-background .app-card,
+html.has-custom-background .app-card-soft,
+html.has-custom-background .settings-section,
+html.has-custom-background .project-row,
+html.has-custom-background .commit-day-current,
+html.has-custom-background .commit-day-muted {
+  backdrop-filter: blur(var(--app-glass-blur)) saturate(108%);
+  -webkit-backdrop-filter: blur(var(--app-glass-blur)) saturate(108%);
 }
 
 .app-layout {
@@ -258,9 +337,36 @@ textarea:focus-visible {
 
 .app-page-header {
   flex-shrink: 0;
-  padding: 18px 20px 16px;
+  padding: 16px 20px;
   background: var(--app-surface-raised);
   border-bottom: 1px solid var(--app-border);
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--app-border) 70%, transparent);
+}
+
+.app-page-header-main {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.app-page-heading {
+  min-width: 0;
+}
+
+.app-page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.app-page-header-extra {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--app-border);
 }
 
 .app-page-kicker {
@@ -273,7 +379,7 @@ textarea:focus-visible {
 }
 
 .app-page-title {
-  margin: 8px 0 0;
+  margin: 0;
   color: var(--app-text);
   font-size: 20px;
   font-weight: 700;
@@ -484,8 +590,32 @@ textarea:focus-visible {
 .el-dialog {
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-lg) !important;
-  background: var(--app-surface) !important;
+  background: var(--app-dialog-surface) !important;
   box-shadow: var(--app-shadow-lg);
+  backdrop-filter: blur(20px) saturate(125%);
+  -webkit-backdrop-filter: blur(20px) saturate(125%);
+}
+
+@media (max-width: 900px) {
+  .app-page-header-main {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .app-page-actions {
+    justify-content: flex-start;
+  }
+}
+
+.app-content-container {
+  width: min(100%, var(--app-content-max));
+  margin-inline: auto;
+}
+
+.el-overlay {
+  background-color: var(--app-dialog-overlay) !important;
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
 }
 
 .el-dialog__header,
@@ -626,15 +756,64 @@ textarea:focus-visible {
 
 .page-fade-enter-active,
 .page-fade-leave-active {
-  transition: opacity 180ms var(--app-ease), transform 180ms var(--app-ease);
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  will-change: opacity, transform;
+}
+
+.dashboard-secondary-action {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--app-border-strong);
+  border-radius: var(--app-radius-sm);
+  background: color-mix(in srgb, var(--app-surface) 76%, transparent);
+  padding: 0 11px;
+  color: var(--app-text-secondary);
+  box-shadow: var(--app-shadow-sm);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  transition:
+    background-color var(--app-duration-fast) var(--app-ease),
+    border-color var(--app-duration-fast) var(--app-ease),
+    color var(--app-duration-fast) var(--app-ease),
+    transform var(--app-duration-fast) var(--app-ease),
+    box-shadow var(--app-duration-fast) var(--app-ease);
+}
+
+.dashboard-secondary-action:hover {
+  border-color: color-mix(in srgb, var(--app-primary) 48%, var(--app-border));
+  background: color-mix(in srgb, var(--app-primary-soft) 72%, var(--app-surface));
+  color: var(--app-primary);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--app-primary) 12%, transparent);
+  transform: translateY(-1px);
+}
+
+.dashboard-secondary-action:active {
+  transform: translateY(0);
+}
+
+.page-fade-enter-active {
+  z-index: 2;
+  transition: opacity 220ms var(--app-ease), transform 220ms var(--app-ease);
+}
+
+.page-fade-leave-active {
+  z-index: 1;
+  pointer-events: none;
+  transition: opacity 140ms ease-in, transform 140ms ease-in;
 }
 
 .page-fade-enter-from {
   opacity: 0;
-  transform: translateY(8px);
+  transform: translateX(10px) scale(0.996);
 }
 
 .page-fade-leave-to {
   opacity: 0;
-  transform: translateY(-4px);
+  transform: translateX(-6px) scale(0.998);
 }

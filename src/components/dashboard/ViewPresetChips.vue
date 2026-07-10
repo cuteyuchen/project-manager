@@ -35,7 +35,7 @@ function handleSave() {
 </script>
 
 <template>
-  <div class="px-3 py-1.5 border-b border-slate-200 dark:border-slate-700/20">
+  <div class="view-preset-chips">
     <div class="flex items-center gap-1.5 flex-wrap">
       <!-- 已保存的视图 chips -->
       <button
@@ -58,10 +58,10 @@ function handleSave() {
       <!-- 保存当前视图按钮（精简版） -->
       <button
         v-if="!showSaveDialog"
-        class="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[11px] text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 border border-dashed border-slate-300 dark:border-slate-600 transition-colors cursor-pointer"
+        class="dashboard-secondary-action"
         @click="showSaveDialog = true"
       >
-        <div class="i-mdi-plus text-[10px]" />
+        <div class="i-mdi-content-save-outline text-sm" />
         <span>{{ t('dashboard.saveView') }}</span>
       </button>
 
@@ -87,3 +87,11 @@ function handleSave() {
     </div>
   </div>
 </template>
+
+<style scoped>
+.view-preset-chips {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+</style>

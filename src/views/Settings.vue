@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, toRaw } from 'vue';
+import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, shallowRef, toRaw } from 'vue';
 import { useSettingsStore } from '../stores/settings';
 import { useProjectStore } from '../stores/project';
 import { useNodeStore } from '../stores/node';
@@ -17,6 +17,7 @@ import {
   DEFAULT_QUICK_SEARCH_GLOBAL_SHORTCUT,
   normalizeShortcut,
 } from '../utils/shortcut';
+import { createImageDataUrl } from '../utils/backgroundImage';
 
 type ImportChoice = 'keep' | 'incoming';
 type ImportDiff = { key: string; label: string; current: string; incoming: string };
@@ -87,6 +88,8 @@ const editorScanLoading = shallowRef(false);
 const editorDialogVisible = shallowRef(false);
 const editingEditorIndex = shallowRef<number | null>(null);
 const editorEditForm = ref<EditorConfig>({ id: '', name: '', path: '' });
+const backgroundPreviewUrl = ref('');
+const backgroundPreviewLoading = ref(false);
 
 const deepClone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 const draft = ref<Settings>(normalizeDefaultTerminalId(normalizeAiSettings(deepClone(toRaw(settingsStore.settings)))));
@@ -116,6 +119,65 @@ function handleSave() {
 
 function handleCancel() {
   resetDraft();
+  void refreshBackgroundPreview();
+  void settingsStore.applyBackgroundImage();
+}
+
+async function refreshBackgroundPreview() {
+  const imagePath = draft.value.backgroundImagePath?.trim() || '';
+  if (!imagePath) {
+    backgroundPreviewUrl.value = '';
+    return;
+  }
+
+  backgroundPreviewLoading.value = true;
+  try {
+    const base64 = await api.readBinaryFileBase64(imagePath);
+    backgroundPreviewUrl.value = createImageDataUrl(imagePath, base64);
+    await settingsStore.applyBackgroundImage(
+      imagePath,
+      draft.value.backgroundImageOpacity ?? 0.35,
+      backgroundPreviewUrl.value,
+    );
+  } catch (error) {
+    console.error('Failed to preview background image', error);
+    backgroundPreviewUrl.value = '';
+  } finally {
+    backgroundPreviewLoading.value = false;
+  }
+}
+
+async function selectBackgroundImage() {
+  try {
+    const selected = await api.openDialog({
+      multiple: false,
+      filters: [{ name: t('settings.backgroundImage'), extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'avif', 'svg'] }],
+    });
+    if (!selected || typeof selected !== 'string') return;
+    draft.value.backgroundImagePath = selected;
+    await refreshBackgroundPreview();
+    if (!backgroundPreviewUrl.value) {
+      ElMessage.error(t('settings.backgroundImageLoadFailed'));
+    }
+  } catch (error) {
+    console.error('Failed to select background image', error);
+    ElMessage.error(t('settings.backgroundImageLoadFailed'));
+  }
+}
+
+function clearBackgroundImage() {
+  draft.value.backgroundImagePath = '';
+  backgroundPreviewUrl.value = '';
+  void settingsStore.applyBackgroundImage('', draft.value.backgroundImageOpacity ?? 0.35);
+}
+
+function previewBackgroundOpacity(value: number | number[]) {
+  const opacity = Array.isArray(value) ? value[0] : value;
+  void settingsStore.applyBackgroundImage(
+    draft.value.backgroundImagePath?.trim() || '',
+    opacity,
+    backgroundPreviewUrl.value || undefined,
+  );
 }
 
 /***********************快捷键设置*********************/
@@ -143,10 +205,23 @@ onMounted(async () => {
     await refreshAutoLaunchState();
   }
   window.addEventListener('manual-check-update-result', handleManualUpdateResult as EventListener);
+  await refreshBackgroundPreview();
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener('manual-check-update-result', handleManualUpdateResult as EventListener);
+});
+
+onDeactivated(() => {
+  if (isDirty.value) {
+    void settingsStore.applyBackgroundImage();
+  }
+});
+
+onActivated(() => {
+  if (isDirty.value) {
+    void refreshBackgroundPreview();
+  }
 });
 
 async function toggleContextMenu(val: boolean) {
@@ -557,6 +632,8 @@ function buildImportPlan(payload: any): ImportPlan {
     { key: 'customTerminals', label: t('settings.customTerminals') },
     { key: 'locale', label: t('settings.language') },
     { key: 'themeMode', label: t('settings.theme') },
+    { key: 'backgroundImagePath', label: t('settings.backgroundImage') },
+    { key: 'backgroundImageOpacity', label: t('settings.backgroundImageOpacity') },
     { key: 'autoUpdate', label: t('settings.autoUpdate') },
     { key: 'trayEnabled', label: t('settings.trayEnabled') },
     { key: 'closeAction', label: t('settings.closeAction') },
@@ -747,20 +824,22 @@ async function testAiConnection() {
 
 <template>
   <div class="settings-page h-full overflow-y-auto">
-    <div class="settings-container">
-      <header class="settings-header">
-        <div class="flex items-center gap-3">
-          <h1 class="settings-title">{{ t('settings.title') }}</h1>
+      <header class="app-page-header settings-header">
+        <div class="app-content-container app-page-header-main">
+        <div class="app-page-heading flex items-center gap-3">
+          <h1 class="app-page-title">{{ t('settings.title') }}</h1>
           <span v-if="isDirty" class="settings-dirty">{{ t('settings.unsavedChanges') }}</span>
         </div>
-        <div class="settings-actions">
+        <div class="settings-actions app-page-actions">
           <el-button :disabled="!isDirty" @click="handleCancel">{{ t('common.cancel') }}</el-button>
           <el-button type="primary" :disabled="!isDirty" @click="handleSave">
             <div class="i-mdi-content-save text-sm mr-1" />
             {{ t('common.save') }}
           </el-button>
         </div>
+        </div>
       </header>
+    <div class="settings-container">
 
       <section class="settings-section">
         <div class="settings-section-title">
@@ -780,6 +859,47 @@ async function testAiConnection() {
               { label: t('settings.themeMode.system'), value: 'auto' },
             ]"
           />
+        </div>
+        <div class="settings-row-line settings-background-row">
+          <div>
+            <div class="settings-row-title">{{ t('settings.backgroundImage') }}</div>
+            <div class="settings-row-desc">{{ t('settings.backgroundImageHint') }}</div>
+          </div>
+          <div class="background-image-control">
+            <div
+              class="background-image-preview"
+              :class="{ 'background-image-preview-empty': !backgroundPreviewUrl }"
+              :style="backgroundPreviewUrl ? { backgroundImage: `url(${backgroundPreviewUrl})` } : undefined"
+            >
+              <div v-if="backgroundPreviewLoading" class="i-mdi-loading animate-spin text-xl" />
+              <div v-else-if="!backgroundPreviewUrl" class="i-mdi-image-off-outline text-2xl" />
+            </div>
+            <div class="background-image-actions">
+              <div class="settings-inline-control">
+                <el-button @click="selectBackgroundImage">
+                  <div class="i-mdi-image-plus-outline text-sm mr-1" />
+                  {{ t('settings.selectBackgroundImage') }}
+                </el-button>
+                <el-button v-if="draft.backgroundImagePath" @click="clearBackgroundImage">
+                  {{ t('settings.clearBackgroundImage') }}
+                </el-button>
+              </div>
+              <div v-if="draft.backgroundImagePath" class="background-opacity-control">
+                <span>{{ t('settings.backgroundImageOpacity') }}</span>
+                <el-slider
+                  v-model="draft.backgroundImageOpacity"
+                  :min="0.1"
+                  :max="1"
+                  :step="0.05"
+                  @input="previewBackgroundOpacity"
+                />
+                <span>{{ Math.round((draft.backgroundImageOpacity ?? 0.35) * 100) }}%</span>
+              </div>
+              <div v-if="draft.backgroundImagePath" class="background-image-path" :title="draft.backgroundImagePath">
+                {{ draft.backgroundImagePath }}
+              </div>
+            </div>
+          </div>
         </div>
         <div class="settings-row-line">
           <div>
@@ -1186,17 +1306,15 @@ async function testAiConnection() {
 }
 
 .settings-container {
-  width: min(1050px, calc(100vw - 80px));
+  width: min(var(--app-content-max), calc(100vw - 80px));
   margin: 0 auto;
-  padding: 20px 0 32px;
+  padding: 16px 0 32px;
 }
 
 .settings-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 20px;
+  position: sticky;
+  top: 0;
+  z-index: var(--app-z-sticky);
 }
 
 .settings-title {
@@ -1278,6 +1396,55 @@ async function testAiConnection() {
 
 .settings-row-line + .settings-row-line {
   border-top: 1px solid var(--app-border);
+}
+
+.background-image-control {
+  display: grid;
+  grid-template-columns: 128px minmax(260px, 420px);
+  align-items: center;
+  gap: 14px;
+}
+
+.background-image-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 128px;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background-position: center;
+  background-size: cover;
+  color: var(--app-text-muted);
+}
+
+.background-image-preview-empty {
+  background: var(--app-surface-soft);
+}
+
+.background-image-actions {
+  min-width: 0;
+}
+
+.background-opacity-control {
+  display: grid;
+  grid-template-columns: auto minmax(120px, 1fr) 42px;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--app-text-secondary);
+}
+
+.background-image-path {
+  margin-top: 6px;
+  overflow: hidden;
+  color: var(--app-text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .settings-row-line > :first-child {
@@ -1466,6 +1633,11 @@ async function testAiConnection() {
 
   .settings-control {
     width: 100%;
+  }
+
+  .background-image-control {
+    width: 100%;
+    grid-template-columns: 128px minmax(0, 1fr);
   }
 
   .editor-card {

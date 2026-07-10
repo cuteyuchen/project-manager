@@ -129,6 +129,10 @@ export interface Settings {
   layoutState?: Record<string, number>;
   locale: 'zh' | 'en';
   themeMode: 'dark' | 'light' | 'auto';
+  /** 全局背景图片的本地文件路径 */
+  backgroundImagePath?: string;
+  /** 背景图片可见度，范围 0.1～1 */
+  backgroundImageOpacity?: number;
   autoUpdate: boolean;
   trayEnabled?: boolean;
   closeAction?: 'ask' | 'tray' | 'exit';

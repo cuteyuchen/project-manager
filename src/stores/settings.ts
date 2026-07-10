@@ -10,6 +10,7 @@ import {
   DEFAULT_QUICK_SEARCH_GLOBAL_SHORTCUT,
   normalizeShortcut,
 } from '../utils/shortcut';
+import { createImageDataUrl } from '../utils/backgroundImage';
 
 function createDefaultAiService(overrides: Partial<AiServiceConfig> = {}): AiServiceConfig {
   return {
@@ -43,6 +44,8 @@ export const useSettingsStore = defineStore('settings', () => {
     layoutState: {},
     locale: 'zh',
     themeMode: 'auto',
+    backgroundImagePath: '',
+    backgroundImageOpacity: 0.35,
     autoUpdate: true,
     trayEnabled: true,
     closeAction: 'ask',
@@ -157,6 +160,13 @@ export const useSettingsStore = defineStore('settings', () => {
   } else {
     settings.value.quickSearchGlobalShortcut = normalizeShortcut(settings.value.quickSearchGlobalShortcut);
   }
+  if (typeof settings.value.backgroundImagePath !== 'string') {
+    settings.value.backgroundImagePath = '';
+  }
+  if (typeof settings.value.backgroundImageOpacity !== 'number') {
+    settings.value.backgroundImageOpacity = 0.35;
+  }
+  settings.value.backgroundImageOpacity = Math.min(1, Math.max(0.1, settings.value.backgroundImageOpacity));
   
   const systemThemeMedia = window.matchMedia('(prefers-color-scheme: dark)');
   
@@ -169,6 +179,56 @@ export const useSettingsStore = defineStore('settings', () => {
       } else {
           document.documentElement.classList.remove('dark');
       }
+  };
+
+  let backgroundLoadToken = 0;
+  let appliedBackgroundPath = '';
+  const backgroundImageDataUrl = ref('');
+  const backgroundImagePreviewOpacity = ref(settings.value.backgroundImageOpacity ?? 0.35);
+
+  const applyBackgroundImage = async (
+    imagePath = settings.value.backgroundImagePath?.trim() || '',
+    opacity = settings.value.backgroundImageOpacity ?? 0.35,
+    preparedDataUrl?: string,
+  ) => {
+    const root = document.documentElement;
+    const normalizedOpacity = Math.min(1, Math.max(0.1, opacity));
+    backgroundImagePreviewOpacity.value = normalizedOpacity;
+
+    if (!imagePath) {
+      backgroundLoadToken++;
+      appliedBackgroundPath = '';
+      backgroundImageDataUrl.value = '';
+      root.classList.remove('has-custom-background');
+      return;
+    }
+
+    if (preparedDataUrl) {
+      backgroundLoadToken++;
+      backgroundImageDataUrl.value = preparedDataUrl;
+      root.classList.add('has-custom-background');
+      appliedBackgroundPath = imagePath;
+      return;
+    }
+
+    if (imagePath === appliedBackgroundPath && backgroundImageDataUrl.value) {
+      return;
+    }
+
+    const token = ++backgroundLoadToken;
+    try {
+      const base64 = await api.readBinaryFileBase64(imagePath);
+      if (token !== backgroundLoadToken) return;
+      backgroundImageDataUrl.value = createImageDataUrl(imagePath, base64);
+      root.classList.add('has-custom-background');
+      appliedBackgroundPath = imagePath;
+    } catch (error) {
+      if (token !== backgroundLoadToken) return;
+      console.error('Failed to load custom background image', error);
+      appliedBackgroundPath = '';
+      backgroundImageDataUrl.value = '';
+      root.classList.remove('has-custom-background');
+    }
   };
 
   // Listen for system changes
@@ -187,6 +247,7 @@ export const useSettingsStore = defineStore('settings', () => {
     
     // Theme Mode
     updateTheme();
+    void applyBackgroundImage();
   };
 
   // Apply on init
@@ -208,6 +269,9 @@ export const useSettingsStore = defineStore('settings', () => {
     settings,
     availableTerminals,
     allTerminals,
-    fetchAvailableTerminals
+    fetchAvailableTerminals,
+    applyBackgroundImage,
+    backgroundImageDataUrl,
+    backgroundImagePreviewOpacity,
   };
 });

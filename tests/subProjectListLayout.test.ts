@@ -38,4 +38,9 @@ assert(
   'stacked 模式下项目名称不应独占整行，应与收藏图标同一行显示',
 );
 
+assert(
+  /\.project-row-stacked\s+\.project-row-leading\s*\{[^}]*padding-top:\s*4px/.test(projectListItem),
+  'stacked 模式下收藏图标应与项目名称保持视觉基线对齐',
+);
+
 console.log('subProjectListLayout tests passed');

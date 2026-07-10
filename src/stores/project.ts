@@ -189,6 +189,9 @@ export const useProjectStore = defineStore('project', () => {
       existingPaths.add(newProject.path);
       created.push(newProject);
       try { useUsageStore().markAdded(newProject.id); } catch {}
+      void scanFrontendEnvForProject(newProject.id).catch((error) => {
+        console.error(`Failed to scan frontend env for added sub project ${newProject.name}`, error);
+      });
     }
     // 更新父项目扫描时间戳
     const parent = projects.value.find((p) => p.id === parentId);

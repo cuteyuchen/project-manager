@@ -34,6 +34,10 @@ const gitStore = useGitStore();
 /** *********************钻取路径栈*********************/
 // 存 project id 链，首项恒为 rootId，长度 ≤ MAX_DEPTH
 const drillStack = ref<string[]>([props.rootId]);
+const navigationDirection = ref<'forward' | 'back'>('forward');
+const workspaceTransitionName = computed(() => `workspace-${navigationDirection.value}`);
+const subProjectScrollPositions = new Map<string, number>();
+const subProjectList = useTemplateRef<HTMLElement>('subProjectList');
 
 // rootId 变化（切换到另一个一级项目）时重置栈
 watch(() => props.rootId, (id) => {
@@ -45,11 +49,6 @@ watch(() => props.rootId, (id) => {
 /** 栈末端项目（当前所在层级节点） */
 const currentNode = computed(() =>
   projectStore.projects.find(p => p.id === drillStack.value[drillStack.value.length - 1]) || null
-);
-
-/** 一级项目（文件/备忘录绑定它） */
-const rootProject = computed(() =>
-  projectStore.projects.find(p => p.id === props.rootId) || null
 );
 
 /** 当前节点的直接子项目 */
@@ -72,6 +71,7 @@ const breadcrumb = computed(() =>
 
 function goToBreadcrumb(index: number) {
   if (index < drillStack.value.length - 1) {
+    navigationDirection.value = 'back';
     drillStack.value = drillStack.value.slice(0, index + 1);
     selectedLeafId.value = null;
     syncActiveIds();
@@ -81,6 +81,7 @@ function goToBreadcrumb(index: number) {
 function handleBack() {
   if (drillStack.value.length > 1) {
     // 回退一级
+    navigationDirection.value = 'back';
     drillStack.value = drillStack.value.slice(0, -1);
     selectedLeafId.value = null;
     syncActiveIds();
@@ -97,8 +98,8 @@ const selectedLeafId = ref<string | null>(null);
 /** 当前用于 console/git/env 的叶子项目 */
 const activeLeaf = computed<Project | null>(() => {
   if (isContainer.value) {
-    if (!selectedLeafId.value) return null;
-    return projectStore.projects.find(p => p.id === selectedLeafId.value) || null;
+    if (!selectedLeafId.value) return currentNode.value;
+    return projectStore.projects.find(p => p.id === selectedLeafId.value) || currentNode.value;
   }
   // 叶子模式：当前节点本身即叶子
   return currentNode.value;
@@ -120,12 +121,31 @@ onBeforeUnmount(() => {
 /** 点击子项目：有子则下钻，无子则选为叶子并切到命令 tab */
 function handleOpenChild(project: Project) {
   if (projectStore.hasChildren(project.id) && canDrillDeeper.value) {
+    navigationDirection.value = 'forward';
     drillStack.value = [...drillStack.value, project.id];
     selectedLeafId.value = null;
   } else {
     selectedLeafId.value = project.id;
     rightTab.value = 'console';
   }
+  syncActiveIds();
+}
+
+function handleSubProjectScroll() {
+  if (currentNode.value && subProjectList.value) {
+    subProjectScrollPositions.set(currentNode.value.id, subProjectList.value.scrollTop);
+  }
+}
+
+function restoreCurrentScrollPosition() {
+  if (!currentNode.value || !subProjectList.value) return;
+  subProjectList.value.scrollTop = subProjectScrollPositions.get(currentNode.value.id) || 0;
+}
+
+function handleOpenParentProject() {
+  if (!currentNode.value) return;
+  selectedLeafId.value = currentNode.value.id;
+  rightTab.value = hasRunnableCommands.value ? 'console' : 'files';
   syncActiveIds();
 }
 
@@ -156,12 +176,28 @@ watch(activeLeaf, (leaf) => {
   if (leaf) void gitStore.checkGitRepo(leaf.id, leaf.path);
 });
 
-/** console/git/env 需要一个已选叶子；未选时禁用 */
+/** 文件、备忘录以及能力判断绑定当前层级或选中的子项目，避免父子项目共用数据 */
+const workspaceProject = computed<Project | null>(() => activeLeaf.value || currentNode.value);
+const hasRunnableCommands = computed(() => {
+  const project = workspaceProject.value;
+  if (!project) return false;
+  const scripts = project.visibleScripts?.length ? project.visibleScripts : project.scripts;
+  return (scripts?.length || 0) > 0 || (project.customCommands?.length || 0) > 0;
+});
+const hasFrontendEnv = computed(() => (workspaceProject.value?.frontendEnvGroups?.length || 0) > 0);
+
+watch(currentNode, (node) => {
+  if (node) void gitStore.checkGitRepo(node.id, node.path);
+}, { immediate: true });
+
+/** 当前层级始终有活动项目；防御项目被删除等瞬时空状态 */
 const leafTabsDisabled = computed(() => !activeLeaf.value);
 
 // 若当前在需要叶子的 tab 但没有选中叶子，回退到 files
-watch([leafTabsDisabled, rightTab], ([disabled, tab]) => {
-  if (disabled && (tab === 'console' || tab === 'git' || tab === 'env')) {
+watch([leafTabsDisabled, hasRunnableCommands, hasFrontendEnv, rightTab], ([disabled, runnable, hasEnv, tab]) => {
+  if ((disabled && (tab === 'console' || tab === 'git' || tab === 'env'))
+    || (tab === 'console' && !runnable)
+    || (tab === 'env' && !hasEnv)) {
     rightTab.value = 'files';
   }
 });
@@ -223,7 +259,8 @@ onBeforeUnmount(() => tabResizeObserver?.disconnect());
       </button>
     </div>
 
-    <div class="flex-1 flex overflow-hidden">
+    <Transition :name="workspaceTransitionName" mode="out-in" @after-enter="restoreCurrentScrollPosition">
+    <div v-if="currentNode" :key="currentNode.id" class="flex-1 flex overflow-hidden">
       <!-- ─── 容器模式：左侧子项目列表 ─────────────────────── -->
       <div v-if="isContainer" class="w-80 shrink-0 flex flex-col app-surface-sidebar border-r overflow-hidden">
         <div class="app-section-divider px-3 py-2 border-b flex items-center justify-between">
@@ -232,7 +269,20 @@ onBeforeUnmount(() => tabResizeObserver?.disconnect());
           </span>
           <span class="text-[10px] text-slate-400">{{ children.length }}</span>
         </div>
-        <div class="flex-1 overflow-y-auto p-2 space-y-2 custom-scrollbar">
+        <div
+          ref="subProjectList"
+          class="flex-1 overflow-y-auto p-2 space-y-2 custom-scrollbar"
+          @scroll="handleSubProjectScroll"
+        >
+          <ProjectListItem
+            v-if="currentNode"
+            :project="currentNode"
+            :display-name="t('dashboard.parentProjectEntry', { name: currentNode.name })"
+            :active="!selectedLeafId || selectedLeafId === currentNode.id"
+            layout="stacked"
+            @open="handleOpenParentProject"
+            @edit="emit('edit', currentNode)"
+          />
           <ProjectListItem
             v-for="child in children"
             :key="child.id"
@@ -260,6 +310,7 @@ onBeforeUnmount(() => tabResizeObserver?.disconnect());
           <div ref="tabScrollContainer" @scroll="checkTabOverflow" class="flex items-center overflow-x-auto scrollbar-none min-w-0 flex-1 py-2 px-1">
             <div class="workspace-tab-group">
               <button
+                v-if="hasRunnableCommands"
                 @click="rightTab = 'console'"
                 class="workspace-tab-btn"
                 :class="{ 'workspace-tab-btn-active': rightTab === 'console' }"
@@ -279,6 +330,7 @@ onBeforeUnmount(() => tabResizeObserver?.disconnect());
                 <span v-if="isGitRepo && gitChangesCount > 0" class="workspace-tab-badge">{{ gitChangesCount }}</span>
               </button>
               <button
+                v-if="hasFrontendEnv"
                 @click="rightTab = 'env'"
                 class="workspace-tab-btn"
                 :class="{ 'workspace-tab-btn-active': rightTab === 'env' }"
@@ -287,7 +339,7 @@ onBeforeUnmount(() => tabResizeObserver?.disconnect());
                 <div class="i-mdi-tune-variant text-sm" />
                 <span>{{ t('dashboard.envSwitcher') }}</span>
               </button>
-              <!-- 文件/备忘录：一级项目功能 -->
+              <!-- 文件/备忘录：跟随当前父级或选中的子项目 -->
               <button
                 @click="rightTab = 'files'"
                 class="workspace-tab-btn"
@@ -326,13 +378,14 @@ onBeforeUnmount(() => tabResizeObserver?.disconnect());
               <ConsoleView v-if="rightTab === 'console'" />
               <GitView v-else-if="rightTab === 'git'" />
               <FrontendEnvPanel v-else-if="rightTab === 'env' && activeLeaf" :project="activeLeaf" />
-              <FileManager v-else-if="rightTab === 'files' && rootProject" :project="rootProject" />
-              <ProjectMemo v-else-if="rightTab === 'memo' && rootProject" :project="rootProject" />
+              <FileManager v-else-if="rightTab === 'files' && workspaceProject" :project="workspaceProject" />
+              <ProjectMemo v-else-if="rightTab === 'memo' && workspaceProject" :project="workspaceProject" />
             </KeepAlive>
           </Transition>
         </div>
       </div>
     </div>
+    </Transition>
 
     <!-- 子项目扫描/关联弹窗 -->
     <SubProjectScanModal
@@ -365,6 +418,29 @@ onBeforeUnmount(() => tabResizeObserver?.disconnect());
 .tab-fade-enter-from,
 .tab-fade-leave-to {
   opacity: 0;
+}
+
+.workspace-forward-enter-active,
+.workspace-forward-leave-active,
+.workspace-back-enter-active,
+.workspace-back-leave-active {
+  transition: transform var(--app-duration-base) var(--app-ease), opacity var(--app-duration-base) var(--app-ease);
+}
+.workspace-forward-enter-from {
+  opacity: 0;
+  transform: translateX(18px);
+}
+.workspace-forward-leave-to {
+  opacity: 0;
+  transform: translateX(-12px);
+}
+.workspace-back-enter-from {
+  opacity: 0;
+  transform: translateX(-18px);
+}
+.workspace-back-leave-to {
+  opacity: 0;
+  transform: translateX(12px);
 }
 
 .workspace-header {

@@ -33,6 +33,19 @@ function toProjectType(kind: string): Project['type'] {
   return kind === 'node' || kind === 'frontend' || kind === 'static' ? 'node' : 'other';
 }
 
+export function convertSubProjectCandidates(
+  subProjects: SubProjectCandidate[],
+): Omit<Project, 'id' | 'parentId'>[] {
+  return subProjects.map((item) => ({
+    name: item.name,
+    path: item.path,
+    type: toProjectType(item.kind),
+    moduleKind: toModuleKind(item.kind),
+    scripts: item.scripts,
+    packageManager: (item.hasPackageJson ? 'npm' : undefined) as Project['packageManager'],
+  }));
+}
+
 /***********************批量导入项目树构建*********************/
 
 export function buildImportProjectTree(
@@ -57,14 +70,7 @@ export function buildImportProjectTree(
     root.scripts = info?.scripts || [];
   }
 
-  const children = subProjects.map((item) => ({
-    name: item.name,
-    path: item.path,
-    type: toProjectType(item.kind),
-    moduleKind: toModuleKind(item.kind),
-    scripts: item.scripts,
-    packageManager: (item.hasPackageJson ? 'npm' : undefined) as Project['packageManager'],
-  }));
+  const children = convertSubProjectCandidates(subProjects);
 
   return { root, children };
 }

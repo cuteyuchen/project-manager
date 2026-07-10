@@ -7,6 +7,7 @@ import type { SubProjectCandidate } from '../api/types';
 import type { Project, ProjectModuleKind } from '../types';
 import { useI18n } from 'vue-i18n';
 import { ElMessage } from 'element-plus';
+import { convertSubProjectCandidates } from '../utils/importProjectTree';
 
 /** 最大层级：一级→二级→三级 */
 const MAX_DEPTH = 3;
@@ -91,14 +92,7 @@ function confirmAdd() {
   const targets = candidates.value.filter((c) => c.selected && !c.exists);
   if (targets.length === 0) return;
 
-  const children = targets.map((c) => ({
-    name: c.name,
-    path: c.path,
-    type: (c.kind === 'node' || c.kind === 'frontend' || c.kind === 'static' ? 'node' : 'other') as Project['type'],
-    moduleKind: toModuleKind(c.kind),
-    scripts: c.scripts,
-    packageManager: (c.hasPackageJson ? 'npm' : undefined) as Project['packageManager'],
-  }));
+  const children = convertSubProjectCandidates(targets);
 
   const created = projectStore.addSubProjects(props.parentProject.id, children);
   ElMessage.success(t('dashboard.subProjectAdded', { count: created.length }));

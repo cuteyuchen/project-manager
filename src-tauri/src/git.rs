@@ -362,9 +362,20 @@ pub async fn git_cancel_operation(
 
 #[tauri::command]
 pub async fn git_check(path: String) -> Result<bool, String> {
-    run_git_task(move || match run_git(&path, &["rev-parse", "--is-inside-work-tree"]) {
-        Ok(output) => Ok(output.trim() == "true"),
-        Err(_) => Ok(false),
+    run_git_task(move || {
+        let repo_root = match run_git(&path, &["rev-parse", "--show-toplevel"]) {
+            Ok(output) => output,
+            Err(_) => return Ok(false),
+        };
+        let requested_path = match fs::canonicalize(&path) {
+            Ok(value) => value,
+            Err(_) => return Ok(false),
+        };
+        let repo_root_path = match fs::canonicalize(repo_root.trim()) {
+            Ok(value) => value,
+            Err(_) => return Ok(false),
+        };
+        Ok(requested_path == repo_root_path)
     })
     .await
 }

@@ -26,6 +26,8 @@ const props = defineProps<{
     selected?: boolean;
     /** 卡片布局：inline 用于主列表，stacked 用于窄侧栏子项目列表 */
     layout?: 'inline' | 'stacked';
+    /** 仅覆盖界面显示名称，不修改项目数据 */
+    displayName?: string;
 }>();
 const emit = defineEmits(['edit', 'open', 'toggle-select']);
 const store = useProjectStore();
@@ -232,7 +234,7 @@ async function openFolder() {
             <div class="project-row-main">
                 <div class="project-row-title-line">
                     <h3 class="project-row-title" :class="isActive ? 'text-blue-700 dark:text-blue-400' : 'text-slate-700 dark:text-slate-200'">
-                        {{ project.name }}
+                        {{ displayName || project.name }}
                     </h3>
                     <span v-if="moduleKindLabel" class="project-kind-chip shrink-0">{{ moduleKindLabel }}</span>
                     <span class="project-row-path">{{ project.path }}</span>
@@ -395,6 +397,10 @@ async function openFolder() {
 .project-row-stacked .project-row-content {
   align-items: flex-start;
   gap: 8px;
+}
+
+.project-row-stacked .project-row-leading {
+  padding-top: 4px;
 }
 
 .project-row-stacked .project-row-main {

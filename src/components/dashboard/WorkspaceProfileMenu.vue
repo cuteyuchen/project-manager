@@ -164,7 +164,7 @@ function getProjectName(projectId: string): string {
 
     <!-- 新建启动组 -->
     <button
-      class="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/60 transition-colors"
+      class="dashboard-secondary-action profile-create-button"
       @click="showCreateDialog = true"
     >
       <div class="i-mdi-plus text-sm" />
@@ -238,7 +238,9 @@ function getProjectName(projectId: string): string {
             />
           </el-select>
           <button
-            class="shrink-0 px-2 py-1 text-xs bg-blue-500/10 text-blue-500 rounded hover:bg-blue-500/20 transition-colors"
+            class="profile-add-item-button"
+            :disabled="!newItemProjectId || !newItemSelection"
+            :title="t('dashboard.profileAddItem')"
             @click="addNewItem"
           >
             <div class="i-mdi-plus" />
@@ -253,3 +255,51 @@ function getProjectName(projectId: string): string {
     </el-dialog>
   </div>
 </template>
+
+<style scoped>
+.workspace-profile-menu {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.profile-create-button {
+  white-space: nowrap;
+}
+
+.profile-add-item-button {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--app-primary) 58%, var(--app-border));
+  border-radius: var(--app-radius-sm);
+  background: var(--app-primary-soft);
+  color: var(--app-primary);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--app-primary) 8%, transparent);
+  transition:
+    background-color var(--app-duration-fast) var(--app-ease),
+    border-color var(--app-duration-fast) var(--app-ease),
+    color var(--app-duration-fast) var(--app-ease),
+    transform var(--app-duration-fast) var(--app-ease);
+}
+
+.profile-add-item-button:hover:not(:disabled) {
+  border-color: var(--app-primary);
+  background: var(--app-primary);
+  color: white;
+  transform: translateY(-1px);
+}
+
+.profile-add-item-button:disabled {
+  cursor: not-allowed;
+  border-color: var(--app-border);
+  background: var(--app-surface-soft);
+  color: var(--app-text-muted);
+  box-shadow: none;
+  opacity: 0.55;
+}
+</style>

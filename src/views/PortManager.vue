@@ -155,8 +155,9 @@ onMounted(() => {
 <template>
   <div class="app-page">
     <div class="app-page-header">
-      <div class="px-5 pt-5 pb-3 flex flex-wrap items-center justify-between gap-3">
-        <div>
+      <div class="app-content-container">
+      <div class="app-page-header-main">
+        <div class="app-page-heading">
           <div class="app-page-kicker">
             {{ t('ports.section') }}
           </div>
@@ -178,7 +179,7 @@ onMounted(() => {
         </button>
       </div>
 
-      <div class="px-5 pb-4 grid gap-3 md:grid-cols-4">
+      <div class="app-page-header-extra grid gap-3 md:grid-cols-4">
         <div class="summary-card">
           <div class="summary-label">{{ t('ports.summaryTotal') }}</div>
           <div class="summary-value">{{ summary.total }}</div>
@@ -197,7 +198,7 @@ onMounted(() => {
         </div>
       </div>
 
-      <div class="px-5 pb-5 flex flex-wrap gap-3">
+      <div class="mt-3 flex flex-wrap gap-3">
         <el-input
             v-model="searchQuery"
             :placeholder="t('ports.searchPlaceholder')"
@@ -224,9 +225,11 @@ onMounted(() => {
           <el-option :label="t('ports.stateOther')" value="OTHER"/>
         </el-select>
       </div>
+      </div>
     </div>
 
     <div class="flex-1 min-h-0 overflow-hidden px-5 py-4">
+      <div class="app-content-container h-full">
       <div
           v-if="unsupportedMessage"
           class="app-alert-warning h-full p-6 text-sm"
@@ -292,6 +295,7 @@ onMounted(() => {
             </template>
           </el-table-column>
         </el-table>
+      </div>
       </div>
     </div>
 

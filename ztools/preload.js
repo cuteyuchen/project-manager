@@ -22,6 +22,77 @@ function runCmd(cmd) {
     });
 }
 
+const PROJECT_SCAN_IGNORED_DIRS = new Set([
+    'node_modules', '.git', '.svn', '.hg', 'dist', 'build', 'out',
+    '.idea', '.vscode', '__pycache__', '.next', '.nuxt', 'target',
+    'vendor', 'coverage', '.cache', 'tmp', 'temp', '.gradle'
+]);
+
+function readPackageJson(projectPath) {
+    try {
+        return JSON.parse(fs.readFileSync(path.join(projectPath, 'package.json'), 'utf-8'));
+    } catch (_) {
+        return {};
+    }
+}
+
+function identifyProjectModule(projectPath) {
+    const has = (name) => fs.existsSync(path.join(projectPath, name));
+    if (has('pom.xml')) return { kind: 'backend', framework: 'Spring Boot' };
+    if (has('build.gradle') || has('build.gradle.kts')) return { kind: 'backend', framework: 'Gradle' };
+    if (has('package.json')) {
+        const pkg = readPackageJson(projectPath);
+        const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+        if (deps.vue) return { kind: 'frontend', framework: 'Vue' };
+        if (deps.react) return { kind: 'frontend', framework: 'React' };
+        return { kind: 'node', framework: 'Node.js' };
+    }
+    if (has('index.html')) return { kind: 'static', framework: 'Static' };
+    if (has('go.mod')) return { kind: 'go', framework: 'Go' };
+    if (has('Cargo.toml')) return { kind: 'rust', framework: 'Rust' };
+    if (has('requirements.txt') || has('pyproject.toml')) return { kind: 'python', framework: 'Python' };
+    try {
+        if (fs.readdirSync(projectPath).some((name) => name.toLowerCase().endsWith('.csproj'))) {
+            return { kind: 'dotnet', framework: '.NET' };
+        }
+    } catch (_) {}
+    return null;
+}
+
+function scanProjectModules(projectPath, depth, maxDepth, found) {
+    if (depth > maxDepth) return;
+    const moduleInfo = identifyProjectModule(projectPath);
+    if (moduleInfo) {
+        const hasPackageJson = fs.existsSync(path.join(projectPath, 'package.json'));
+        const pkg = hasPackageJson ? readPackageJson(projectPath) : {};
+        found.push({
+            name: path.basename(projectPath),
+            path: projectPath,
+            kind: moduleInfo.kind,
+            framework: moduleInfo.framework,
+            hasPackageJson,
+            scripts: Object.keys(pkg.scripts || {}).sort()
+        });
+        return;
+    }
+    let entries = [];
+    try { entries = fs.readdirSync(projectPath, { withFileTypes: true }); } catch (_) { return; }
+    for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith('.') || PROJECT_SCAN_IGNORED_DIRS.has(entry.name)) continue;
+        scanProjectModules(path.join(projectPath, entry.name), depth + 1, maxDepth, found);
+    }
+}
+
+function scanSubProjectsSync(projectPath) {
+    const found = [];
+    const entries = fs.readdirSync(projectPath, { withFileTypes: true });
+    for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith('.') || PROJECT_SCAN_IGNORED_DIRS.has(entry.name)) continue;
+        scanProjectModules(path.join(projectPath, entry.name), 1, 3, found);
+    }
+    return found;
+}
+
 const processes = new Map();
 let outputCallback = null;
 let exitCallback = null;
@@ -688,6 +759,25 @@ window.services = {
         }
     },
 
+    scanSubProjects: async (projectPath) => scanSubProjectsSync(projectPath),
+
+    scanImportPreview: async (rootPath) => {
+        const entries = fs.readdirSync(rootPath, { withFileTypes: true });
+        return entries
+            .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.') && !PROJECT_SCAN_IGNORED_DIRS.has(entry.name))
+            .map((entry) => {
+                const projectPath = path.join(rootPath, entry.name);
+                const modules = [];
+                scanProjectModules(projectPath, 1, 3, modules);
+                return {
+                    name: entry.name,
+                    path: projectPath,
+                    subModuleCount: modules.length,
+                    hasGit: fs.existsSync(path.join(projectPath, '.git'))
+                };
+            });
+    },
+
     gitListRemoteBranches: async (url) => {
         return new Promise((resolve, reject) => {
             execFile('git', ['ls-remote', '--heads', '--', url], { windowsHide: true, maxBuffer: 10 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }, (error, stdout, stderr) => {
@@ -1083,7 +1173,7 @@ window.services = {
     },
     
     getAppVersion: async () => {
-        return "1.5.0";
+        return "1.5.1";
     },
     
     installUpdate: async (url) => {
@@ -1489,12 +1579,16 @@ $result | ConvertTo-Json -Compress`;
 
     gitCheck: async (projectPath) => {
         try {
-            const result = execSync('git rev-parse --is-inside-work-tree', {
+            const result = execFileSync('git', ['rev-parse', '--show-toplevel'], {
                 cwd: projectPath,
                 stdio: ['pipe', 'pipe', 'pipe'],
                 windowsHide: true,
             });
-            return result.toString().trim() === 'true';
+            const requestedPath = fs.realpathSync(projectPath);
+            const repoRootPath = fs.realpathSync(result.toString().trim());
+            return process.platform === 'win32'
+                ? requestedPath.toLowerCase() === repoRootPath.toLowerCase()
+                : requestedPath === repoRootPath;
         } catch (e) {
             return false;
         }
