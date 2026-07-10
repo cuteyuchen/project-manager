@@ -22,7 +22,7 @@
     "bump:version": "node scripts/bump-version-only.cjs"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2",
+    "@tauri-apps/api": "2.11.1",
     "@tauri-apps/plugin-autostart": "^2",
     "@tauri-apps/plugin-dialog": "^2.6.0",
     "@tauri-apps/plugin-fs": "^2.4.5",
@@ -39,7 +39,7 @@
   },
   "devDependencies": {
     "@iconify-json/mdi": "^1.2.3",
-    "@tauri-apps/cli": "^2",
+    "@tauri-apps/cli": "2.11.1",
     "@vitejs/plugin-vue": "^5.2.1",
     "typescript": "~5.6.2",
     "unocss": "^66.6.0",
