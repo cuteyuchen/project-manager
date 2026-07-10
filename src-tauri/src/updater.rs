@@ -86,10 +86,15 @@ pub async fn install_update(app: AppHandle, state: State<'_, UpdateState>, url: 
     println!("Download complete. Launching installer...");
 
     // Launch the installer
-    // Using cmd /c start to ensure it runs independently
+    // 传入 /UPDATE 让 NSIS 安装器进入“更新模式”：
+    //   1. 跳过“是否卸载旧版本”的确认页，直接覆盖安装到原目录（修复：提示卸载再安装）
+    //   2. 卸载器在更新模式下不会删除开机自启动的注册表项
+    //      HKCU\Software\Microsoft\Windows\CurrentVersion\Run（修复：更新后自启动失效）
+    // /P = 被动(passive)静默安装，减少人工交互；/R = 安装完成后自动重启应用。
+    // 这与官方 tauri-plugin-updater 启动 NSIS 安装器时使用的参数一致。
     #[cfg(target_os = "windows")]
-    Command::new("cmd")
-        .args(["/C", "start", "", result.to_str().unwrap()])
+    Command::new(&result)
+        .args(["/UPDATE", "/P", "/R"])
         .spawn()
         .map_err(|e| e.to_string())?;
 
