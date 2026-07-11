@@ -18,6 +18,7 @@ import {
   normalizeShortcut,
 } from '../utils/shortcut';
 import { createImageDataUrl } from '../utils/backgroundImage';
+import ShortcutRecorder from '../components/ShortcutRecorder.vue';
 
 type ImportChoice = 'keep' | 'incoming';
 type ImportDiff = { key: string; label: string; current: string; incoming: string };
@@ -192,6 +193,12 @@ function normalizeQuickSearchGlobalShortcut() {
   draft.value.quickSearchGlobalShortcut = normalizeShortcut(
     draft.value.quickSearchGlobalShortcut || DEFAULT_QUICK_SEARCH_GLOBAL_SHORTCUT,
   ) || DEFAULT_QUICK_SEARCH_GLOBAL_SHORTCUT;
+}
+
+function handleShortcutRecordingChange(recording: boolean) {
+  window.dispatchEvent(new CustomEvent('quick-search-shortcut-recording', {
+    detail: recording,
+  }));
 }
 
 onMounted(async () => {
@@ -966,11 +973,11 @@ async function testAiConnection() {
             <div class="settings-row-title">{{ t('settings.quickSearchAppShortcut') }}</div>
             <div class="settings-row-desc">{{ t('settings.quickSearchAppShortcutHint') }}</div>
           </div>
-          <el-input
+          <ShortcutRecorder
             v-model="draft.quickSearchAppShortcut"
-            class="settings-control"
             :placeholder="DEFAULT_QUICK_SEARCH_APP_SHORTCUT"
-            @blur="normalizeQuickSearchAppShortcut"
+            :aria-label="t('settings.quickSearchAppShortcut')"
+            @recording-change="handleShortcutRecordingChange"
           />
         </div>
         <div v-if="!isPlugin" class="settings-row-line">
@@ -985,11 +992,11 @@ async function testAiConnection() {
             <div class="settings-row-title">{{ t('settings.quickSearchGlobalShortcut') }}</div>
             <div class="settings-row-desc">{{ t('settings.quickSearchGlobalShortcutHint') }}</div>
           </div>
-          <el-input
+          <ShortcutRecorder
             v-model="draft.quickSearchGlobalShortcut"
-            class="settings-control"
             :placeholder="DEFAULT_QUICK_SEARCH_GLOBAL_SHORTCUT"
-            @blur="normalizeQuickSearchGlobalShortcut"
+            :aria-label="t('settings.quickSearchGlobalShortcut')"
+            @recording-change="handleShortcutRecordingChange"
           />
         </div>
       </section>

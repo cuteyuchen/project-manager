@@ -5,6 +5,12 @@ import { useProjectStore } from '../stores/project';
 import { useUsageStore } from '../stores/usage';
 import { pinyin } from 'pinyin-pro';
 
+const props = withDefaults(defineProps<{
+  standalone?: boolean;
+}>(), {
+  standalone: false,
+});
+
 const { t } = useI18n();
 const projectStore = useProjectStore();
 const usageStore = useUsageStore();
@@ -25,6 +31,7 @@ interface SearchResult {
 
 const emit = defineEmits<{
   close: [];
+  draggingChange: [dragging: boolean];
   /** 选中项目 */
   select: [projectId: string];
   /** 选中脚本 */
@@ -185,7 +192,9 @@ function handleKeydown(event: KeyboardEvent) {
     const list = fullFlatList.value;
     if (event.key === 'ArrowDown') {
         event.preventDefault();
-        selectedIndex.value = Math.min(selectedIndex.value + 1, list.length - 1);
+        selectedIndex.value = list.length > 0
+            ? Math.min(selectedIndex.value + 1, list.length - 1)
+            : 0;
     } else if (event.key === 'ArrowUp') {
         event.preventDefault();
         selectedIndex.value = Math.max(selectedIndex.value - 1, 0);
@@ -214,8 +223,23 @@ function selectItem(item: SearchResult) {
 }
 
 function handleOverlayClick(event: MouseEvent) {
+    if (props.standalone) return;
     if ((event.target as HTMLElement).classList.contains('quick-search-overlay')) {
         emit('close');
+    }
+}
+
+async function startWindowDrag(event: MouseEvent) {
+    if (!props.standalone || event.button !== 0) return;
+    event.preventDefault();
+    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+    const currentWindow = getCurrentWindow();
+    emit('draggingChange', true);
+    try {
+        await currentWindow.startDragging();
+    } finally {
+        emit('draggingChange', false);
+        await currentWindow.setFocus().catch(() => undefined);
     }
 }
 
@@ -239,15 +263,30 @@ function getTypeLabel(type: SearchResultType): string {
 </script>
 
 <template>
-    <div class="quick-search-overlay" @click="handleOverlayClick">
-        <div class="quick-search-container">
+    <div
+        class="quick-search-overlay"
+        :class="{ 'quick-search-overlay-standalone': standalone }"
+        @click="handleOverlayClick"
+    >
+        <div class="quick-search-container" :class="{ 'quick-search-container-standalone': standalone }">
             <div class="quick-search-header">
+                <button
+                    v-if="standalone"
+                    type="button"
+                    class="quick-search-drag-handle"
+                    :aria-label="t('dashboard.quickSearchDrag')"
+                    :title="t('dashboard.quickSearchDrag')"
+                    @mousedown="startWindowDrag"
+                >
+                    <span class="i-mdi-drag-horizontal text-lg" aria-hidden="true" />
+                </button>
                 <div class="i-mdi-magnify text-lg text-slate-400 dark:text-slate-500 flex-shrink-0" />
                 <input
                     ref="searchInputRef"
                     v-model="searchQuery"
                     :placeholder="t('dashboard.quickSearchPlaceholder')"
                     class="quick-search-input"
+                    :aria-label="t('dashboard.quickSearchPlaceholder')"
                     @keydown="handleKeydown"
                 />
                 <div class="quick-search-shortcut">
@@ -365,7 +404,7 @@ function getTypeLabel(type: SearchResultType): string {
 }
 
 .quick-search-container {
-  width: min(560px, calc(100vw - 48px));
+  width: min(640px, calc(100vw - 48px));
   max-height: 440px;
   display: flex;
   flex-direction: column;
@@ -376,12 +415,64 @@ function getTypeLabel(type: SearchResultType): string {
   overflow: hidden;
 }
 
+.quick-search-overlay-standalone {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  align-items: stretch;
+  background: var(--app-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.quick-search-container-standalone {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
 .quick-search-header {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 14px 16px;
   border-bottom: 1px solid var(--app-border);
+}
+
+.quick-search-drag-handle {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: -6px 0 -6px -8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--app-text-muted);
+  cursor: grab;
+  transition:
+    color var(--app-duration-fast) var(--app-ease),
+    background-color var(--app-duration-fast) var(--app-ease);
+}
+
+.quick-search-drag-handle:hover {
+  color: var(--app-text-secondary);
+  background: var(--app-surface-soft);
+}
+
+.quick-search-drag-handle:active {
+  cursor: grabbing;
+}
+
+.quick-search-drag-handle:focus-visible {
+  outline: 2px solid var(--app-primary);
+  outline-offset: 2px;
 }
 
 .quick-search-input {

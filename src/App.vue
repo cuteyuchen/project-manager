@@ -42,6 +42,7 @@ let unlistenDragEnter: UnlistenFn | null = null;
 let unlistenDragLeave: UnlistenFn | null = null;
 let unlistenDragDrop: UnlistenFn | null = null;
 let unlistenSingleInstance: UnlistenFn | null = null;
+let unlistenQuickSearchSelect: UnlistenFn | null = null;
 let manualUpdateCheckListener: (() => void) | null = null;
 
 const showUpdateProgress = ref(false);
@@ -54,6 +55,8 @@ let trayIcon: { close?: () => Promise<void> } | null = null;
 let pendingCloseResolver: ((action: 'tray' | 'exit' | 'cancel') => void) | null = null;
 let unlistenCloseRequested: UnlistenFn | null = null;
 let registeredQuickSearchGlobalShortcut = '';
+let quickSearchShortcutRecording = false;
+let quickSearchShortcutRecordingListener: ((event: Event) => void) | null = null;
 let allowWindowClose = false;
 let traySetupToken = 0;
 let exiting = false;
@@ -140,13 +143,31 @@ async function handleImportProject(path: string) {
 
 /***********************快速搜索快捷键*********************/
 
-function openQuickSearch() {
-  showQuickSearch.value = true;
-}
+async function openQuickSearch() {
+  if (isPlugin) {
+    showQuickSearch.value = true;
+    return;
+  }
 
-async function openQuickSearchFromGlobalShortcut() {
-  await showMainWindow();
-  openQuickSearch();
+  try {
+    await flushPendingSave();
+    const [{ WebviewWindow }, { emitTo }] = await Promise.all([
+      import('@tauri-apps/api/webviewWindow'),
+      import('@tauri-apps/api/event'),
+    ]);
+    const quickSearchWindow = await WebviewWindow.getByLabel('quick-search');
+    if (!quickSearchWindow) {
+      throw new Error('Quick search window is unavailable');
+    }
+
+    await emitTo('quick-search', 'quick-search-open');
+    await quickSearchWindow.center().catch(() => undefined);
+    await quickSearchWindow.show();
+    await quickSearchWindow.setFocus();
+  } catch (error) {
+    console.error('Failed to open quick search window:', error);
+    ElMessage.error(`${t('common.error')}: ${String(error)}`);
+  }
 }
 
 async function unregisterQuickSearchGlobalShortcut() {
@@ -163,6 +184,11 @@ async function unregisterQuickSearchGlobalShortcut() {
 
 async function syncQuickSearchGlobalShortcut() {
   if (isPlugin) return;
+
+  if (quickSearchShortcutRecording) {
+    await unregisterQuickSearchGlobalShortcut();
+    return;
+  }
 
   const enabled = settingsStore.settings.quickSearchGlobalShortcutEnabled === true;
   const shortcut = normalizeShortcut(
@@ -181,7 +207,7 @@ async function syncQuickSearchGlobalShortcut() {
     const { register } = await import('@tauri-apps/plugin-global-shortcut');
     await register(shortcut, (event) => {
       if (event.state === 'Pressed') {
-        void openQuickSearchFromGlobalShortcut();
+        void openQuickSearch();
       }
     });
     registeredQuickSearchGlobalShortcut = shortcut;
@@ -196,30 +222,34 @@ function handleGlobalKeydown(event: KeyboardEvent) {
   const shortcut = settingsStore.settings.quickSearchAppShortcut || DEFAULT_QUICK_SEARCH_APP_SHORTCUT;
   if (isShortcutEvent(event, shortcut)) {
     event.preventDefault();
-    openQuickSearch();
+    void openQuickSearch();
     return;
   }
 
-  if (event.key === 'Escape' && showQuickSearch.value) {
+  if (isPlugin && event.key === 'Escape' && showQuickSearch.value) {
     event.preventDefault();
     showQuickSearch.value = false;
   }
 }
 
-/** 快速搜索选中项目 */
-function handleQuickSearchSelect(projectId: string) {
+async function activateQuickSearchSelection(projectId: string) {
   const store = useProjectStore();
   store.activeProjectId = projectId;
   currentView.value = 'dashboard';
   showQuickSearch.value = false;
+  if (!isPlugin) {
+    await showMainWindow();
+  }
+}
+
+/** 快速搜索选中项目 */
+function handleQuickSearchSelect(projectId: string) {
+  void activateQuickSearchSelection(projectId);
 }
 
 /** 快速搜索选中脚本 */
 function handleQuickSearchSelectScript(projectId: string, _scriptName: string) {
-  const store = useProjectStore();
-  store.activeProjectId = projectId;
-  currentView.value = 'dashboard';
-  showQuickSearch.value = false;
+  void activateQuickSearchSelection(projectId);
 }
 
 function compareVersions(v1: string, v2: string) {
@@ -521,6 +551,19 @@ onMounted(async () => {
   await loadData();
   loaded.value = true;
 
+  if (!isPlugin) {
+    const handleShortcutRecording = (event: Event) => {
+      quickSearchShortcutRecording = (event as CustomEvent<boolean>).detail === true;
+      if (quickSearchShortcutRecording) {
+        void unregisterQuickSearchGlobalShortcut();
+      } else {
+        void syncQuickSearchGlobalShortcut();
+      }
+    };
+    quickSearchShortcutRecordingListener = handleShortcutRecording;
+    window.addEventListener('quick-search-shortcut-recording', handleShortcutRecording);
+  }
+
   // Handle Startup Args / uTools/ZTools Plugin Enter
   if (isPlugin) {
     const pluginApi = (window as any).ztools || (window as any).utools;
@@ -614,6 +657,12 @@ onMounted(async () => {
           handleImportProject(path);
         }
       });
+
+      unlistenQuickSearchSelect = await listen<{ projectId: string; scriptName?: string }>('quick-search-selected', (event) => {
+        if (event.payload.projectId) {
+          void activateQuickSearchSelection(event.payload.projectId);
+        }
+      });
     } catch (e) {
       console.error('Failed to setup drag listeners', e);
     }
@@ -654,7 +703,11 @@ onUnmounted(() => {
   if (unlistenDragLeave) unlistenDragLeave();
   if (unlistenDragDrop) unlistenDragDrop();
   if (unlistenSingleInstance) unlistenSingleInstance();
+  if (unlistenQuickSearchSelect) unlistenQuickSearchSelect();
   if (manualUpdateCheckListener) manualUpdateCheckListener();
+  if (quickSearchShortcutRecordingListener) {
+    window.removeEventListener('quick-search-shortcut-recording', quickSearchShortcutRecordingListener);
+  }
   if (unlistenCloseRequested) unlistenCloseRequested();
   document.removeEventListener('keydown', handleGlobalKeydown);
   void unregisterQuickSearchGlobalShortcut();
@@ -783,9 +836,9 @@ watch(
       </template>
     </el-dialog>
 
-    <!-- Ctrl+K 快速搜索覆盖层 -->
+    <!-- 启动器插件不支持 Tauri 多窗口，保留覆盖层作为兼容模式 -->
     <ProjectQuickSearch
-      v-if="showQuickSearch"
+      v-if="isPlugin && showQuickSearch"
       @close="showQuickSearch = false"
       @select="handleQuickSearchSelect"
       @selectScript="handleQuickSearchSelectScript"
