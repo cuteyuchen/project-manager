@@ -1,6 +1,6 @@
 # Project Manager
 
-当前版本：`v1.5.1`
+当前版本：`v1.5.2`
 
 一个现代化的跨平台项目管理工具，聚合了项目运行、Git 管理、Node 版本管理、项目文件整理与系统集成功能。  
 桌面端基于 `Tauri v2 + Vue 3 + TypeScript` 构建，同时提供 `uTools` / `ZTools` 插件版本。
@@ -25,6 +25,16 @@
 - 运行中的命令再次点击可停止，运行状态脉冲动画区分
 - 智能排序：根据使用频率自动排列项目，新项目优先显示
 
+项目总览提供分组、标签、收藏、置顶、最近使用、运行状态、Git 改动、健康异常和路径缺失等筛选维度，并支持保存常用视图与启动组。
+
+![项目总览](docs/images/project-dashboard.png)
+
+父项目可以展开为独立的多级项目工作区。子项目分别使用自身的命令、Git、Node 环境、文件和备忘录数据，返回上级时会恢复此前的浏览位置。
+
+![多级项目工作区](docs/images/project-workspace.png)
+
+命令面板会自动识别项目脚本和内置安装依赖命令，适合统一运行开发、构建、检查与测试任务。
+
 ![命令运行](docs/images/command-runner.png)
 
 ### 2. Git 管理
@@ -43,10 +53,7 @@
 - 每个项目都可以维护 Markdown 备忘录
 - 支持编辑 / 预览 / 分屏模式
 - 可关联常用文件或文件夹，支持快速预览图片与文本
-
-![项目备忘录](docs/images/project-memo.png)
-
-![项目文件管理](docs/images/project-files.png)
+- 文件和备忘录与命令、Git 位于同一项目工作区，切换项目或子项目时自动使用对应数据
 
 ### 4. Node 版本管理
 
@@ -57,8 +64,6 @@
 
 ![Node 版本管理](docs/images/node-manager.png)
 
-![安装 Node 版本](docs/images/node-install.png)
-
 ### 5. 端口管理
 
 桌面端新增端口管理能力，适合排查本地开发时的端口占用问题。
@@ -66,6 +71,8 @@
 - 查看当前正在占用的 TCP / UDP 端口
 - 查看端口对应的 PID、进程名、程序路径与命令行
 - 支持按进程结束占用端口的程序
+
+![端口管理](docs/images/port-manager.png)
 
 说明：
 
@@ -80,6 +87,8 @@
 - 默认遵循 Conventional Commits 风格
 
 ![AI 提交信息生成](docs/images/ai-commit-settings.png)
+
+> 截图中的服务地址、模型和密钥等演示配置已隐藏。
 
 ### 7. 系统集成
 
