@@ -12,7 +12,6 @@ import PortManager from './views/PortManager.vue';
 import CommitCalendar from './views/CommitCalendar.vue';
 import TitleBar from './components/TitleBar.vue';
 import UpdateProgress from './components/UpdateProgress.vue';
-import ProjectQuickSearch from './components/ProjectQuickSearch.vue';
 import { loadData, scheduleSaveData, flushPendingSave } from './utils/persistence';
 import { useProjectStore } from './stores/project';
 import { useSettingsStore } from './stores/settings';
@@ -47,7 +46,6 @@ let manualUpdateCheckListener: (() => void) | null = null;
 
 const showUpdateProgress = ref(false);
 const downloadProgress = ref(0);
-const showQuickSearch = ref(false);
 const processedImportInstallVersions = new Set<string>();
 const closeBehaviorDialogVisible = ref(false);
 const rememberCloseAction = ref(false);
@@ -144,10 +142,7 @@ async function handleImportProject(path: string) {
 /***********************快速搜索快捷键*********************/
 
 async function openQuickSearch() {
-  if (isPlugin) {
-    showQuickSearch.value = true;
-    return;
-  }
+  if (isPlugin) return;
 
   try {
     await flushPendingSave();
@@ -219,16 +214,11 @@ async function syncQuickSearchGlobalShortcut() {
 
 /** 应用内键盘事件处理：按设置项打开快速搜索 */
 function handleGlobalKeydown(event: KeyboardEvent) {
+  if (isPlugin) return;
   const shortcut = settingsStore.settings.quickSearchAppShortcut || DEFAULT_QUICK_SEARCH_APP_SHORTCUT;
   if (isShortcutEvent(event, shortcut)) {
     event.preventDefault();
     void openQuickSearch();
-    return;
-  }
-
-  if (isPlugin && event.key === 'Escape' && showQuickSearch.value) {
-    event.preventDefault();
-    showQuickSearch.value = false;
   }
 }
 
@@ -236,20 +226,9 @@ async function activateQuickSearchSelection(projectId: string) {
   const store = useProjectStore();
   store.activeProjectId = projectId;
   currentView.value = 'dashboard';
-  showQuickSearch.value = false;
   if (!isPlugin) {
     await showMainWindow();
   }
-}
-
-/** 快速搜索选中项目 */
-function handleQuickSearchSelect(projectId: string) {
-  void activateQuickSearchSelection(projectId);
-}
-
-/** 快速搜索选中脚本 */
-function handleQuickSearchSelectScript(projectId: string, _scriptName: string) {
-  void activateQuickSearchSelection(projectId);
 }
 
 function compareVersions(v1: string, v2: string) {
@@ -694,8 +673,9 @@ onMounted(async () => {
   manualUpdateCheckListener = () => window.removeEventListener('manual-check-update', handleManualUpdateCheck);
   window.addEventListener('manual-check-update', handleManualUpdateCheck);
 
-  // 注册全局 Ctrl+K 快捷键
-  document.addEventListener('keydown', handleGlobalKeydown);
+  if (!isPlugin) {
+    document.addEventListener('keydown', handleGlobalKeydown);
+  }
 });
 
 onUnmounted(() => {
@@ -836,12 +816,5 @@ watch(
       </template>
     </el-dialog>
 
-    <!-- 启动器插件不支持 Tauri 多窗口，保留覆盖层作为兼容模式 -->
-    <ProjectQuickSearch
-      v-if="isPlugin && showQuickSearch"
-      @close="showQuickSearch = false"
-      @select="handleQuickSearchSelect"
-      @selectScript="handleQuickSearchSelectScript"
-    />
   </div>
 </template>

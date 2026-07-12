@@ -265,7 +265,7 @@ Project Manager 使用以下技术构建：
 
 ## 下载与体验
 
-Project Manager 当前版本为 **v1.5.2**，项目已经开源。
+Project Manager 当前版本为 **v1.5.3**，项目已经开源。
 
 - GitHub：[cuteyuchen/project-manager](https://github.com/cuteyuchen/project-manager)
 - 版本下载：[GitHub Releases](https://github.com/cuteyuchen/project-manager/releases)
@@ -275,4 +275,3 @@ Project Manager 当前版本为 **v1.5.2**，项目已经开源。
 如果项目对你有帮助，欢迎点一个 **Star**。如果遇到问题，或者希望增加新的开发者工具，也欢迎通过 Issue 提交建议。
 
 我也很想知道：你在管理本地开发项目时，最希望被自动化的重复操作是什么？
-

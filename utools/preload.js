@@ -415,6 +415,139 @@ function escapePowerShellSingleQuotes(value) {
 // Platform-adaptive: support both uTools and ZTools
 const platform = typeof ztools !== 'undefined' ? ztools : utools;
 
+// Editor detection helpers
+const PLUGIN_EDITOR_DEFINITIONS = [
+    { name: 'Visual Studio Code', matches: ['visual studio code'], commands: ['code'], relativePaths: [['bin', 'code.cmd'], ['bin', 'code'], ['Code.exe']] },
+    { name: 'Trae CN', matches: ['trae'], commands: ['trae'], relativePaths: [['bin', 'trae.cmd'], ['bin', 'trae'], ['Trae.exe']] },
+    { name: 'Cursor', matches: ['cursor'], commands: ['cursor'], relativePaths: [['bin', 'cursor.cmd'], ['bin', 'cursor'], ['Cursor.exe']] },
+    { name: 'Windsurf', matches: ['windsurf'], commands: ['windsurf'], relativePaths: [['bin', 'windsurf.cmd'], ['bin', 'windsurf'], ['Windsurf.exe']] },
+    { name: 'WebStorm', matches: ['webstorm'], commands: ['webstorm64', 'webstorm'], relativePaths: [['bin', 'webstorm64.exe'], ['bin', 'webstorm']] },
+    { name: 'IntelliJ IDEA', matches: ['intellij idea'], commands: ['idea64', 'idea'], relativePaths: [['bin', 'idea64.exe'], ['bin', 'idea']] },
+    { name: 'Sublime Text', matches: ['sublime text'], commands: ['subl'], relativePaths: [['sublime_text.exe']] },
+    { name: 'Notepad++', matches: ['notepad++'], commands: ['notepad++'], relativePaths: [['notepad++.exe']] },
+];
+
+function cleanWindowsRegistryPath(value) {
+    const trimmed = String(value || '').trim().replace(/^"|"$/g, '');
+    const withoutArgs = trimmed.split('",')[0].replace(/^"|"$/g, '');
+    return withoutArgs.replace(/,\s*\d+$/, '').replace(/^"|"$/g, '').trim();
+}
+
+function findExecutableOnPath(command) {
+    try {
+        const locator = process.platform === 'win32' ? 'where.exe' : 'which';
+        const output = execFileSync(locator, [command], {
+            encoding: 'utf8',
+            windowsHide: true,
+            stdio: ['ignore', 'pipe', 'ignore'],
+        });
+        return String(output || '').split(/\r?\n/).map(item => item.trim()).find(Boolean) || '';
+    } catch (_) {
+        return '';
+    }
+}
+
+function resolveWindowsEditor(displayName, installLocation, displayIcon) {
+    const normalizedName = String(displayName || '').toLowerCase();
+    const definition = PLUGIN_EDITOR_DEFINITIONS.find(item =>
+        item.matches.some(keyword => normalizedName.includes(keyword))
+    );
+    if (!definition) return null;
+
+    const candidates = [];
+    if (installLocation) {
+        for (const relativePath of definition.relativePaths) {
+            candidates.push(path.join(installLocation, ...relativePath));
+        }
+    }
+    const iconPath = cleanWindowsRegistryPath(displayIcon);
+    if (iconPath) candidates.push(iconPath);
+
+    const executablePath = candidates.find(candidate => candidate && fs.existsSync(candidate));
+    return executablePath ? { name: definition.name, path: executablePath } : null;
+}
+
+function scanWindowsUninstallEditors() {
+    const registryRoots = [
+        'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
+        'HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
+        'HKLM\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
+    ];
+    const editors = [];
+
+    for (const registryRoot of registryRoots) {
+        let output = '';
+        try {
+            output = execFileSync('reg.exe', ['query', registryRoot, '/s'], {
+                encoding: 'utf8',
+                windowsHide: true,
+                maxBuffer: 20 * 1024 * 1024,
+                stdio: ['ignore', 'pipe', 'ignore'],
+            });
+        } catch (_) {
+            continue;
+        }
+
+        let entry = {};
+        const flushEntry = () => {
+            const editor = resolveWindowsEditor(entry.DisplayName, entry.InstallLocation, entry.DisplayIcon);
+            if (editor) editors.push(editor);
+            entry = {};
+        };
+
+        for (const line of String(output || '').split(/\r?\n/)) {
+            if (/^HKEY_/i.test(line.trim())) {
+                flushEntry();
+                continue;
+            }
+            const match = line.match(/^\s+(DisplayName|InstallLocation|DisplayIcon)\s+REG_\w+\s+(.*)$/i);
+            if (match) entry[match[1]] = match[2].trim();
+        }
+        flushEntry();
+    }
+
+    return editors;
+}
+
+function detectAvailableEditorsSync() {
+    const editors = process.platform === 'win32' ? scanWindowsUninstallEditors() : [];
+
+    if (process.platform === 'win32') {
+        const localAppData = process.env.LOCALAPPDATA || '';
+        const programFiles = process.env.ProgramFiles || '';
+        const commonInstalls = [
+            ['Visual Studio Code', localAppData && path.join(localAppData, 'Programs', 'Microsoft VS Code')],
+            ['Cursor', localAppData && path.join(localAppData, 'Programs', 'cursor')],
+            ['Trae', localAppData && path.join(localAppData, 'Programs', 'Trae')],
+            ['Windsurf', localAppData && path.join(localAppData, 'Programs', 'Windsurf')],
+            ['Visual Studio Code', programFiles && path.join(programFiles, 'Microsoft VS Code')],
+        ];
+        for (const [name, installLocation] of commonInstalls) {
+            const editor = resolveWindowsEditor(name, installLocation, '');
+            if (editor) editors.push(editor);
+        }
+    }
+
+    for (const definition of PLUGIN_EDITOR_DEFINITIONS) {
+        if (editors.some(editor => editor.name === definition.name)) continue;
+        for (const command of definition.commands) {
+            const commandPath = findExecutableOnPath(command);
+            if (commandPath) {
+                editors.push({ name: definition.name, path: commandPath });
+                break;
+            }
+        }
+    }
+
+    const seen = new Set();
+    return editors.filter(editor => {
+        const key = editor.name.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+}
+
 // Port parsing helpers
 function parseLsofEndpoint(str) {
     if (!str) return { address: '', port: 0 };
@@ -1239,6 +1372,10 @@ window.services = {
         
         return terminals;
     },
+
+    detectAvailableEditors: async () => {
+        return detectAvailableEditorsSync();
+    },
     
     //************* 终端打开 *************
     openInTerminal: async (projectPath, terminal, nodePath, packageManager) => {
@@ -1393,10 +1530,13 @@ $ports += Get-NetUDPEndpoint -ErrorAction SilentlyContinue | ForEach-Object {
     OwningProcess = $_.OwningProcess
   }
 }
-$pids = ($ports | Select-Object -ExpandProperty OwningProcess -Unique) -join ','
+$processIds = @{}
+$ports | ForEach-Object { $processIds[[int]$_.OwningProcess] = $true }
 $procs = @{}
-if ($pids) {
-  Get-CimInstance Win32_Process -Filter "ProcessId IN ($pids)" -ErrorAction SilentlyContinue | ForEach-Object {
+if ($processIds.Count -gt 0) {
+  Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+    $processIds.ContainsKey([int]$_.ProcessId)
+  } | ForEach-Object {
     $procs[$_.ProcessId] = @{ Name = $_.Name; Path = $_.ExecutablePath; Cmd = $_.CommandLine }
   }
 }
@@ -1417,7 +1557,12 @@ $result = $ports | ForEach-Object {
 } | Sort-Object local_port, protocol, pid
 $result | ConvertTo-Json -Compress`;
 
-                exec(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"')}"`, {
+                const powershellPath = path.join(
+                    process.env.SystemRoot || 'C:\\Windows',
+                    'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe',
+                );
+                const powershellCommand = fs.existsSync(powershellPath) ? powershellPath : 'powershell.exe';
+                execFile(powershellCommand, ['-NoProfile', '-NonInteractive', '-Command', script], {
                     maxBuffer: 50 * 1024 * 1024,
                     windowsHide: true,
                     encoding: 'utf8',

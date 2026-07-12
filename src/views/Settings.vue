@@ -112,8 +112,10 @@ function resetDraft() {
 }
 
 function handleSave() {
-  normalizeQuickSearchAppShortcut();
-  normalizeQuickSearchGlobalShortcut();
+  if (!isPlugin) {
+    normalizeQuickSearchAppShortcut();
+    normalizeQuickSearchGlobalShortcut();
+  }
   Object.assign(settingsStore.settings, normalizeDefaultTerminalId(normalizeAiSettings(deepClone(toRaw(draft.value)))));
   ElMessage.success(t('common.success'));
 }
@@ -963,7 +965,7 @@ async function testAiConnection() {
         </div>
       </section>
 
-      <section class="settings-section">
+      <section v-if="!isPlugin" class="settings-section">
         <div class="settings-section-title">
           <div class="i-mdi-keyboard-outline settings-section-icon" />
           {{ t('settings.shortcuts') }}
@@ -1083,12 +1085,12 @@ async function testAiConnection() {
           <div class="i-mdi-update settings-section-icon" />
           {{ t('settings.update') }}
         </div>
-        <div class="settings-row-line">
+        <div v-if="!isPlugin" class="settings-row-line">
           <div>
             <div class="settings-row-title">{{ t('settings.autoUpdate') }}</div>
             <div class="settings-row-desc">{{ t('settings.autoUpdateHint') }}</div>
           </div>
-          <el-switch v-if="!isPlugin" v-model="draft.autoUpdate" />
+          <el-switch v-model="draft.autoUpdate" />
         </div>
         <div class="settings-row-line">
           <div>
