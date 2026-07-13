@@ -375,11 +375,29 @@ onBeforeUnmount(() => tabResizeObserver?.disconnect());
           </div>
           <Transition v-else name="tab-fade" mode="out-in">
             <KeepAlive>
-              <ConsoleView v-if="rightTab === 'console'" />
-              <GitView v-else-if="rightTab === 'git'" />
-              <FrontendEnvPanel v-else-if="rightTab === 'env' && activeLeaf" :project="activeLeaf" />
-              <FileManager v-else-if="rightTab === 'files' && workspaceProject" :project="workspaceProject" />
-              <ProjectMemo v-else-if="rightTab === 'memo' && workspaceProject" :project="workspaceProject" />
+              <ConsoleView
+                v-if="rightTab === 'console'"
+                :key="`console:${activeLeaf?.id ?? 'none'}`"
+              />
+              <GitView
+                v-else-if="rightTab === 'git'"
+                :key="`git:${activeLeaf?.id ?? 'none'}`"
+              />
+              <FrontendEnvPanel
+                v-else-if="rightTab === 'env' && activeLeaf"
+                :key="`env:${activeLeaf.id}`"
+                :project="activeLeaf"
+              />
+              <FileManager
+                v-else-if="rightTab === 'files' && workspaceProject"
+                :key="`files:${workspaceProject.id}`"
+                :project="workspaceProject"
+              />
+              <ProjectMemo
+                v-else-if="rightTab === 'memo' && workspaceProject"
+                :key="`memo:${workspaceProject.id}`"
+                :project="workspaceProject"
+              />
             </KeepAlive>
           </Transition>
         </div>

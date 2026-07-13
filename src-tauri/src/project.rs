@@ -199,6 +199,9 @@ const SCAN_IGNORED_DIRS: &[&str] = &[
     "node_modules", ".git", ".svn", ".hg", "dist", "build", "out",
     ".idea", ".vscode", "__pycache__", ".next", ".nuxt", "target",
     "vendor", "coverage", ".cache", "tmp", "temp", ".gradle",
+    // 部署/对外暴露的纯静态资源目录：只含 index.html 和资源文件，
+    // 既无构建系统也无源码组织，不应被识别为项目。
+    "public", "static", "www", "htdocs", "public_html", "httpdocs",
 ];
 
 /** 识别出的子项目候选 */
@@ -229,6 +232,26 @@ pub struct ImportCandidate {
     sub_module_count: usize,
     /// 是否为 Git 仓库
     has_git: bool,
+}
+
+/** 嵌套导入树节点。容器目录作为 `kind="unknown"` 占位节点保留，其下可挂子节点。 */
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportNode {
+    name: String,
+    path: String,
+    /// 模块类型：frontend / backend / node / go / rust / python / dotnet / static / unknown（容器）
+    kind: String,
+    /// 具体框架（如 Vue / React / Spring Boot / Gradle）
+    framework: Option<String>,
+    /// 是否为 Git 仓库
+    has_git: bool,
+    /// 是否含 package.json
+    has_package_json: bool,
+    /// 该目录下的 npm scripts（仅 node/前端项目有值）
+    scripts: Vec<String>,
+    /// 子节点（仅容器目录会继续下沉；已识别模块节点不再递归）
+    children: Vec<ImportNode>,
 }
 
 /** 读取 package.json 判断是否依赖某个包（dependencies + devDependencies） */
@@ -389,8 +412,77 @@ pub async fn scan_sub_projects(path: String) -> Result<Vec<SubProjectCandidate>,
 }
 
 /**
- * 预扫描一个根目录下的一级子目录，返回导入候选列表。
- * 每个候选标注识别到的子模块数量与是否为 Git 仓库。
+ * 递归扫描导入候选。
+ *
+ * 当一个目录自身不能被识别为模块（既没有 package.json / go.mod / Cargo.toml
+ * 等项目标识，也不是 Git 仓库）但其下存在可识别的子目录时，跳过该目录，
+ * 继续向其子孙目录下沉——以确保候选项是真实项目，而非纯粹的容器文件夹。
+ *
+ * 识别为候选目录的条件：
+ *   - `identify_module(dir)` 返回 Some，或
+ *   - 目录下存在 `.git`（已初始化的 Git 仓库，即便没有可识别的框架标记文件）。
+ *
+ * `depth` 表示当前正在处理的目录相对于扫描根的层数，根的直接子目录为 1。
+ * 超过 `max_depth` 时停止下沉，直接返回（不再加入候选）。
+ */
+fn scan_import_preview_dir(
+    dir: &Path,
+    depth: usize,
+    max_depth: usize,
+    candidates: &mut Vec<ImportCandidate>,
+    seen: &mut std::collections::HashSet<String>,
+) {
+    if depth > max_depth {
+        return;
+    }
+
+    let name = dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("Unknown")
+        .to_string();
+    if name.starts_with('.') || SCAN_IGNORED_DIRS.contains(&name.as_str()) {
+        return;
+    }
+
+    // 将路径归一化后做去重，防止不同扫描根产出同一目录的重复候选。
+    let path_key = dir.to_string_lossy().replace('\\', "/");
+    if !seen.insert(path_key) {
+        return;
+    }
+
+    let is_module = identify_module(dir).is_some();
+    let has_git = dir.join(".git").exists();
+
+    if is_module || has_git {
+        let mut modules = Vec::new();
+        scan_modules_recursive(dir, 1, 3, &mut modules);
+        candidates.push(ImportCandidate {
+            name,
+            path: dir.to_string_lossy().to_string(),
+            sub_module_count: modules.len(),
+            has_git,
+        });
+        return;
+    }
+
+    // 容器目录：跳过自身，向子目录继续下沉。
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else { continue };
+        if !file_type.is_dir() {
+            continue;
+        }
+        scan_import_preview_dir(&entry.path(), depth + 1, max_depth, candidates, seen);
+    }
+}
+
+/**
+ * 预扫描一个根目录下的导入候选。
+ *
+ * 直接子目录中可识别为项目的目录作为候选；不能识别但包含可识别项目
+ * 的容器目录会被跳过，向其孙目录下沉（至多 3 层）——避免把空容器
+ * 文件夹当成项目导入。
  */
 #[command]
 pub async fn scan_import_preview(path: String) -> Result<Vec<ImportCandidate>, String> {
@@ -401,29 +493,120 @@ pub async fn scan_import_preview(path: String) -> Result<Vec<ImportCandidate>, S
         }
 
         let mut candidates = Vec::new();
+        let mut seen = std::collections::HashSet::new();
         let entries = fs::read_dir(root).map_err(|e| e.to_string())?;
         for entry in entries.flatten() {
             let Ok(file_type) = entry.file_type() else { continue };
             if !file_type.is_dir() {
                 continue;
             }
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') || SCAN_IGNORED_DIRS.contains(&name.as_str()) {
-                continue;
-            }
-            let dir_path = entry.path();
-            let has_git = dir_path.join(".git").exists();
-            let mut modules = Vec::new();
-            scan_modules_recursive(&dir_path, 1, 3, &mut modules);
-            candidates.push(ImportCandidate {
-                name,
-                path: dir_path.to_string_lossy().to_string(),
-                sub_module_count: modules.len(),
-                has_git,
-            });
+            scan_import_preview_dir(&entry.path(), 1, 3, &mut candidates, &mut seen);
         }
 
         Ok(candidates)
+    })
+    .await
+}
+
+/** 递归扫描导入候选，返回嵌套树结构。容器目录作为 `kind="unknown"` 占位节点保留，其下挂子节点；已识别模块节点不再递归。 */
+fn scan_import_tree_dir(
+    dir: &Path,
+    depth: usize,
+    max_depth: usize,
+    seen: &mut std::collections::HashSet<String>,
+) -> Vec<ImportNode> {
+    if depth > max_depth {
+        return Vec::new();
+    }
+
+    let name = dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("Unknown")
+        .to_string();
+    if name.starts_with('.') || SCAN_IGNORED_DIRS.contains(&name.as_str()) {
+        return Vec::new();
+    }
+
+    // 路径去重，防止不同扫描根产出同一目录的重复节点。
+    let path_key = dir.to_string_lossy().replace('\\', "/");
+    if !seen.insert(path_key) {
+        return Vec::new();
+    }
+
+    let identified = identify_module(dir);
+    let has_git = dir.join(".git").exists();
+    let has_pkg = dir.join("package.json").exists();
+    let scripts = if has_pkg { read_package_scripts(dir) } else { Vec::new() };
+
+    if let Some((kind, framework)) = identified {
+        // 已识别为模块 → 不再递归子目录
+        vec![ImportNode {
+            name,
+            path: dir.to_string_lossy().to_string(),
+            kind,
+            framework,
+            has_git,
+            has_package_json: has_pkg,
+            scripts,
+            children: Vec::new(),
+        }]
+    } else {
+        // 容器目录：保留为 unknown 占位节点，并递归构建其子节点
+        let mut children = Vec::new();
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let Ok(file_type) = entry.file_type() else { continue };
+                if !file_type.is_dir() {
+                    continue;
+                }
+                let mut sub_nodes = scan_import_tree_dir(&entry.path(), depth + 1, max_depth, seen);
+                children.append(&mut sub_nodes);
+            }
+        }
+        // 没有任何子节点的空容器目录不入结果，避免产生无意义的占位项目
+        if children.is_empty() {
+            return Vec::new();
+        }
+        vec![ImportNode {
+            name,
+            path: dir.to_string_lossy().to_string(),
+            kind: "unknown".into(),
+            framework: None,
+            has_git,
+            has_package_json: has_pkg,
+            scripts,
+            children,
+        }]
+    }
+}
+
+/**
+ * 扫描所选目录下子项目，返回嵌套树结构（最多 max_depth 层）。
+ * 容器目录作为 `kind="unknown"` 占位节点保留；已识别模块节点不再递归。
+ * 等价于 scan_import_preview 的"保留层级"版本。
+ */
+#[command]
+pub async fn scan_import_tree(path: String) -> Result<Vec<ImportNode>, String> {
+    run_project_task(move || {
+        let root = Path::new(&path);
+        if !root.exists() || !root.is_dir() {
+            return Err("Directory does not exist".to_string());
+        }
+
+        let mut tree = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let entries = fs::read_dir(root).map_err(|e| e.to_string())?;
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else { continue };
+            if !file_type.is_dir() {
+                continue;
+            }
+            let mut sub_nodes = scan_import_tree_dir(&entry.path(), 1, 3, &mut seen);
+            tree.append(&mut sub_nodes);
+        }
+
+        Ok(tree)
     })
     .await
 }

@@ -26,6 +26,8 @@ export const useProjectStore = defineStore('project', () => {
   const activeProjectId = ref<string | null>(null);
   // activeRootId 语义为「当前钻取进入的一级项目」：文件、备忘录绑定它
   const activeRootId = ref<string | null>(null);
+  // 外部（如全局搜索）请求打开的根项目工作区；Dashboard 挂载或 watch 时消费并置空
+  const pendingWorkspaceRootId = ref<string | null>(null);
   const requestedRightTab = ref<WorkspaceTab | null>(null);
   const requestedRightTabToken = ref(0);
 
@@ -155,6 +157,20 @@ export const useProjectStore = defineStore('project', () => {
       current = projects.value.find((p) => p.id === parentId);
     }
     return depth;
+  }
+
+  /** 向上回溯到最顶层的根项目 id（含循环保护）；找不到时返回入参本身 */
+  function getRootProjectId(id: string): string {
+    const seen = new Set<string>();
+    let current = projects.value.find((p) => p.id === id);
+    if (!current) return id;
+    while (current.parentId && !seen.has(current.id)) {
+      seen.add(current.id);
+      const parent = projects.value.find((p) => p.id === current!.parentId);
+      if (!parent) break;
+      current = parent;
+    }
+    return current.id;
   }
 
   /** 递归收集某项目的所有后代 id（不含自身） */
@@ -603,6 +619,7 @@ export const useProjectStore = defineStore('project', () => {
     logs,
     activeProjectId,
     activeRootId,
+    pendingWorkspaceRootId,
     requestedRightTab,
     requestedRightTabToken,
     addProject,
@@ -612,6 +629,7 @@ export const useProjectStore = defineStore('project', () => {
     getRootProjects,
     hasChildren,
     getProjectDepth,
+    getRootProjectId,
     collectDescendantIds,
     addSubProjects,
     favoriteProject,

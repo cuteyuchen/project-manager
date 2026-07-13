@@ -40,6 +40,24 @@ export interface ImportCandidate {
     hasGit: boolean;
 }
 
+/** 嵌套导入树节点。容器目录作为 `kind="unknown"` 占位节点保留。 */
+export interface ImportNode {
+    name: string;
+    path: string;
+    /** frontend / backend / node / go / rust / python / dotnet / static / unknown（容器占位） */
+    kind: string;
+    /** 具体框架（如 Vue / React / Spring Boot / Gradle），容器节点无此值 */
+    framework?: string;
+    /** 是否为 Git 仓库 */
+    hasGit: boolean;
+    /** 是否含 package.json */
+    hasPackageJson: boolean;
+    /** 该目录下的 npm scripts（仅 node/前端项目有值） */
+    scripts: string[];
+    /** 子节点（仅容器目录会继续下沉；已识别模块节点为空数组） */
+    children: ImportNode[];
+}
+
 export interface TerminalInfo {
     id: string;
     name: string;
@@ -78,6 +96,8 @@ export interface PlatformAPI {
     scanSubProjects(path: string): Promise<SubProjectCandidate[]>;
     /** 预扫描根目录下的子目录，返回导入候选 */
     scanImportPreview(path: string): Promise<ImportCandidate[]>;
+    /** 扫描根目录下的子目录，返回嵌套导入树（容器作为 unknown 占位节点保留，最多 3 层） */
+    scanImportTree(path: string): Promise<ImportNode[]>;
     gitListRemoteBranches(url: string): Promise<string[]>;
     gitCloneBranch(url: string, branch: string, destination: string, operationId?: string): Promise<string>;
     gitCancelOperation(operationId: string): Promise<void>;

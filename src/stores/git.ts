@@ -58,6 +58,11 @@ export const useGitStore = defineStore('git', () => {
   const operationLoading = ref(false);
   const activeOperationKind = ref<GitOperationKind | null>(null);
   const activeOperationId = ref<string | null>(null);
+  // projectId that owns the in-flight operation; UI gates loading display by
+  // comparing this to the currently viewed project so a long-running pull/push
+  // on project A does not paint a fake loading state onto project B when the
+  // user switches projects mid-operation.
+  const activeOperationProjectId = ref<string | null>(null);
   const operationCancellable = ref(false);
   const operationCancelling = ref(false);
   const coldStorage = ref(false);
@@ -131,12 +136,14 @@ export const useGitStore = defineStore('git', () => {
   }
 
   async function withOperationLoading<T>(
+    projectId: string | null,
     kind: GitOperationKind,
     task: (operationId?: string) => Promise<T>,
     options: { cancellable?: boolean } = {},
   ): Promise<T> {
     operationLoading.value = true;
     activeOperationKind.value = kind;
+    activeOperationProjectId.value = projectId;
     operationCancellable.value = options.cancellable ?? false;
     operationCancelling.value = false;
     activeOperationId.value = operationCancellable.value ? crypto.randomUUID() : null;
@@ -146,6 +153,7 @@ export const useGitStore = defineStore('git', () => {
     } finally {
       operationLoading.value = false;
       activeOperationKind.value = null;
+      activeOperationProjectId.value = null;
       activeOperationId.value = null;
       operationCancellable.value = false;
       operationCancelling.value = false;
@@ -396,35 +404,35 @@ export const useGitStore = defineStore('git', () => {
   // ─── Git Operations ──────────────────────────────────────────────────────
 
   async function stageFiles(projectId: string, path: string, files: string[]): Promise<void> {
-    await withOperationLoading('stage', async () => {
+    await withOperationLoading(projectId, 'stage', async () => {
       await api.gitStage(path, files);
       await refreshStatus(projectId, path);
     });
   }
 
   async function unstageFiles(projectId: string, path: string, files: string[]): Promise<void> {
-    await withOperationLoading('unstage', async () => {
+    await withOperationLoading(projectId, 'unstage', async () => {
       await api.gitUnstage(path, files);
       await refreshStatus(projectId, path);
     });
   }
 
   async function stageAll(projectId: string, path: string): Promise<void> {
-    await withOperationLoading('stageAll', async () => {
+    await withOperationLoading(projectId, 'stageAll', async () => {
       await api.gitStageAll(path);
       await refreshStatus(projectId, path);
     });
   }
 
   async function unstageAll(projectId: string, path: string): Promise<void> {
-    await withOperationLoading('unstageAll', async () => {
+    await withOperationLoading(projectId, 'unstageAll', async () => {
       await api.gitUnstageAll(path);
       await refreshStatus(projectId, path);
     });
   }
 
   async function commit(projectId: string, path: string, message: string): Promise<string> {
-    return withOperationLoading('commit', async () => {
+    return withOperationLoading(projectId, 'commit', async () => {
       const result = await api.gitCommit(path, message);
       clearDiff();
       await refreshRepositoryState(projectId, path, { includeHistory: true, includeBranches: true });
@@ -433,7 +441,7 @@ export const useGitStore = defineStore('git', () => {
   }
 
   async function pull(projectId: string, path: string, remote?: string, branch?: string): Promise<string> {
-    return withOperationLoading('pull', async (operationId) => {
+    return withOperationLoading(projectId, 'pull', async (operationId) => {
       const result = await api.gitPull(path, remote, branch, operationId);
       await refreshRepositoryState(projectId, path, { includeHistory: true, includeBranches: true });
       return result;
@@ -441,7 +449,7 @@ export const useGitStore = defineStore('git', () => {
   }
 
   async function push(projectId: string, path: string, remote?: string, branch?: string, force?: boolean, setUpstream?: boolean): Promise<string> {
-    return withOperationLoading('push', async (operationId) => {
+    return withOperationLoading(projectId, 'push', async (operationId) => {
       const result = await api.gitPush(path, remote, branch, force, setUpstream, operationId);
       await refreshRepositoryState(projectId, path, { includeHistory: true, includeBranches: true });
       return result;
@@ -449,7 +457,7 @@ export const useGitStore = defineStore('git', () => {
   }
 
   async function fetch(projectId: string, path: string, remote?: string): Promise<string> {
-    return withOperationLoading('fetch', async (operationId) => {
+    return withOperationLoading(projectId, 'fetch', async (operationId) => {
       const result = await api.gitFetch(path, remote, operationId);
       await refreshRepositoryState(projectId, path, { includeHistory: true, includeBranches: true });
       return result;
@@ -457,7 +465,7 @@ export const useGitStore = defineStore('git', () => {
   }
 
   async function switchBranch(projectId: string, path: string, branch: string): Promise<string> {
-    return withOperationLoading('switchBranch', async () => {
+    return withOperationLoading(projectId, 'switchBranch', async () => {
       const result = await api.gitSwitchBranch(path, branch);
       clearDiff();
       await refreshRepositoryState(projectId, path, { includeHistory: true, includeBranches: true });
@@ -466,7 +474,7 @@ export const useGitStore = defineStore('git', () => {
   }
 
   async function createAndSwitchBranch(projectId: string, path: string, name: string, startPoint?: string): Promise<string> {
-    return withOperationLoading('createBranch', async () => {
+    return withOperationLoading(projectId, 'createBranch', async () => {
       const result = await api.gitCreateAndSwitchBranch(path, name, startPoint);
       clearDiff();
       await refreshRepositoryState(projectId, path, { includeHistory: true, includeBranches: true });
@@ -475,7 +483,7 @@ export const useGitStore = defineStore('git', () => {
   }
 
   async function deleteBranch(projectId: string, path: string, name: string, force?: boolean): Promise<string> {
-    return withOperationLoading('deleteBranch', async () => {
+    return withOperationLoading(projectId, 'deleteBranch', async () => {
       const result = await api.gitDeleteBranch(path, name, force);
       await refreshRepositoryState(projectId, path, { includeBranches: true });
       return result;
@@ -483,7 +491,7 @@ export const useGitStore = defineStore('git', () => {
   }
 
   async function renameBranch(projectId: string, path: string, oldName: string, newName: string): Promise<string> {
-    return withOperationLoading('renameBranch', async () => {
+    return withOperationLoading(projectId, 'renameBranch', async () => {
       const result = await api.gitRenameBranch(path, oldName, newName);
       await refreshRepositoryState(projectId, path, { includeBranches: true });
       return result;
@@ -548,7 +556,7 @@ export const useGitStore = defineStore('git', () => {
   }
 
   async function revertHunk(projectId: string, path: string, patch: string, staged?: boolean): Promise<string> {
-    return withOperationLoading('revertHunk', async () => {
+    return withOperationLoading(projectId, 'revertHunk', async () => {
       const result = await api.gitRevertHunk(path, patch, staged);
       await refreshStatus(projectId, path);
       if (selectedDiffFile.value) {
@@ -601,7 +609,7 @@ export const useGitStore = defineStore('git', () => {
   void generateAiCommitMessage;
 
   async function discardFiles(projectId: string, path: string, files: string[]): Promise<void> {
-    await withOperationLoading('discard', async () => {
+    await withOperationLoading(projectId, 'discard', async () => {
       await api.gitDiscard(path, files);
       await refreshStatus(projectId, path);
     });
@@ -697,7 +705,7 @@ export const useGitStore = defineStore('git', () => {
   }
 
   async function discardUntracked(projectId: string, path: string, files: string[]): Promise<void> {
-    await withOperationLoading('discardUntracked', async () => {
+    await withOperationLoading(projectId, 'discardUntracked', async () => {
       await api.gitDiscardUntracked(path, files);
       await refreshStatus(projectId, path);
     });
@@ -726,6 +734,7 @@ export const useGitStore = defineStore('git', () => {
     loading,
     operationLoading,
     activeOperationKind,
+    activeOperationProjectId,
     operationCancellable,
     operationCancelling,
     coldStorage,

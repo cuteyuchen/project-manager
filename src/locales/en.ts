@@ -422,8 +422,8 @@ export default {
   },
   import: {
     title: 'Scan & Import Projects',
-    pickDir: 'Pick Directory',
-    pickHint: 'Pick a parent directory containing multiple projects',
+    pickDir: 'Pick Folders',
+    pickHint: 'Pick one or more folders to batch import their child projects',
     rescan: 'Rescan',
     selectAll: 'Select All',
     selectedCount: '{count} selected',
@@ -431,6 +431,12 @@ export default {
     moduleCount: '{count} modules',
     empty: 'No importable subdirectories found',
     importSelected: 'Import {count} projects',
+    modeChildren: 'Scan Children',
+    modeDirect: 'Direct as Projects',
+    modeChildrenHint: 'Treat picked folders as scan roots; import their child projects preserving nesting (container dirs kept as placeholder projects)',
+    modeDirectHint: 'Treat picked folders themselves as projects to import; sub-modules scanned at import time',
+    addMore: 'Add Folders',
+    replaceSelected: 'Re-pick',
   },
   project: {
     name: 'Project Name',

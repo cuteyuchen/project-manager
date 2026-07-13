@@ -422,7 +422,7 @@
   import: {
     title: '扫描导入项目',
     pickDir: '选择目录',
-    pickHint: '选择一个包含多个项目的父目录',
+    pickHint: '选择一个或多个文件夹，批量导入其中的子项目',
     rescan: '重新扫描',
     selectAll: '全选',
     selectedCount: '已选 {count} 项',
@@ -430,6 +430,12 @@
     moduleCount: '{count} 个模块',
     empty: '该目录下未找到可导入的子目录',
     importSelected: '导入 {count} 个项目',
+    modeChildren: '扫描子项目',
+    modeDirect: '直接作为项目',
+    modeChildrenHint: '所选文件夹作为扫描根，按层级保留嵌套结构导入其下的子项目（容器目录作为占位项目保留）',
+    modeDirectHint: '所选文件夹本身即作为项目导入，导入时再扫描其子模块',
+    addMore: '追加文件夹',
+    replaceSelected: '重新选择',
   },
   project: {
     name: '项目名称',

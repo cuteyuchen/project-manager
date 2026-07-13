@@ -1,4 +1,4 @@
-import type { ImportCandidate, ProjectInfo, SubProjectCandidate } from '../api/types';
+import type { ImportCandidate, ImportNode, ProjectInfo, SubProjectCandidate } from '../api/types';
 import type { Project, ProjectModuleKind } from '../types';
 import { createProjectId } from './projectId.ts';
 
@@ -73,4 +73,40 @@ export function buildImportProjectTree(
   const children = convertSubProjectCandidates(subProjects);
 
   return { root, children };
+}
+
+/***********************嵌套导入树构建*********************/
+
+/** 将 ImportNode 递归展开为扁平的 Project 列表（父在前、子在后）。
+ * 每个 Project 已含 id 与指向其父的 parentId，调用方可按顺序逐个 addProject 入库。 */
+export function flattenImportNodeTree(
+  nodes: ImportNode[],
+  parentId: string | undefined,
+  options: { createId?: () => string } = {},
+): Project[] {
+  const createId = options.createId || createProjectId;
+  const out: Project[] = [];
+  const walk = (node: ImportNode, parent: string | undefined) => {
+    const moduleKind = toModuleKind(node.kind);
+    const project: Project = {
+      id: createId(),
+      parentId: parent,
+      name: node.name,
+      path: node.path,
+      type: toProjectType(node.kind),
+      moduleKind,
+    };
+    if (node.hasPackageJson) {
+      project.packageManager = 'npm' as Project['packageManager'];
+      project.scripts = node.scripts;
+    }
+    if (node.kind === 'node' || node.kind === 'frontend' || node.kind === 'static') {
+      // 嵌套扫描未携带 nvm 版本信息，统一使用 Default
+      project.nodeVersion = 'Default';
+    }
+    out.push(project);
+    for (const child of node.children) walk(child, project.id);
+  };
+  for (const node of nodes) walk(node, parentId);
+  return out;
 }

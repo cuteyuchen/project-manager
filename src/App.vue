@@ -224,7 +224,8 @@ function handleGlobalKeydown(event: KeyboardEvent) {
 
 async function activateQuickSearchSelection(projectId: string) {
   const store = useProjectStore();
-  store.activeProjectId = projectId;
+  // 请求 Dashboard 打开该项目所属根项目的工作区（Dashboard 挂载或 watch 时消费）
+  store.pendingWorkspaceRootId = store.getRootProjectId(projectId);
   currentView.value = 'dashboard';
   if (!isPlugin) {
     await showMainWindow();
@@ -752,7 +753,7 @@ watch(
     <TitleBar v-if="!isPlugin" />
 
     <div class="app-layout">
-      <Sidebar @navigate="v => currentView = v" />
+      <Sidebar :active="currentView" @navigate="v => currentView = v" />
       <main class="app-main">
         <div class="app-view-stack">
           <Transition name="page-fade">

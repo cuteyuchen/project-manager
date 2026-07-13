@@ -57,6 +57,28 @@ function backToList() {
     });
 }
 
+/**
+ * 消费外部（如全局搜索）请求打开的工作区信号。
+ * immediate: true 覆盖「Dashboard 因 v-if 重新挂载、错过挂载前赋值」的时序问题；
+ * 消费后立即置空，避免返回列表后再次被触发。
+ */
+watch(() => projectStore.pendingWorkspaceRootId, (rootId) => {
+    if (!rootId) return;
+    const target = projectStore.projects.find(p => p.id === rootId);
+    projectStore.pendingWorkspaceRootId = null;
+    if (!target) return;
+    if (drilledRootId.value && drilledRootId.value !== rootId) {
+        // 已在其它工作区：Transition mode="out-in" 下同分支仅换 key 会导致新工作区挂载失败，
+        // 先返回列表再于下一帧进入目标，确保离场/入场过渡与组件重建正确执行。
+        drilledRootId.value = null;
+        void nextTick(() => {
+            openProjectWorkspace(target);
+        });
+    } else {
+        openProjectWorkspace(target);
+    }
+}, { immediate: true });
+
 /** 工作区内请求编辑项目 */
 function editFromWorkspace(project: Project) {
     openEditModal(project);
@@ -674,16 +696,19 @@ async function refreshProjects() {
 
 <template>
   <div class="h-full overflow-hidden">
-    <!-- ═══ 钻取后：项目工作区页 ═══ -->
-    <ProjectWorkspace
-      v-if="drilledRootId"
-      :root-id="drilledRootId"
-      @back="backToList"
-      @edit="editFromWorkspace"
-    />
+    <!-- 列表页 ↔ 工作区页过渡：进入工作区滑入，返回列表滑出。 -->
+    <Transition name="dashboard-page" mode="out-in">
+      <!-- ═══ 钻取后：项目工作区页 ═══ -->
+      <ProjectWorkspace
+        v-if="drilledRootId"
+        :key="`workspace:${drilledRootId}`"
+        :root-id="drilledRootId"
+        @back="backToList"
+        @edit="editFromWorkspace"
+      />
 
-    <!-- ═══ 默认：项目列表页（全宽） ═══ -->
-    <div v-else class="h-full flex flex-col app-surface-sidebar">
+      <!-- ═══ 默认：项目列表页（全宽） ═══ -->
+      <div v-else key="project-list" class="h-full flex flex-col app-surface-sidebar">
         <!-- 顶部工具栏 -->
         <div class="app-page-header">
           <div class="app-content-container app-page-header-main">
@@ -866,8 +891,9 @@ async function refreshProjects() {
                 <p class="text-sm font-medium">{{ t('dashboard.noProjects') }}</p>
                 <p class="text-xs opacity-50 mt-1">{{ t('dashboard.addProject') }}</p>
              </div>
-        </div>
+         </div>
     </div>
+    </Transition>
 
     <AddProjectModal
         v-model="showModal"
@@ -1083,5 +1109,19 @@ async function refreshProjects() {
 }
 .drag-handle:active {
   cursor: grabbing;
+}
+
+/* 列表页 ↔ 工作区页过渡：工作区从下方滑入，返回时列表从下方回到原位。 */
+.dashboard-page-enter-active,
+.dashboard-page-leave-active {
+  transition: opacity 180ms var(--app-ease), transform 180ms var(--app-ease);
+}
+.dashboard-page-enter-from {
+  opacity: 0;
+  transform: translateY(12px);
+}
+.dashboard-page-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
 }
 </style>

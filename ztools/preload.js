@@ -83,6 +83,59 @@ function scanProjectModules(projectPath, depth, maxDepth, found) {
     }
 }
 
+/**
+ * 递归扫描导入候选，返回嵌套树结构。容器目录作为 `kind:"unknown"` 占位节点保留；
+ * 已识别为模块的目录不再递归。空容器目录不入结果。
+ */
+function scanImportTreeDir(dirPath, depth, maxDepth, seen) {
+    if (depth > maxDepth) return [];
+    const name = path.basename(dirPath) || 'Unknown';
+    if (name.startsWith('.') || PROJECT_SCAN_IGNORED_DIRS.has(name)) return [];
+    const pathKey = dirPath.replace(/\\/g, '/');
+    if (seen.has(pathKey)) return [];
+    seen.add(pathKey);
+
+    const moduleInfo = identifyProjectModule(dirPath);
+    const hasGit = fs.existsSync(path.join(dirPath, '.git'));
+    const hasPackageJson = fs.existsSync(path.join(dirPath, 'package.json'));
+    const pkg = hasPackageJson ? readPackageJson(dirPath) : {};
+    const scripts = Object.keys(pkg.scripts || {}).sort();
+
+    if (moduleInfo) {
+        return [{
+            name,
+            path: dirPath,
+            kind: moduleInfo.kind,
+            framework: moduleInfo.framework,
+            hasGit,
+            hasPackageJson,
+            scripts,
+            children: [],
+        }];
+    }
+
+    // 容器目录：尝试向下递归构建子节点
+    let entries = [];
+    try { entries = fs.readdirSync(dirPath, { withFileTypes: true }); } catch (_) { return []; }
+    let children = [];
+    for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const sub = scanImportTreeDir(path.join(dirPath, entry.name), depth + 1, maxDepth, seen);
+        if (sub.length) children = children.concat(sub);
+    }
+    if (children.length === 0) return [];
+    return [{
+        name,
+        path: dirPath,
+        kind: 'unknown',
+        framework: undefined,
+        hasGit,
+        hasPackageJson,
+        scripts,
+        children,
+    }];
+}
+
 function scanSubProjectsSync(projectPath) {
     const found = [];
     const entries = fs.readdirSync(projectPath, { withFileTypes: true });
@@ -909,6 +962,19 @@ window.services = {
                     hasGit: fs.existsSync(path.join(projectPath, '.git'))
                 };
             });
+    },
+
+    scanImportTree: async (rootPath) => {
+        const seen = new Set();
+        let entries = [];
+        try { entries = fs.readdirSync(rootPath, { withFileTypes: true }); } catch (_) { return []; }
+        let tree = [];
+        for (const entry of entries) {
+            if (!entry.isDirectory() || entry.name.startsWith('.') || PROJECT_SCAN_IGNORED_DIRS.has(entry.name)) continue;
+            const sub = scanImportTreeDir(path.join(rootPath, entry.name), 1, 3, seen);
+            if (sub.length) tree = tree.concat(sub);
+        }
+        return tree;
     },
 
     gitListRemoteBranches: async (url) => {

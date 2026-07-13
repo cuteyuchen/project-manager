@@ -34,6 +34,9 @@ export class UToolsAdapter implements PlatformAPI {
   scanImportPreview(path: string): Promise<import('../types').ImportCandidate[]> {
     return (this.service as any).scanImportPreview ? (this.service as any).scanImportPreview(path) : Promise.resolve([]);
   }
+  scanImportTree(path: string): Promise<import('../types').ImportNode[]> {
+    return (this.service as any).scanImportTree ? (this.service as any).scanImportTree(path) : Promise.resolve([]);
+  }
   gitListRemoteBranches(url: string): Promise<string[]> { return this.service.gitListRemoteBranches(url); }
   gitCloneBranch(url: string, branch: string, destination: string, operationId?: string): Promise<string> { return this.service.gitCloneBranch(url, branch, destination, operationId); }
   gitCancelOperation(operationId: string): Promise<void> {

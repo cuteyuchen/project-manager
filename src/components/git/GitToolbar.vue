@@ -20,10 +20,13 @@ const { t } = useI18n();
 const gitStore = useGitStore();
 
 const summary = computed(() => gitStore.getSummary(props.project.id));
-const isLoading = computed(() => gitStore.operationLoading);
-const isCancellable = computed(() => gitStore.operationCancellable);
-const isCancelling = computed(() => gitStore.operationCancelling);
+const isLoading = computed(() =>
+  gitStore.operationLoading && gitStore.activeOperationProjectId === props.project.id
+);
+const isCancellable = computed(() => isLoading.value && gitStore.operationCancellable);
+const isCancelling = computed(() => isLoading.value && gitStore.operationCancelling);
 const activeOperationLabel = computed(() => {
+  if (!isLoading.value) return '';
   const kind = gitStore.activeOperationKind;
   if (!kind) return '';
 

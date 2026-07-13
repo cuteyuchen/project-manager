@@ -1,23 +1,28 @@
 <script setup lang="ts">
-import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 
+type View = 'dashboard' | 'settings' | 'nodes' | 'ports' | 'commitCalendar';
+
+const props = withDefaults(defineProps<{
+  active?: View;
+}>(), {
+  active: 'dashboard',
+});
+
 const emit = defineEmits<{
-  (e: 'navigate', view: 'dashboard' | 'settings' | 'nodes' | 'ports' | 'commitCalendar'): void
+  (e: 'navigate', view: View): void
 }>();
 
 const { t } = useI18n();
-const activeIndex = ref('dashboard');
 
 function handleSelect(key: string) {
-  activeIndex.value = key;
-  emit('navigate', key as any);
+  emit('navigate', key as View);
 }
 </script>
 
 <template>
   <el-menu
-    :default-active="activeIndex"
+    :default-active="props.active"
     class="sidebar-menu app-sidebar-nav h-full border-r-0 transition-colors duration-300"
     :collapse="true"
     @select="handleSelect"

@@ -63,21 +63,28 @@ function getCachedPinyin(text: string) {
 }
 
 /***********************构建搜索条目*********************/
+/**
+ * 计算项目与查询的匹配优先级：数字越小越靠前。
+ * 名称匹配 > 路径匹配 > 其他（描述/标签/拼音）匹配；不匹配返回 null。
+ */
+function scoreProjectMatch(project: { name: string; path: string; description?: string; tags?: string[] }, query: string, compactQuery: string): number | null {
+    const name = project.name.toLowerCase();
+    const path = project.path.toLowerCase();
+    if (name.includes(query)) return 0;
+    if (path.includes(query)) return 1;
+    const desc = (project.description || '').toLowerCase();
+    const tags = (project.tags || []).join(' ').toLowerCase();
+    const namePinyin = getCachedPinyin(project.name);
+    if (desc.includes(query) || tags.includes(query) || namePinyin.includes(compactQuery)) return 2;
+    return null;
+}
+
 function buildProjectResults(query: string, compactQuery: string): SearchResult[] {
     return projectStore.projects
-        .filter(project => {
-            const name = project.name.toLowerCase();
-            const path = project.path.toLowerCase();
-            const desc = (project.description || '').toLowerCase();
-            const tags = (project.tags || []).join(' ').toLowerCase();
-            const namePinyin = getCachedPinyin(project.name);
-            return name.includes(query)
-                || path.includes(query)
-                || desc.includes(query)
-                || tags.includes(query)
-                || namePinyin.includes(compactQuery);
-        })
-        .map(project => ({
+        .map(project => ({ project, score: scoreProjectMatch(project, query, compactQuery) }))
+        .filter((entry): entry is { project: typeof entry.project; score: number } => entry.score !== null)
+        .sort((a, b) => a.score - b.score)
+        .map(({ project }) => ({
             type: 'project' as SearchResultType,
             id: `project-${project.id}`,
             name: project.name,
@@ -200,9 +207,8 @@ function handleKeydown(event: KeyboardEvent) {
         selectedIndex.value = Math.max(selectedIndex.value - 1, 0);
     } else if (event.key === 'Enter') {
         event.preventDefault();
-        if (list[selectedIndex.value]) {
-            selectItem(list[selectedIndex.value]);
-        }
+        const first = list[0];
+        if (first) selectItem(first);
     } else if (event.key === 'Escape') {
         event.preventDefault();
         emit('close');

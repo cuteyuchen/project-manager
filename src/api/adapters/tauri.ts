@@ -49,6 +49,10 @@ export class TauriAdapter implements PlatformAPI {
         return invoke('scan_import_preview', { path });
     }
 
+    async scanImportTree(path: string): Promise<import('../types').ImportNode[]> {
+        return invoke('scan_import_tree', { path });
+    }
+
     async gitListRemoteBranches(url: string): Promise<string[]> {
         return invoke('git_list_remote_branches', { url });
     }
