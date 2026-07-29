@@ -37,6 +37,7 @@ type QuickFilter = 'all' | 'pinned' | 'recent' | 'favorite' | 'running' | 'dirty
 
 /** *********************钻取状态：为空时显示列表页，否则显示工作区页*********************/
 const drilledRootId = ref<string | null>(null);
+const workspaceTargetProjectId = ref<string | null>(null);
 
 /** 进入某一级项目的工作区 */
 function openProjectWorkspace(project: Project) {
@@ -65,7 +66,9 @@ function backToList() {
 watch(() => projectStore.pendingWorkspaceRootId, (rootId) => {
     if (!rootId) return;
     const target = projectStore.projects.find(p => p.id === rootId);
+    workspaceTargetProjectId.value = projectStore.pendingWorkspaceProjectId;
     projectStore.pendingWorkspaceRootId = null;
+    projectStore.pendingWorkspaceProjectId = null;
     if (!target) return;
     if (drilledRootId.value && drilledRootId.value !== rootId) {
         // 已在其它工作区：Transition mode="out-in" 下同分支仅换 key 会导致新工作区挂载失败，
@@ -703,6 +706,7 @@ async function refreshProjects() {
         v-if="drilledRootId"
         :key="`workspace:${drilledRootId}`"
         :root-id="drilledRootId"
+        :target-project-id="workspaceTargetProjectId"
         @back="backToList"
         @edit="editFromWorkspace"
       />

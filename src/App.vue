@@ -225,6 +225,7 @@ function handleGlobalKeydown(event: KeyboardEvent) {
 async function activateQuickSearchSelection(projectId: string) {
   const store = useProjectStore();
   // 请求 Dashboard 打开该项目所属根项目的工作区（Dashboard 挂载或 watch 时消费）
+  store.pendingWorkspaceProjectId = projectId;
   store.pendingWorkspaceRootId = store.getRootProjectId(projectId);
   currentView.value = 'dashboard';
   if (!isPlugin) {

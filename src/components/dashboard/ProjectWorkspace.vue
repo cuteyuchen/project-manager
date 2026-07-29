@@ -19,6 +19,8 @@ const MAX_DEPTH = 3;
 const props = defineProps<{
   /** 钻取进入的一级项目 id */
   rootId: string;
+  /** 从外部搜索跳转时需要定位的具体项目 id */
+  targetProjectId?: string | null;
 }>();
 const emit = defineEmits<{
   /** 从一级项目返回项目列表 */
@@ -164,6 +166,39 @@ watch(() => projectStore.requestedRightTabToken, () => {
   if (tab) rightTab.value = tab as WorkTab;
 });
 
+/** 将外部搜索结果定位到对应层级，并选中最终的叶子项目。 */
+function selectTargetProject(targetId: string | null | undefined) {
+  if (!targetId || targetId === props.rootId) return;
+
+  const ancestors: string[] = [];
+  const seen = new Set<string>();
+  let current = projectStore.projects.find(project => project.id === targetId);
+  while (current && !seen.has(current.id)) {
+    seen.add(current.id);
+    ancestors.unshift(current.id);
+    if (current.id === props.rootId) break;
+    current = current.parentId
+      ? projectStore.projects.find(project => project.id === current!.parentId)
+      : undefined;
+  }
+
+  if (ancestors[0] !== props.rootId) return;
+
+  const target = projectStore.projects.find(project => project.id === targetId);
+  if (!target) return;
+  if (projectStore.hasChildren(target.id) && ancestors.length < MAX_DEPTH) {
+    drillStack.value = ancestors;
+    selectedLeafId.value = null;
+  } else {
+    drillStack.value = ancestors.slice(0, -1);
+    selectedLeafId.value = target.id;
+  }
+  rightTab.value = 'console';
+  syncActiveIds();
+}
+
+watch(() => props.targetProjectId, selectTargetProject, { immediate: true });
+
 /** git 徽章 */
 const isGitRepo = computed(() =>
   activeLeaf.value ? (gitStore.isGitRepo[activeLeaf.value.id] || false) : false
@@ -262,7 +297,7 @@ onBeforeUnmount(() => tabResizeObserver?.disconnect());
     <Transition :name="workspaceTransitionName" mode="out-in" @after-enter="restoreCurrentScrollPosition">
     <div v-if="currentNode" :key="currentNode.id" class="flex-1 flex overflow-hidden">
       <!-- ─── 容器模式：左侧子项目列表 ─────────────────────── -->
-      <div v-if="isContainer" class="w-80 shrink-0 flex flex-col app-surface-sidebar border-r overflow-hidden">
+      <div class="w-80 shrink-0 flex flex-col app-surface-sidebar border-r overflow-hidden">
         <div class="app-section-divider px-3 py-2 border-b flex items-center justify-between">
           <span class="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
             {{ t('dashboard.subProjects') }}

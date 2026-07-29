@@ -28,6 +28,8 @@ export const useProjectStore = defineStore('project', () => {
   const activeRootId = ref<string | null>(null);
   // 外部（如全局搜索）请求打开的根项目工作区；Dashboard 挂载或 watch 时消费并置空
   const pendingWorkspaceRootId = ref<string | null>(null);
+  // 外部工作区请求中需要定位的具体项目；可为根项目或任意子项目
+  const pendingWorkspaceProjectId = ref<string | null>(null);
   const requestedRightTab = ref<WorkspaceTab | null>(null);
   const requestedRightTabToken = ref(0);
 
@@ -620,6 +622,7 @@ export const useProjectStore = defineStore('project', () => {
     activeProjectId,
     activeRootId,
     pendingWorkspaceRootId,
+    pendingWorkspaceProjectId,
     requestedRightTab,
     requestedRightTabToken,
     addProject,

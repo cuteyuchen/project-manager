@@ -207,8 +207,8 @@ function handleKeydown(event: KeyboardEvent) {
         selectedIndex.value = Math.max(selectedIndex.value - 1, 0);
     } else if (event.key === 'Enter') {
         event.preventDefault();
-        const first = list[0];
-        if (first) selectItem(first);
+        const selected = list[selectedIndex.value];
+        if (selected) selectItem(selected);
     } else if (event.key === 'Escape') {
         event.preventDefault();
         emit('close');
@@ -251,6 +251,12 @@ async function startWindowDrag(event: MouseEvent) {
 
 watch(searchQuery, () => {
     selectedIndex.value = 0;
+});
+
+watch(fullFlatList, (list) => {
+    if (selectedIndex.value >= list.length) {
+        selectedIndex.value = 0;
+    }
 });
 
 onMounted(() => {

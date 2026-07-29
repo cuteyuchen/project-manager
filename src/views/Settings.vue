@@ -26,6 +26,7 @@ type ProjectConflict = { existingIndex: number; existing: Project; incoming: Pro
 type NodeConflict = { existingIndex: number; existing: NodeVersion; incoming: NodeVersion; choice: ImportChoice; diffs: ImportDiff[] };
 type SettingsConflict = { key: keyof Settings; label: string; current: string; incoming: string; choice: ImportChoice; incomingValue: unknown };
 type ImportPlan = {
+  incomingProjects: Project[];
   projectAdds: Project[];
   projectConflicts: ProjectConflict[];
   nodeAdds: NodeVersion[];
@@ -457,6 +458,7 @@ function normalizeProject(project: any): Project | null {
     pinned: project.pinned ?? false,
     pinOrder: project.pinOrder ?? undefined,
     editorId: project.editorId || undefined,
+    parentId: typeof project.parentId === 'string' && project.parentId ? project.parentId : undefined,
   }, t('project.installDependencies'));
 }
 
@@ -656,7 +658,7 @@ function buildImportPlan(payload: any): ImportPlan {
   const normalizedSettings = payload.settings ? normalizeSettingsPayload(payload.settings) : null;
   const currentEditors = settingsStore.settings.editors || [];
   const incomingEditors = normalizedSettings?.editors || [];
-  const plan: ImportPlan = { projectAdds: [], projectConflicts: [], nodeAdds: [], nodeConflicts: [], settingsConflicts: [] };
+  const plan: ImportPlan = { incomingProjects: normalizedProjects, projectAdds: [], projectConflicts: [], nodeAdds: [], nodeConflicts: [], settingsConflicts: [] };
 
   normalizedProjects.forEach((incomingProject) => {
     const existingIndex = projectStore.projects.findIndex(project => project.path === incomingProject.path);
@@ -725,12 +727,35 @@ function applyImportPlan() {
   if (!plan) return;
 
   const nextProjects = deepClone(toRaw(projectStore.projects));
+  const projectIdMap = new Map<string, string>();
+  const existingIds = new Set(nextProjects.map(project => project.id));
+
+  for (const incomingProject of plan.incomingProjects) {
+    const existing = nextProjects.find(project => project.path === incomingProject.path);
+    if (existing) {
+      projectIdMap.set(incomingProject.id, existing.id);
+      continue;
+    }
+    const id = existingIds.has(incomingProject.id) ? crypto.randomUUID() : incomingProject.id;
+    existingIds.add(id);
+    projectIdMap.set(incomingProject.id, id);
+  }
+
+  const resolveImportedProject = (project: Project): Project => ({
+    ...deepClone(project),
+    id: projectIdMap.get(project.id) || project.id,
+    parentId: project.parentId ? projectIdMap.get(project.parentId) : undefined,
+  });
+
   plan.projectAdds.forEach(project => {
-    if (!nextProjects.some(item => item.path === project.path)) nextProjects.push(project);
+    if (!nextProjects.some(item => item.path === project.path)) nextProjects.push(resolveImportedProject(project));
   });
   plan.projectConflicts.forEach((conflict) => {
     if (conflict.choice !== 'incoming') return;
-    nextProjects[conflict.existingIndex] = { ...deepClone(conflict.incoming), id: nextProjects[conflict.existingIndex].id };
+    nextProjects[conflict.existingIndex] = {
+      ...resolveImportedProject(conflict.incoming),
+      id: nextProjects[conflict.existingIndex].id,
+    };
   });
   projectStore.projects = nextProjects;
 
