@@ -174,7 +174,12 @@ async function openTerminal() {
             settingsStore.settings.customTerminals,
         );
 
-        const packageManager = props.project.packageManager || 'npm';
+        // 非 node 项目不注入 Node/包管理器版本：nodePath 与 packageManager 均传空，
+        // 终端只做 cd。对 Go/Rust/Python 等项目输出 `node -v` 毫无意义，
+        // 在未安装 Node 的机器上还会直接报错刷屏。
+        const packageManager = props.project.type === 'node'
+            ? (props.project.packageManager || 'npm')
+            : '';
         await api.openInTerminal(props.project.path, terminalCommand, nodePath, packageManager);
     } catch (e) {
         console.error(e);

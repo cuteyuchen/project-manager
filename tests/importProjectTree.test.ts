@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import type { ImportCandidate, ProjectInfo, SubProjectCandidate } from '../src/api/types.ts';
-import { buildImportProjectTree, convertSubProjectCandidates } from '../src/utils/importProjectTree.ts';
+import type { ImportCandidate, ImportNode, ProjectInfo } from '../src/api/types.ts';
+import { buildImportRootProject, flattenImportNodeTree } from '../src/utils/importProjectTree.ts';
 
-/***********************批量导入项目树*********************/
+/***********************批量导入根项目*********************/
 
 const candidate: ImportCandidate = {
   name: 'workspace-root',
@@ -19,75 +19,90 @@ const rootInfo: ProjectInfo = {
   scripts: ['dev'],
 };
 
-const subProjects: SubProjectCandidate[] = [
-  {
-    name: 'web',
-    path: 'F:/workspace/workspace-root/apps/web',
-    kind: 'frontend',
-    framework: 'Vue',
-    hasPackageJson: true,
-    scripts: ['dev', 'build'],
-  },
-  {
-    name: 'api',
-    path: 'F:/workspace/workspace-root/services/api',
-    kind: 'go',
-    framework: 'Go',
-    hasPackageJson: false,
-    scripts: [],
-  },
-];
+const root = buildImportRootProject(candidate, rootInfo, { createId: () => 'root-id' });
 
-const tree = buildImportProjectTree(candidate, rootInfo, subProjects, {
-  createId: () => 'root-id',
-});
-
-assert.equal(tree.root.name, 'workspace-root', '一级项目应使用顶级文件夹名称');
-assert.equal(tree.root.path, candidate.path, '一级项目路径应指向顶级文件夹');
-assert.equal(tree.root.type, 'node', '一级项目仍保留自身扫描到的项目类型');
-assert.equal(tree.root.packageManager, 'pnpm', '一级项目保留自身包管理器');
-assert.deepEqual(tree.root.scripts, ['dev'], '一级项目保留自身脚本');
-
-assert.equal(tree.children.length, 2, '识别到的子项目应作为二级项目返回');
-assert.deepEqual(tree.children, convertSubProjectCandidates(subProjects), '所有导入入口应复用同一套子项目转换逻辑');
-assert.deepEqual(
-  tree.children.map((item) => ({
-    name: item.name,
-    path: item.path,
-    type: item.type,
-    moduleKind: item.moduleKind,
-    packageManager: item.packageManager,
-    scripts: item.scripts,
-  })),
-  [
-    {
-      name: 'web',
-      path: 'F:/workspace/workspace-root/apps/web',
-      type: 'node',
-      moduleKind: 'frontend',
-      packageManager: 'npm',
-      scripts: ['dev', 'build'],
-    },
-    {
-      name: 'api',
-      path: 'F:/workspace/workspace-root/services/api',
-      type: 'other',
-      moduleKind: 'go',
-      packageManager: undefined,
-      scripts: [],
-    },
-  ],
-  '子项目应转换为 addSubProjects 可消费的二级项目定义',
-);
+assert.equal(root.name, 'workspace-root', '一级项目应使用顶级文件夹名称');
+assert.equal(root.path, candidate.path, '一级项目路径应指向顶级文件夹');
+assert.equal(root.type, 'node', '一级项目仍保留自身扫描到的项目类型');
+assert.equal(root.packageManager, 'pnpm', '一级项目保留自身包管理器');
+assert.deepEqual(root.scripts, ['dev'], '一级项目保留自身脚本');
+assert.equal(root.parentId, undefined, '一级项目不应带 parentId');
 
 /***********************顶级目录扫描失败兜底*********************/
 
-const fallbackTree = buildImportProjectTree(candidate, null, subProjects, {
+const fallbackRoot = buildImportRootProject(candidate, null, {
   createId: () => 'fallback-root-id',
 });
 
-assert.equal(fallbackTree.root.name, 'workspace-root', '扫描失败时一级项目仍应使用顶级文件夹名称');
-assert.equal(fallbackTree.root.type, 'other', '扫描失败时一级项目应降级为普通容器项目');
-assert.equal(fallbackTree.children.length, 2, '扫描失败不应影响已识别子项目挂载');
+assert.equal(fallbackRoot.name, 'workspace-root', '扫描失败时一级项目仍应使用顶级文件夹名称');
+assert.equal(fallbackRoot.type, 'other', '扫描失败时一级项目应降级为普通容器项目');
+
+/***********************子项目按层级挂载*********************/
+
+/** 后端返回的嵌套树：workspace-root 下有 apps 与 services 两个容器，各含一个模块 */
+const subTree: ImportNode[] = [
+  {
+    name: 'apps',
+    path: 'F:/workspace/workspace-root/apps',
+    kind: 'unknown',
+    hasGit: false,
+    hasPackageJson: false,
+    scripts: [],
+    children: [
+      {
+        name: 'web',
+        path: 'F:/workspace/workspace-root/apps/web',
+        kind: 'frontend',
+        framework: 'Vue',
+        hasGit: false,
+        hasPackageJson: true,
+        scripts: ['dev', 'build'],
+        children: [],
+      },
+    ],
+  },
+  {
+    name: 'services',
+    path: 'F:/workspace/workspace-root/services',
+    kind: 'unknown',
+    hasGit: false,
+    hasPackageJson: false,
+    scripts: [],
+    children: [
+      {
+        name: 'api',
+        path: 'F:/workspace/workspace-root/services/api',
+        kind: 'go',
+        framework: 'Go',
+        hasGit: false,
+        hasPackageJson: false,
+        scripts: [],
+        children: [],
+      },
+    ],
+  },
+];
+
+let counter = 0;
+const children = flattenImportNodeTree(subTree, root.id, { createId: () => `id-${++counter}` });
+
+assert.equal(children.length, 4, '两个容器与两个模块都应作为项目入库');
+
+const byPath = new Map(children.map((p) => [p.path, p]));
+const apps = byPath.get('F:/workspace/workspace-root/apps')!;
+const web = byPath.get('F:/workspace/workspace-root/apps/web')!;
+const services = byPath.get('F:/workspace/workspace-root/services')!;
+const api = byPath.get('F:/workspace/workspace-root/services/api')!;
+
+assert.equal(apps.parentId, root.id, '容器目录应挂在一级项目之下');
+assert.equal(services.parentId, root.id, '容器目录应挂在一级项目之下');
+assert.equal(web.parentId, apps.id, '模块应挂在其真实父容器之下，而不是平铺到一级项目');
+assert.equal(api.parentId, services.id, '模块应挂在其真实父容器之下，而不是平铺到一级项目');
+
+assert.equal(web.moduleKind, 'frontend', 'Vue 项目应识别为 frontend');
+assert.equal(web.packageManager, 'npm', '含 package.json 的模块应默认使用 npm');
+assert.deepEqual(web.scripts, ['dev', 'build'], '模块应保留其 npm scripts');
+assert.equal(api.moduleKind, 'go', 'Go 项目应识别为 go');
+assert.equal(api.packageManager, undefined, '无 package.json 的模块不应带包管理器');
 
 console.log('importProjectTree tests passed');

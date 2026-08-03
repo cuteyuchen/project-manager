@@ -19,18 +19,7 @@ export interface ProjectInfo {
     projectType: string;
 }
 
-/** 子项目识别候选（前后端识别） */
-export interface SubProjectCandidate {
-    name: string;
-    path: string;
-    /** frontend / backend / node / go / rust / python / dotnet / static / unknown */
-    kind: string;
-    framework?: string;
-    hasPackageJson: boolean;
-    scripts: string[];
-}
-
-/** 预扫描导入候选 */
+/** 导入候选（批量导入列表项的展示形状） */
 export interface ImportCandidate {
     name: string;
     path: string;
@@ -92,10 +81,9 @@ export interface PlatformAPI {
 
     // Project
     scanProject(path: string): Promise<ProjectInfo>;
-    /** 扫描目录识别子项目（前后端识别） */
-    scanSubProjects(path: string): Promise<SubProjectCandidate[]>;
-    /** 预扫描根目录下的子目录，返回导入候选 */
-    scanImportPreview(path: string): Promise<ImportCandidate[]>;
+    /** 扫描目录识别子项目，返回保留层级的嵌套树。
+     *  `maxDepth` 为本次扫描还可向下延伸的层级数（由 MAX_PROJECT_DEPTH 减去父项目当前深度算出）。 */
+    scanSubProjects(path: string, maxDepth?: number): Promise<ImportNode[]>;
     /** 扫描根目录下的子目录，返回嵌套导入树（容器作为 unknown 占位节点保留，最多 3 层） */
     scanImportTree(path: string): Promise<ImportNode[]>;
     gitListRemoteBranches(url: string): Promise<string[]>;

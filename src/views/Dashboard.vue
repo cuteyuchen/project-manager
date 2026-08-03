@@ -7,6 +7,7 @@ import ProjectListItem from '../components/ProjectListItem.vue';
 import AddProjectModal from '../components/AddProjectModal.vue';
 import ProjectGroupManager from '../components/ProjectGroupManager.vue';
 import ImportScanModal from '../components/ImportScanModal.vue';
+import SubProjectScanModal from '../components/SubProjectScanModal.vue';
 import ProjectWorkspace from '../components/dashboard/ProjectWorkspace.vue';
 // ─── 项目总控能力组件 ─────────────────────────────────────────────────
 import ViewPresetChips from '../components/dashboard/ViewPresetChips.vue';
@@ -17,6 +18,7 @@ import { useProjectBatch } from '../composables/dashboard/useProjectBatch';
 import { useProjectHealth } from '../composables/dashboard/useProjectHealth';
 import { useWorkspaceProfiles } from '../composables/dashboard/useWorkspaceProfiles';
 import type { Project, ProjectHealthSnapshot } from '../types';
+import type { ImportNode } from '../api/types';
 import { useI18n } from 'vue-i18n';
 import { calculateDraggedItemCenterY, calculateDraggedItemTranslateY, calculateFlipTransforms } from '../utils/dragPosition';
 import { collectProjectTags, projectMatchesSelectedTags } from '../utils/projectTags';
@@ -665,11 +667,28 @@ const visibleProjectMetrics = computed(() => {
     return metrics.slice(startIndex, endIndex);
 });
 
-function handleAdd(project: Project, children: Omit<Project, 'id' | 'parentId'>[] = []) {
+/** 待选择层级的新建项目（父项目已入库，等待用户决定挂载哪些子级） */
+const pendingLevelProject = ref<Project | null>(null);
+/** 该项目扫描到的候选树 */
+const pendingLevelNodes = ref<ImportNode[]>([]);
+const showLevelModal = ref(false);
+
+function handleAdd(project: Project, subProjectTree: ImportNode[] = []) {
   projectStore.addProject(project);
-  if (children.length > 0) {
-    projectStore.addSubProjects(project.id, children);
-  }
+  if (subProjectTree.length === 0) return;
+
+  // 扫描到子级/孙级：弹出树形层级选择弹窗，由用户决定挂载到哪一级。
+  // 父项目已先行入库，因此这里直接把它当作已有项目传给弹窗，
+  // 用户取消也不影响父项目本身——他之后还能在编辑页再次调整层级。
+  pendingLevelProject.value = project;
+  pendingLevelNodes.value = subProjectTree;
+  showLevelModal.value = true;
+}
+
+/** 层级选择弹窗彻底关闭后再清理暂存，避免关闭动画被截断 */
+function handleLevelClosed() {
+  pendingLevelProject.value = null;
+  pendingLevelNodes.value = [];
 }
 
 function handleUpdate(project: Project) {
@@ -904,6 +923,15 @@ async function refreshProjects() {
         :edit-project="editingProject"
         @add="handleAdd"
         @update="handleUpdate"
+    />
+
+    <!-- 单个添加后的层级选择：让用户决定扫描到的子级/孙级挂到哪一级 -->
+    <SubProjectScanModal
+        v-if="pendingLevelProject"
+        v-model="showLevelModal"
+        :parent-project="pendingLevelProject"
+        :preset-nodes="pendingLevelNodes"
+        @closed="handleLevelClosed"
     />
 
     <ProjectGroupManager v-model="showGroupManager" />

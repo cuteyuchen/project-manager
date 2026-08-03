@@ -27,12 +27,9 @@ export class UToolsAdapter implements PlatformAPI {
   getNodeVersion(path: string): Promise<string> { return this.service.getNodeVersion(path); }
 
   scanProject(path: string): Promise<ProjectInfo> { return this.service.scanProject(path); }
-  scanSubProjects(path: string): Promise<import('../types').SubProjectCandidate[]> {
+  scanSubProjects(path: string, maxDepth?: number): Promise<import('../types').ImportNode[]> {
     // uTools/ZTools 运行时无该能力，降级为空结果
-    return (this.service as any).scanSubProjects ? (this.service as any).scanSubProjects(path) : Promise.resolve([]);
-  }
-  scanImportPreview(path: string): Promise<import('../types').ImportCandidate[]> {
-    return (this.service as any).scanImportPreview ? (this.service as any).scanImportPreview(path) : Promise.resolve([]);
+    return (this.service as any).scanSubProjects ? (this.service as any).scanSubProjects(path, maxDepth) : Promise.resolve([]);
   }
   scanImportTree(path: string): Promise<import('../types').ImportNode[]> {
     return (this.service as any).scanImportTree ? (this.service as any).scanImportTree(path) : Promise.resolve([]);

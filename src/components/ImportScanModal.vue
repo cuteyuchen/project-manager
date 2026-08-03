@@ -7,10 +7,18 @@
 import { ref, computed } from 'vue';
 import { useProjectStore } from '../stores/project';
 import { api } from '../api';
-import type { ImportCandidate, ImportNode } from '../api/types';
+import type { ImportNode } from '../api/types';
 import { useI18n } from 'vue-i18n';
 import { ElMessage } from 'element-plus';
-import { flattenImportNodeTree, buildImportProjectTree } from '../utils/importProjectTree';
+import ScanCandidateTree from './ScanCandidateTree.vue';
+import { buildImportRootProject } from '../utils/importProjectTree';
+import { MAX_PROJECT_DEPTH, normalizeProjectPath, projectFolderName } from '../utils/projectTree';
+import {
+  buildDefaultSelection,
+  collectForestPaths,
+  pruneSelectedTree,
+  toggleCandidateSelection,
+} from '../utils/scanCandidateTree';
 
 const props = defineProps<{ modelValue: boolean }>();
 const emit = defineEmits<{ (e: 'update:modelValue', v: boolean): void }>();
@@ -32,40 +40,28 @@ const scanning = ref(false);
 const importing = ref(false);
 /** 已选中的目录（children 模式下为扫描根，direct 模式下为候选项目本身） */
 const rootPaths = ref<string[]>([]);
-/** 候选项：承载 ImportCandidate 样式字段（名称/路径/子模块数/是否 Git），并在 children 模式下附带对应的 ImportNode 以便递归导入其下子节点。 */
-type ScanCandidate = ImportCandidate & {
-  selected: boolean;
-  exists: boolean;
-  /** children 模式下此项对应的嵌套树节点（用于递归构建嵌套子项目）；direct 模式无此值。 */
-  node?: ImportNode;
-};
+/** 扫描出的嵌套候选树（direct 模式下为无子节点的单层节点） */
+const nodes = ref<ImportNode[]>([]);
+/** 已勾选的归一化路径 */
+const selected = ref<Set<string>>(new Set());
 
-const candidates = ref<ScanCandidate[]>([]);
-
-/** 规范化路径用于去重和匹配已有项目 */
-function normalizePath(p: string): string {
-  return p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-}
-
-/** 从完整路径中取最后一段作为显示名 */
-function folderName(p: string): string {
-  const trimmed = p.replace(/[/\\]+$/, '');
-  const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
-  return idx >= 0 ? trimmed.slice(idx + 1) : trimmed;
-}
+/** 已存在于项目库中的归一化路径 */
+const existingPaths = computed(
+  () => new Set(projectStore.projects.map((p) => normalizeProjectPath(p.path))),
+);
 
 /** 选择目录（支持多选）并触发扫描 */
 async function pickAndScan() {
   try {
-    const selected = await api.openDialog({ directory: true, multiple: true });
-    if (selected == null) return;
+    const selectedDirs = await api.openDialog({ directory: true, multiple: true });
+    if (selectedDirs == null) return;
 
     // multiple: true 时返回 string[]；旧逻辑下 multiple: false 返回 string。
     // 这里统一收集为数组。
-    const paths: string[] = Array.isArray(selected)
-      ? selected.filter((p): p is string => typeof p === 'string' && p.length > 0)
-      : typeof selected === 'string'
-        ? [selected]
+    const paths: string[] = Array.isArray(selectedDirs)
+      ? selectedDirs.filter((p): p is string => typeof p === 'string' && p.length > 0)
+      : typeof selectedDirs === 'string'
+        ? [selectedDirs]
         : [];
 
     if (paths.length === 0) return;
@@ -81,21 +77,21 @@ async function pickAndScan() {
 /** 继续追加选择目录（保留已选并在其上叠加，去重） */
 async function addFoldersAndScan() {
   try {
-    const selected = await api.openDialog({ directory: true, multiple: true });
-    if (selected == null) return;
+    const selectedDirs = await api.openDialog({ directory: true, multiple: true });
+    if (selectedDirs == null) return;
 
-    const paths: string[] = Array.isArray(selected)
-      ? selected.filter((p): p is string => typeof p === 'string' && p.length > 0)
-      : typeof selected === 'string'
-        ? [selected]
+    const paths: string[] = Array.isArray(selectedDirs)
+      ? selectedDirs.filter((p): p is string => typeof p === 'string' && p.length > 0)
+      : typeof selectedDirs === 'string'
+        ? [selectedDirs]
         : [];
 
     if (paths.length === 0) return;
 
-    const existing = new Set(rootPaths.value.map(normalizePath));
+    const existing = new Set(rootPaths.value.map(normalizeProjectPath));
     const merged = [...rootPaths.value];
     for (const p of paths) {
-      if (!existing.has(normalizePath(p))) merged.push(p);
+      if (!existing.has(normalizeProjectPath(p))) merged.push(p);
     }
     rootPaths.value = merged;
     await runScan();
@@ -108,6 +104,11 @@ async function addFoldersAndScan() {
 /** 移除一个已选目录，并重新扫描剩余目录 */
 async function removeRootPath(p: string) {
   rootPaths.value = rootPaths.value.filter((x) => x !== p);
+  if (rootPaths.value.length === 0) {
+    nodes.value = [];
+    selected.value = new Set();
+    return;
+  }
   await runScan();
 }
 
@@ -118,25 +119,15 @@ async function onModeChange() {
   }
 }
 
-/** 计算某个 ImportNode 子树内的可识别模块节点数（含容器自身不计，递归加总叶子模块数）。 */
-function countModulesInNode(node: ImportNode): number {
-  if (node.kind !== 'unknown') {
-    // 该节点本身已识别为模块；不再统计其（本应为空的）子节点
-    return 1 + node.children.reduce((sum, child) => sum + countModulesInNode(child), 0);
-  }
-  // 容器节点：仅累加子节点贡献
-  return node.children.reduce((sum, child) => sum + countModulesInNode(child), 0);
-}
-
-/** 执行扫描：children 模式调用 scanImportTree 返回嵌套树，direct 模式将所选目录构造成候选 */
+/** 执行扫描：children 模式调用 scanImportTree 返回嵌套树，direct 模式将所选目录构造成单层候选 */
 async function runScan() {
   if (rootPaths.value.length === 0) return;
   scanning.value = true;
   try {
-    const existingPaths = new Set(projectStore.projects.map((p) => normalizePath(p.path)));
+    let merged: ImportNode[] = [];
 
     if (importMode.value === 'children') {
-      // 并发扫描每个根目录，获取嵌套树。顶层节点作为候选展示，其下子节点在导入时递归挂入。
+      // 并发扫描每个根目录，获取保留层级的嵌套树
       const lists = await Promise.all(
         rootPaths.value.map((p) =>
           api.scanImportTree(p).catch((e) => {
@@ -147,118 +138,122 @@ async function runScan() {
       );
 
       const seen = new Set<string>();
-      const merged: ScanCandidate[] = [];
       for (const tree of lists) {
         for (const node of tree) {
-          const key = normalizePath(node.path);
+          const key = normalizeProjectPath(node.path);
           if (seen.has(key)) continue;
           seen.add(key);
-          const exists = existingPaths.has(normalizePath(node.path));
-          merged.push({
-            name: node.name,
-            path: node.path,
-            hasGit: node.hasGit,
-            subModuleCount: countModulesInNode(node),
-            exists,
-            selected: !exists,
-            node,
-          });
+          merged.push(node);
         }
       }
-      candidates.value = merged;
     } else {
-      // direct：所选目录直接作为候选。并发检查每个目录是否 Git 仓库。
+      // direct：所选目录本身即候选，不向内扫描。并发检查每个目录是否 Git 仓库。
       const gitChecks = await Promise.all(
         rootPaths.value.map((p) => api.gitCheck(p).catch(() => false)),
       );
       const seen = new Set<string>();
-      const merged: ScanCandidate[] = [];
       rootPaths.value.forEach((p, i) => {
-        const key = normalizePath(p);
+        const key = normalizeProjectPath(p);
         if (seen.has(key)) return;
         seen.add(key);
         merged.push({
-          name: folderName(p),
+          name: projectFolderName(p),
           path: p,
+          kind: 'unknown',
           hasGit: gitChecks[i] === true,
-          subModuleCount: 0,
-          exists: existingPaths.has(normalizePath(p)),
-          selected: !existingPaths.has(normalizePath(p)),
+          hasPackageJson: false,
+          scripts: [],
+          children: [],
         });
       });
-      candidates.value = merged;
     }
+
+    nodes.value = merged;
+    // 默认全选，再去掉已导入的——批量导入不处理删除，已存在的项目无需勾选
+    const defaults = buildDefaultSelection(merged);
+    for (const existing of existingPaths.value) defaults.delete(existing);
+    selected.value = defaults;
   } catch (e) {
     console.error('Failed to scan import tree', e);
     ElMessage.error(t('common.error'));
-    candidates.value = [];
+    nodes.value = [];
+    selected.value = new Set();
   } finally {
     scanning.value = false;
   }
 }
 
-/** 可选（未存在）候选 */
-const selectableCandidates = computed(() => candidates.value.filter((c) => !c.exists));
-const selectedCount = computed(() => candidates.value.filter((c) => c.selected && !c.exists).length);
-const allSelected = computed(() =>
-  selectableCandidates.value.length > 0 && selectableCandidates.value.every((c) => c.selected)
+/** 全部可选（未导入）路径 */
+const selectablePaths = computed(() =>
+  collectForestPaths(nodes.value).filter((path) => !existingPaths.value.has(path)),
+);
+const selectedCount = computed(() => selected.value.size);
+const allSelected = computed(
+  () => selectablePaths.value.length > 0 && selectablePaths.value.every((p) => selected.value.has(p)),
 );
 
 function toggleSelectAll() {
-  const next = !allSelected.value;
-  for (const c of candidates.value) {
-    if (!c.exists) c.selected = next;
-  }
+  selected.value = allSelected.value ? new Set() : new Set(selectablePaths.value);
+}
+
+function onToggle(path: string, checked: boolean) {
+  const next = toggleCandidateSelection(nodes.value, path, checked, selected.value);
+  // 批量导入是纯新增语义：这里不做删除，故已导入的项目始终保持未勾选，
+  // 免得它们混进 addProjectTree 的入参里（虽然会被跳过，但计数会失真）。
+  for (const existing of existingPaths.value) next.delete(existing);
+  selected.value = next;
 }
 
 /** *********************导入*********************/
 async function doImport() {
-  const targets = candidates.value.filter((c) => c.selected && !c.exists);
-  if (targets.length === 0) return;
+  if (selected.value.size === 0) return;
+
+  // 裁剪出勾选的子树；已存在的节点仍会保留为层级容器（入库时复用其既有 id）
+  const tree = pruneSelectedTree(nodes.value, selected.value);
+  if (tree.length === 0) return;
 
   importing.value = true;
   let added = 0;
   let failed = 0;
 
-  for (const target of targets) {
-    try {
-      if (importMode.value === 'children' && target.node) {
-        // children 模式：后端已返回嵌套树。将整棵子树扁平化（父在前、子在后，各自已带 parentId）后逐条入库。
-        const projects = flattenImportNodeTree([target.node], undefined);
-        const existingPaths = new Set(projectStore.projects.map((p) => normalizePath(p.path)));
-        for (const p of projects) {
-          if (existingPaths.has(normalizePath(p.path))) continue;
-          projectStore.addProject(p);
-          existingPaths.add(p.path);
-        }
-      } else {
-        // direct 模式：所选目录作为一级项目，再单独扫描其下子模块挂为子项目。
-        // 这里复用旧的扁平构建路径（与 AddProjectModal 行为一致）。
-        const [info, subProjects] = await Promise.all([
-          api.scanProject(target.path).catch((error) => {
-            console.error(`Failed to scan project metadata at ${target.path}`, error);
-            return null;
-          }),
-          api.scanSubProjects(target.path).catch((error) => {
-            console.error(`Failed to scan sub projects at ${target.path}`, error);
-            return [];
-          }),
-        ]);
+  try {
+    if (importMode.value === 'children') {
+      // children 模式：后端已返回嵌套树，按真实层级整棵挂载为一级项目及其子孙
+      added = projectStore.addProjectTree(undefined, tree).length;
+    } else {
+      // direct 模式：所选目录作为一级项目，再单独扫描其下子模块按层级挂为子项目
+      for (const node of tree) {
+        try {
+          const [info, subTree] = await Promise.all([
+            api.scanProject(node.path).catch((error) => {
+              console.error(`Failed to scan project metadata at ${node.path}`, error);
+              return null;
+            }),
+            // 所选目录将成为一级项目，其子项目从第 2 层起算，故只剩 MAX-1 层可用
+            api.scanSubProjects(node.path, MAX_PROJECT_DEPTH - 1).catch((error) => {
+              console.error(`Failed to scan sub projects at ${node.path}`, error);
+              return [] as ImportNode[];
+            }),
+          ]);
 
-        const tree = buildImportProjectTree(target, info, subProjects);
-        projectStore.addProject(tree.root);
-        if (tree.children.length > 0) {
-          projectStore.addSubProjects(tree.root.id, tree.children);
+          const root = buildImportRootProject(
+            { name: node.name, path: node.path, hasGit: node.hasGit, subModuleCount: 0 },
+            info,
+          );
+          projectStore.addProject(root);
+          if (subTree.length > 0) {
+            projectStore.addProjectTree(root.id, subTree);
+          }
+          added++;
+        } catch (e) {
+          console.error(`Failed to import project at ${node.path}`, e);
+          failed++;
         }
       }
-      added++;
-    } catch (e) {
-      console.error(`Failed to import project at ${target.path}`, e);
-      failed++;
     }
+  } finally {
+    importing.value = false;
   }
-
-  importing.value = false;
 
   if (added > 0) ElMessage.success(t('dashboard.batchAddSuccess', { count: added }));
   if (failed > 0 && added === 0) ElMessage.warning(t('dashboard.batchAddFail', { count: failed }));
@@ -270,7 +265,8 @@ async function doImport() {
 
 function resetState() {
   rootPaths.value = [];
-  candidates.value = [];
+  nodes.value = [];
+  selected.value = new Set();
 }
 
 function handleClosed() {
@@ -331,19 +327,19 @@ function handleClosed() {
         >
           <div class="inline-flex items-center gap-1 max-w-full">
             <div class="i-mdi-folder text-[10px]" />
-            <span class="font-medium truncate" :title="p">{{ folderName(p) }}</span>
+            <span class="font-medium truncate" :title="p">{{ projectFolderName(p) }}</span>
             <span class="font-mono text-[9px] opacity-50 truncate" :title="p">— {{ p }}</span>
           </div>
         </el-tag>
       </div>
 
-      <!-- 候选列表 -->
-      <div v-if="candidates.length > 0" class="border rounded-lg overflow-hidden app-section-divider">
+      <!-- 候选列表（按真实层级缩进） -->
+      <div v-if="nodes.length > 0" class="border rounded-lg overflow-hidden app-section-divider">
         <div class="flex items-center justify-between px-3 py-2 border-b bg-slate-50 dark:bg-slate-800/40">
           <el-checkbox
             :model-value="allSelected"
             :indeterminate="selectedCount > 0 && !allSelected"
-            :disabled="selectableCandidates.length === 0"
+            :disabled="selectablePaths.length === 0"
             @change="toggleSelectAll"
           >
             {{ t('import.selectAll') }}
@@ -351,26 +347,12 @@ function handleClosed() {
           <span class="text-xs text-slate-400">{{ t('import.selectedCount', { count: selectedCount }) }}</span>
         </div>
         <div class="max-h-80 overflow-y-auto custom-scrollbar">
-          <div
-            v-for="c in candidates"
-            :key="c.path"
-            class="flex items-center gap-2 px-3 py-2 border-b last:border-b-0 transition-colors"
-            :class="c.exists ? 'opacity-50' : 'hover:bg-slate-50 dark:hover:bg-slate-800/30 cursor-pointer'"
-            @click="!c.exists && (c.selected = !c.selected)"
-          >
-            <el-checkbox :model-value="c.selected" :disabled="c.exists" @click.stop @change="c.selected = $event as boolean" />
-            <div class="flex-1 min-w-0">
-              <div class="flex items-center gap-2">
-                <span class="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">{{ c.name }}</span>
-                <span v-if="c.exists" class="import-tag import-tag-muted">{{ t('import.exists') }}</span>
-                <span v-if="c.hasGit" class="import-tag import-tag-git"><div class="i-mdi-git text-[9px]" /> Git</span>
-                <span v-if="importMode === 'children' && c.subModuleCount > 0" class="import-tag import-tag-module">
-                  {{ t('import.moduleCount', { count: c.subModuleCount }) }}
-                </span>
-              </div>
-              <div class="text-[10px] text-slate-400 font-mono truncate">{{ c.path }}</div>
-            </div>
-          </div>
+          <ScanCandidateTree
+            :nodes="nodes"
+            :existing-paths="existingPaths"
+            :selected="selected"
+            @toggle="onToggle"
+          />
         </div>
       </div>
 

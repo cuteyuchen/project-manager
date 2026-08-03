@@ -25,8 +25,17 @@ function runCmd(cmd) {
 const PROJECT_SCAN_IGNORED_DIRS = new Set([
     'node_modules', '.git', '.svn', '.hg', 'dist', 'build', 'out',
     '.idea', '.vscode', '__pycache__', '.next', '.nuxt', 'target',
-    'vendor', 'coverage', '.cache', 'tmp', 'temp', '.gradle'
+    'vendor', 'coverage', '.cache', 'tmp', 'temp', '.gradle',
+    // 部署/对外暴露的纯静态资源目录：只含 index.html 和资源文件，
+    // 既无构建系统也无源码组织，不应被识别为项目。
+    'public', 'static', 'www', 'htdocs', 'public_html', 'httpdocs'
 ]);
+
+/**
+ * 扫描的最大层级，与 Rust MAX_SCAN_DEPTH 及前端 MAX_PROJECT_DEPTH 保持一致。
+ * 超出该层级的目录直接丢弃，不会被上提压平到父级。
+ */
+const MAX_SCAN_DEPTH = 3;
 
 function readPackageJson(projectPath) {
     try {
@@ -59,35 +68,17 @@ function identifyProjectModule(projectPath) {
     return null;
 }
 
-function scanProjectModules(projectPath, depth, maxDepth, found) {
-    if (depth > maxDepth) return;
-    const moduleInfo = identifyProjectModule(projectPath);
-    if (moduleInfo) {
-        const hasPackageJson = fs.existsSync(path.join(projectPath, 'package.json'));
-        const pkg = hasPackageJson ? readPackageJson(projectPath) : {};
-        found.push({
-            name: path.basename(projectPath),
-            path: projectPath,
-            kind: moduleInfo.kind,
-            framework: moduleInfo.framework,
-            hasPackageJson,
-            scripts: Object.keys(pkg.scripts || {}).sort()
-        });
-        return;
-    }
-    let entries = [];
-    try { entries = fs.readdirSync(projectPath, { withFileTypes: true }); } catch (_) { return; }
-    for (const entry of entries) {
-        if (!entry.isDirectory() || entry.name.startsWith('.') || PROJECT_SCAN_IGNORED_DIRS.has(entry.name)) continue;
-        scanProjectModules(path.join(projectPath, entry.name), depth + 1, maxDepth, found);
-    }
-}
-
 /**
- * 递归扫描导入候选，返回嵌套树结构。容器目录作为 `kind:"unknown"` 占位节点保留；
- * 已识别为模块的目录不再递归。空容器目录不入结果。
+ * 统一的项目树扫描：递归识别 dirPath 并返回**保留真实层级**的节点。
+ *
+ * 三种情况（Git 与构建清单的规则是非对称的）：
+ *   - 含 .git            → 是项目节点，且继续向内递归（仓库根常承载多个模块）
+ *   - 有清单但无 .git    → 是项目节点，不再向内递归（单个完整包）
+ *   - 两者都无           → unknown 占位容器，继续递归；无子孙模块则丢弃
+ *
+ * depth 是该目录在项目树中的绝对层级，超过 maxDepth 直接截断丢弃。
  */
-function scanImportTreeDir(dirPath, depth, maxDepth, seen) {
+function scanProjectTree(dirPath, depth, maxDepth, seen) {
     if (depth > maxDepth) return [];
     const name = path.basename(dirPath) || 'Unknown';
     if (name.startsWith('.') || PROJECT_SCAN_IGNORED_DIRS.has(name)) return [];
@@ -101,49 +92,57 @@ function scanImportTreeDir(dirPath, depth, maxDepth, seen) {
     const pkg = hasPackageJson ? readPackageJson(dirPath) : {};
     const scripts = Object.keys(pkg.scripts || {}).sort();
 
-    if (moduleInfo) {
-        return [{
-            name,
-            path: dirPath,
-            kind: moduleInfo.kind,
-            framework: moduleInfo.framework,
-            hasGit,
-            hasPackageJson,
-            scripts,
-            children: [],
-        }];
-    }
-
-    // 容器目录：尝试向下递归构建子节点
-    let entries = [];
-    try { entries = fs.readdirSync(dirPath, { withFileTypes: true }); } catch (_) { return []; }
-    let children = [];
-    for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
-        const sub = scanImportTreeDir(path.join(dirPath, entry.name), depth + 1, maxDepth, seen);
-        if (sub.length) children = children.concat(sub);
-    }
-    if (children.length === 0) return [];
-    return [{
+    const makeNode = (kind, framework, children) => ({
         name,
         path: dirPath,
-        kind: 'unknown',
-        framework: undefined,
+        kind,
+        framework,
         hasGit,
         hasPackageJson,
         scripts,
         children,
-    }];
+    });
+
+    // Git 仓库：本身即项目边界，同时继续向内递归挂载其内部模块。
+    if (hasGit) {
+        const children = scanChildDirs(dirPath, depth + 1, maxDepth, seen);
+        // 即使既无清单也无子模块（例如只有 README 的仓库）也必须保留——它是真实仓库。
+        return [makeNode(moduleInfo ? moduleInfo.kind : 'unknown', moduleInfo ? moduleInfo.framework : undefined, children)];
+    }
+
+    // 有构建清单但不是仓库根：视为一个完整项目，不再向内递归。
+    if (moduleInfo) {
+        return [makeNode(moduleInfo.kind, moduleInfo.framework, [])];
+    }
+
+    // 纯容器目录：作为 unknown 占位节点保留层级，并递归其子目录。
+    const children = scanChildDirs(dirPath, depth + 1, maxDepth, seen);
+    // 子孙中没有任何模块的空容器不入结果。
+    if (children.length === 0) return [];
+    return [makeNode('unknown', undefined, children)];
 }
 
-function scanSubProjectsSync(projectPath) {
-    const found = [];
-    const entries = fs.readdirSync(projectPath, { withFileTypes: true });
-    for (const entry of entries) {
-        if (!entry.isDirectory() || entry.name.startsWith('.') || PROJECT_SCAN_IGNORED_DIRS.has(entry.name)) continue;
-        scanProjectModules(path.join(projectPath, entry.name), 1, 3, found);
+/**
+ * 扫描 dirPath 的所有直接子目录并汇总为节点列表。
+ * 同层内 Git 仓库优先展示，其余按目录名升序，保证结果稳定。
+ */
+function scanChildDirs(dirPath, depth, maxDepth, seen) {
+    if (depth > maxDepth) return [];
+    let entries = [];
+    try { entries = fs.readdirSync(dirPath, { withFileTypes: true }); } catch (_) { return []; }
+
+    const childDirs = entries
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+        .sort();
+
+    let nodes = [];
+    for (const childName of childDirs) {
+        const sub = scanProjectTree(path.join(dirPath, childName), depth, maxDepth, seen);
+        if (sub.length) nodes = nodes.concat(sub);
     }
-    return found;
+    // 稳定排序：Git 仓库排前面
+    return nodes.sort((a, b) => Number(b.hasGit) - Number(a.hasGit));
 }
 
 const processes = new Map();
@@ -402,17 +401,38 @@ function buildPmAlias(nodeDir, packageManager, shell) {
     return `npm() { node '${cli.replace(/'/g, "'\\''")}' "$@"; }`;
 }
 
+/** 各 shell 的命令分隔符 */
+function shellSeparator(shell) {
+    return shell === 'ps' ? '; ' : ' && ';
+}
+
+/**
+ * 按分隔符拼接命令片段，自动跳过空片段。
+ *
+ * 非 node 项目的启动脚本为空，若直接模板拼接会产出悬空的 `&&` / `;`，
+ * 在 CMD 与 bash 下都是语法错误。
+ */
+function joinShellCommands(parts, sep) {
+    return parts
+        .map((part) => String(part || '').trim())
+        .filter((part) => part.length > 0)
+        .join(sep);
+}
+
 /**
  * 构造打开终端时的版本检查命令：`node -v && <pm> -v`。
  * - 对 npm 优先使用 `node "<abs>/npm-cli.js" -v` 绕过 npm.cmd 软链问题。
  * - 其它 PM：`<pm> -v`，依赖注入的 PATH。
+ * - **包管理器为空：返回空串，终端只做 cd 不做任何版本注入。**
+ *   非 node 项目（Go/Rust/Python 等）由前端传空包管理器走这条分支——
+ *   对它们输出 `node -v` 既无意义，在未装 Node 的机器上还会报错刷屏。
  * - shell: 'ps' | 'cmd' | 'bash'
  */
 function buildStartupCheck(nodeDir, packageManager, shell) {
     const pm = (packageManager || '').trim();
-    const sep = shell === 'ps' ? '; ' : ' && ';
+    const sep = shellSeparator(shell);
 
-    if (!pm) return 'node -v';
+    if (!pm) return '';
 
     if (pm.toLowerCase() === 'npm') {
         const cli = resolveNpmCliJs(nodeDir);
@@ -430,12 +450,12 @@ function buildStartupCheck(nodeDir, packageManager, shell) {
 
 /**
  * 把别名命令和启动检查拼接：别名先生效，再做版本输出（这样版本输出走的也是别名）。
+ * 非 node 项目两者均为空，返回空串。
  */
 function buildStartupScript(nodeDir, packageManager, shell) {
-    const sep = shell === 'ps' ? '; ' : ' && ';
     const alias = buildPmAlias(nodeDir, packageManager, shell);
     const check = buildStartupCheck(nodeDir, packageManager, shell);
-    return alias ? `${alias}${sep}${check}` : check;
+    return joinShellCommands([alias, check], shellSeparator(shell));
 }
 
 function getTerminalSpawnOptions(nodePath) {
@@ -945,37 +965,12 @@ window.services = {
         }
     },
 
-    scanSubProjects: async (projectPath) => scanSubProjectsSync(projectPath),
-
-    scanImportPreview: async (rootPath) => {
-        const entries = fs.readdirSync(rootPath, { withFileTypes: true });
-        return entries
-            .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.') && !PROJECT_SCAN_IGNORED_DIRS.has(entry.name))
-            .map((entry) => {
-                const projectPath = path.join(rootPath, entry.name);
-                const modules = [];
-                scanProjectModules(projectPath, 1, 3, modules);
-                return {
-                    name: entry.name,
-                    path: projectPath,
-                    subModuleCount: modules.length,
-                    hasGit: fs.existsSync(path.join(projectPath, '.git'))
-                };
-            });
+    scanSubProjects: async (projectPath, maxDepth) => {
+        const limit = typeof maxDepth === 'number' && maxDepth > 0 ? maxDepth : MAX_SCAN_DEPTH;
+        return scanChildDirs(projectPath, 1, limit, new Set());
     },
 
-    scanImportTree: async (rootPath) => {
-        const seen = new Set();
-        let entries = [];
-        try { entries = fs.readdirSync(rootPath, { withFileTypes: true }); } catch (_) { return []; }
-        let tree = [];
-        for (const entry of entries) {
-            if (!entry.isDirectory() || entry.name.startsWith('.') || PROJECT_SCAN_IGNORED_DIRS.has(entry.name)) continue;
-            const sub = scanImportTreeDir(path.join(rootPath, entry.name), 1, 3, seen);
-            if (sub.length) tree = tree.concat(sub);
-        }
-        return tree;
-    },
+    scanImportTree: async (rootPath) => scanChildDirs(rootPath, 1, MAX_SCAN_DEPTH, new Set()),
 
     gitListRemoteBranches: async (url) => {
         return new Promise((resolve, reject) => {
@@ -1471,26 +1466,42 @@ window.services = {
                 const isPwsh = term === 'pwsh' || term === 'pwsh.exe' || terminalBaseName === 'pwsh.exe';
 
                 if (isWindowsPowerShell) {
-                     const startupScript = pathEnvPs
-                        ? `$env:PATH='${pathEnvPs}'; Set-Location '${winPathPs}'; ${startupCheckPs}`
-                        : `Set-Location '${winPathPs}'; ${startupCheckPs}`;
+                     // 用 joinShellCommands 拼接：非 node 项目 startupCheck 为空时不会留下悬空的 `;`
+                     const startupScript = joinShellCommands([
+                        pathEnvPs ? `$env:PATH='${pathEnvPs}'` : '',
+                        `Set-Location '${winPathPs}'`,
+                        startupCheckPs,
+                     ], '; ');
                      const executable = isCustomExecutable ? termRaw : 'powershell';
                      spawn('cmd', ['/C', 'start', '', executable, '-NoExit', '-Command', startupScript], spawnOptions);
                 } else if (isPwsh) {
-                     const startupScript = pathEnvPs
-                        ? `$env:PATH='${pathEnvPs}'; Set-Location '${winPathPs}'; ${startupCheckPs}`
-                        : `Set-Location '${winPathPs}'; ${startupCheckPs}`;
+                     const startupScript = joinShellCommands([
+                        pathEnvPs ? `$env:PATH='${pathEnvPs}'` : '',
+                        `Set-Location '${winPathPs}'`,
+                        startupCheckPs,
+                     ], '; ');
                      const executable = isCustomExecutable ? termRaw : 'pwsh';
                      spawn('cmd', ['/C', 'start', '', executable, '-NoExit', '-Command', startupScript], spawnOptions);
                 } else if (term === 'windows-terminal') {
-                    const startupCommand = pathEnvCmd
-                        ? `set "PATH=${pathEnvCmd}" && cd /d "${winPathCmd}" && ${startupCheckCmd}`
-                        : startupCheckCmd;
-                    spawn('wt', ['-d', winPath, 'cmd', '/K', startupCommand], spawnOptions);
+                    const startupCommand = joinShellCommands([
+                        pathEnvCmd ? `set "PATH=${pathEnvCmd}"` : '',
+                        // wt 已用 -d 切到目标目录，这里仅在需要改 PATH 时补一次 cd 保证同一会话内生效
+                        pathEnvCmd ? `cd /d "${winPathCmd}"` : '',
+                        startupCheckCmd,
+                    ], ' && ');
+                    if (startupCommand) {
+                        spawn('wt', ['-d', winPath, 'cmd', '/K', startupCommand], spawnOptions);
+                    } else {
+                        // 非 node 项目且无需改 PATH：直接开一个干净的 cmd，不带 /K 命令
+                        spawn('wt', ['-d', winPath, 'cmd'], spawnOptions);
+                    }
                 } else if (term === 'cmder') {
-                    const startupCommand = pathEnvCmd
-                        ? `set "PATH=${pathEnvCmd}" && cd /d "${winPathCmd}" && cmder && ${startupCheckCmd}`
-                        : `cd /d "${winPathCmd}" && cmder && ${startupCheckCmd}`;
+                    const startupCommand = joinShellCommands([
+                        pathEnvCmd ? `set "PATH=${pathEnvCmd}"` : '',
+                        `cd /d "${winPathCmd}"`,
+                        'cmder',
+                        startupCheckCmd,
+                    ], ' && ');
                     spawn('cmd', ['/C', 'start', '', 'cmd', '/K', startupCommand], spawnOptions);
                 } else if (term === 'git-bash') {
                     const gitBash = [
@@ -1502,10 +1513,12 @@ window.services = {
                     if (gitBash) {
                         spawn('cmd', ['/C', 'start', '', gitBash, `--cd=${winPath}`], spawnOptions);
                     } else {
-                        const bashInner = `${startupCheckBash}; exec bash`.replace(/"/g, '\\"');
-                        const startupCommand = pathEnvCmd
-                            ? `set "PATH=${pathEnvCmd}" && cd /d "${winPathCmd}" && bash -c "${bashInner}"`
-                            : `cd /d "${winPathCmd}" && bash -c "${bashInner}"`;
+                        const bashInner = joinShellCommands([startupCheckBash, 'exec bash'], '; ').replace(/"/g, '\\"');
+                        const startupCommand = joinShellCommands([
+                            pathEnvCmd ? `set "PATH=${pathEnvCmd}"` : '',
+                            `cd /d "${winPathCmd}"`,
+                            `bash -c "${bashInner}"`,
+                        ], ' && ');
                         spawn('cmd', ['/K', startupCommand], spawnOptions);
                     }
                 } else {
@@ -1514,9 +1527,11 @@ window.services = {
                         spawn(termRaw, [], customOptions);
                     } else {
                         // CMD (Default)
-                        const startupCommand = pathEnvCmd
-                            ? `set "PATH=${pathEnvCmd}" && cd /d "${winPathCmd}" && ${startupCheckCmd}`
-                            : `cd /d "${winPathCmd}" && ${startupCheckCmd}`;
+                        const startupCommand = joinShellCommands([
+                            pathEnvCmd ? `set "PATH=${pathEnvCmd}"` : '',
+                            `cd /d "${winPathCmd}"`,
+                            startupCheckCmd,
+                        ], ' && ');
                         spawn('cmd', ['/C', 'start', '', 'cmd', '/K', startupCommand], spawnOptions);
                     }
                 }
@@ -1535,7 +1550,8 @@ window.services = {
              }
         } else {
             // Linux
-            const bashInner = `${startupCheckBash}; exec bash`;
+            // 非 node 项目 startupCheckBash 为空，用 join 跳过空段，避免 `; exec bash` 前面留下悬空分隔符
+            const bashInner = joinShellCommands([startupCheckBash, 'exec bash'], '; ');
             const xfceInline = `bash -c '${bashInner.replace(/'/g, "'\\''")}'`;
             const terms = [
                 { id: 'gnome-terminal', cmd: 'gnome-terminal', args: ['--working-directory', projectPath, '--', 'bash', '-c', bashInner] },

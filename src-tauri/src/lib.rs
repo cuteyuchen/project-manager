@@ -81,7 +81,6 @@ pub fn run() {
             nvm::use_node,
             project::scan_project,
             project::scan_sub_projects,
-            project::scan_import_preview,
             project::scan_import_tree,
             project::read_dir,
             project::read_text_file,

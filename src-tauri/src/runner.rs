@@ -1143,20 +1143,40 @@ enum StartupShell {
     Bash,
 }
 
-/// 构造打开终端时的版本检查命令，例如：`node -v && npm -v` 或 `node -v ; node "C:/.../npm-cli.js" -v`。
-/// - 对 npm：若项目 Node 目录下能定位到 npm-cli.js 的真实路径，则用 `node "<abs>" -v` 直接调用，绕过 npm.cmd 软链问题。
-/// - 其它 PM：使用 `<pm> -v`，依赖 PATH 已被注入为项目 Node 目录。
-/// - 包管理器为空：仅输出 `node -v`。
-fn build_startup_check(node_dir: &str, package_manager: &str, shell: StartupShell) -> String {
-    let pm = package_manager.trim();
-    let sep = match shell {
+/// 各 shell 的命令分隔符
+fn shell_separator(shell: StartupShell) -> &'static str {
+    match shell {
         StartupShell::PowerShell => "; ",
         StartupShell::Cmd => " && ",
         StartupShell::Bash => " && ",
-    };
+    }
+}
+
+/// 按分隔符拼接命令片段，自动跳过空片段。
+///
+/// 非 node 项目的启动脚本为空，若直接 `format!("cd ... && {}", "")` 会产出
+/// 悬空的 `&&` / `;`，在 CMD 与 bash 下都是语法错误。
+fn join_shell_commands(parts: &[&str], sep: &str) -> String {
+    parts
+        .iter()
+        .map(|part| part.trim())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(sep)
+}
+
+/// 构造打开终端时的版本检查命令，例如：`node -v && npm -v` 或 `node -v ; node "C:/.../npm-cli.js" -v`。
+/// - 对 npm：若项目 Node 目录下能定位到 npm-cli.js 的真实路径，则用 `node "<abs>" -v` 直接调用，绕过 npm.cmd 软链问题。
+/// - 其它 PM：使用 `<pm> -v`，依赖 PATH 已被注入为项目 Node 目录。
+/// - **包管理器为空：返回空串，终端只做 cd 不做任何版本注入。**
+///   非 node 项目（Go/Rust/Python 等）由前端传空包管理器走这条分支——
+///   对它们输出 `node -v` 既无意义，在未装 Node 的机器上还会报错刷屏。
+fn build_startup_check(node_dir: &str, package_manager: &str, shell: StartupShell) -> String {
+    let pm = package_manager.trim();
+    let sep = shell_separator(shell);
 
     if pm.is_empty() {
-        return "node -v".to_string();
+        return String::new();
     }
 
     // 仅对 npm 做绝对路径绕过
@@ -1201,18 +1221,11 @@ fn build_pm_alias(node_dir: &str, package_manager: &str, shell: StartupShell) ->
 }
 
 /// 拼接 [别名 + 版本检查]：别名先生效，使后续 `npm` 也走正确 cli.js。
+/// 非 node 项目两者均为空，返回空串。
 fn build_startup_script(node_dir: &str, package_manager: &str, shell: StartupShell) -> String {
     let alias = build_pm_alias(node_dir, package_manager, shell);
     let check = build_startup_check(node_dir, package_manager, shell);
-    if alias.is_empty() {
-        return check;
-    }
-    let sep = match shell {
-        StartupShell::PowerShell => "; ",
-        StartupShell::Cmd => " && ",
-        StartupShell::Bash => " && ",
-    };
-    format!("{}{}{}", alias, sep, check)
+    join_shell_commands(&[&alias, &check], shell_separator(shell))
 }
 
 #[tauri::command]
@@ -1258,22 +1271,29 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String, packa
 
         match terminal_key.as_str() {
             _ if is_windows_powershell => {
-                let startup_script = if let Some(path_env) = &path_env_ps {
-                    format!("$env:PATH='{}'; Set-Location '{}'; {}", path_env, win_path_ps, startup_check_ps)
-                } else {
-                    format!("Set-Location '{}'; {}", win_path_ps, startup_check_ps)
-                };
+                // 用 join 拼接：非 node 项目 startup_check 为空时不会留下悬空的 `;`
+                let startup_script = join_shell_commands(
+                    &[
+                        &path_env_ps.as_ref().map(|v| format!("$env:PATH='{}'", v)).unwrap_or_default(),
+                        &format!("Set-Location '{}'", win_path_ps),
+                        &startup_check_ps,
+                    ],
+                    "; ",
+                );
                 let executable = if is_custom_executable { terminal.as_str() } else { "powershell" };
                 let mut command = Command::new("cmd");
                 command.args(["/C", "start", "", executable, "-NoExit", "-Command", &startup_script]);
                 command.spawn().map_err(|e| e.to_string())?;
             }
             _ if is_pwsh => {
-                let startup_script = if let Some(path_env) = &path_env_ps {
-                    format!("$env:PATH='{}'; Set-Location '{}'; {}", path_env, win_path_ps, startup_check_ps)
-                } else {
-                    format!("Set-Location '{}'; {}", win_path_ps, startup_check_ps)
-                };
+                let startup_script = join_shell_commands(
+                    &[
+                        &path_env_ps.as_ref().map(|v| format!("$env:PATH='{}'", v)).unwrap_or_default(),
+                        &format!("Set-Location '{}'", win_path_ps),
+                        &startup_check_ps,
+                    ],
+                    "; ",
+                );
                 let executable = if is_custom_executable { terminal.as_str() } else { "pwsh" };
                 let mut command = Command::new("cmd");
                 command.args(["/C", "start", "", executable, "-NoExit", "-Command", &startup_script]);
@@ -1281,11 +1301,20 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String, packa
             }
             "windows-terminal" => {
                 let mut command = Command::new("wt");
-                if let Some(path_env) = &path_env_cmd {
-                    let startup_command = format!("set \"PATH={}\" && cd /d \"{}\" && {}", path_env, win_path_cmd, startup_check_cmd);
-                    command.args(["-d", &win_path, "cmd", "/K", &startup_command]);
+                let startup_command = join_shell_commands(
+                    &[
+                        &path_env_cmd.as_ref().map(|v| format!("set \"PATH={}\"", v)).unwrap_or_default(),
+                        // wt 已用 -d 切到目标目录，这里仅在需要改 PATH 时补一次 cd 保证同一会话内生效
+                        &path_env_cmd.as_ref().map(|_| format!("cd /d \"{}\"", win_path_cmd)).unwrap_or_default(),
+                        &startup_check_cmd,
+                    ],
+                    " && ",
+                );
+                if startup_command.is_empty() {
+                    // 非 node 项目且无需改 PATH：直接开一个干净的 cmd，不带 /K 命令
+                    command.args(["-d", &win_path, "cmd"]);
                 } else {
-                    command.args(["-d", &win_path, "cmd", "/K", startup_check_cmd.as_str()]);
+                    command.args(["-d", &win_path, "cmd", "/K", &startup_command]);
                 }
                 command.spawn().map_err(|e| e.to_string())?;
             }
@@ -1300,23 +1329,30 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String, packa
                 } else {
                     // Fallback: try to run bash in a new CMD window that stays open if bash fails
                     let mut command = Command::new("cmd");
-                    let bash_inner = format!("{}; exec bash", startup_check_bash);
-                    let startup_command = if let Some(path_env) = &path_env_cmd {
-                        format!("set \"PATH={}\" && cd /d \"{}\" && bash -c \"{}\"", path_env, win_path_cmd, bash_inner.replace('"', "\\\""))
-                    } else {
-                        format!("cd /d \"{}\" && bash -c \"{}\"", win_path_cmd, bash_inner.replace('"', "\\\""))
-                    };
+                    let bash_inner = join_shell_commands(&[&startup_check_bash, "exec bash"], "; ");
+                    let startup_command = join_shell_commands(
+                        &[
+                            &path_env_cmd.as_ref().map(|v| format!("set \"PATH={}\"", v)).unwrap_or_default(),
+                            &format!("cd /d \"{}\"", win_path_cmd),
+                            &format!("bash -c \"{}\"", bash_inner.replace('"', "\\\"")),
+                        ],
+                        " && ",
+                    );
                     command.args(["/K", &startup_command]);
                     command.spawn().map_err(|e| e.to_string())?;
                 }
             }
             "cmder" => {
                 let mut command = Command::new("cmd");
-                let startup_command = if let Some(path_env) = &path_env_cmd {
-                    format!("set \"PATH={}\" && cd /d \"{}\" && cmder && {}", path_env, win_path_cmd, startup_check_cmd)
-                } else {
-                    format!("cd /d \"{}\" && cmder && {}", win_path_cmd, startup_check_cmd)
-                };
+                let startup_command = join_shell_commands(
+                    &[
+                        &path_env_cmd.as_ref().map(|v| format!("set \"PATH={}\"", v)).unwrap_or_default(),
+                        &format!("cd /d \"{}\"", win_path_cmd),
+                        "cmder",
+                        &startup_check_cmd,
+                    ],
+                    " && ",
+                );
                 command.args(["/C", "start", "", "cmd", "/K", &startup_command]);
                 command.spawn().map_err(|e| e.to_string())?;
             }
@@ -1334,11 +1370,14 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String, packa
                 } else {
                     // CMD (Default)
                     let mut command = Command::new("cmd");
-                    let startup_command = if let Some(path_env) = &path_env_cmd {
-                        format!("set \"PATH={}\" && cd /d \"{}\" && {}", path_env, win_path_cmd, startup_check_cmd)
-                    } else {
-                        format!("cd /d \"{}\" && {}", win_path_cmd, startup_check_cmd)
-                    };
+                    let startup_command = join_shell_commands(
+                        &[
+                            &path_env_cmd.as_ref().map(|v| format!("set \"PATH={}\"", v)).unwrap_or_default(),
+                            &format!("cd /d \"{}\"", win_path_cmd),
+                            &startup_check_cmd,
+                        ],
+                        " && ",
+                    );
                     command.args(["/C", "start", "", "cmd", "/K", &startup_command]);
                     command.spawn().map_err(|e| e.to_string())?;
                 }
@@ -1381,8 +1420,16 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String, packa
 
     #[cfg(target_os = "linux")]
     {
-        let bash_inner = format!("{}; exec bash", startup_check_bash);
-        let shell_command = format!("cd '{}' ; {} ; exec bash", path.replace('\'', "'\\''"), startup_check_bash);
+        // 非 node 项目 startup_check_bash 为空，用 join 跳过空段，避免 `; ; exec bash` 这类语法错误
+        let bash_inner = join_shell_commands(&[&startup_check_bash, "exec bash"], "; ");
+        let shell_command = join_shell_commands(
+            &[
+                &format!("cd '{}'", path.replace('\'', "'\\''")),
+                &startup_check_bash,
+                "exec bash",
+            ],
+            " ; ",
+        );
         let xfce_inline = format!("bash -c '{}'", bash_inner.replace('\'', "'\\''"));
         match terminal_key.as_str() {
             "gnome-terminal" => {
@@ -1687,4 +1734,74 @@ pub fn resolve_pm(
         command_path: None,
         reason: Some(reason),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /***********************shell 片段拼接*********************/
+
+    #[test]
+    fn join_shell_commands_skips_empty_parts() {
+        // 空片段必须被跳过，否则会产出悬空的 `&&` / `;`，在 CMD 与 bash 下都是语法错误
+        assert_eq!(
+            join_shell_commands(&["cd /d \"C:\\app\"", ""], " && "),
+            "cd /d \"C:\\app\""
+        );
+        assert_eq!(join_shell_commands(&["", "exec bash"], "; "), "exec bash");
+        assert_eq!(join_shell_commands(&["", ""], " && "), "");
+        assert_eq!(
+            join_shell_commands(&["a", "  ", "b"], " && "),
+            "a && b",
+            "只含空白的片段同样应被跳过"
+        );
+    }
+
+    /***********************非 node 项目不注入版本*********************/
+
+    #[test]
+    fn empty_package_manager_produces_no_startup_script() {
+        // 非 node 项目（Go/Rust/Python…）由前端传空包管理器，
+        // 终端应只做 cd，不输出 `node -v`——在未装 Node 的机器上那会直接报错。
+        for shell in [StartupShell::PowerShell, StartupShell::Cmd, StartupShell::Bash] {
+            assert_eq!(
+                build_startup_check("", "", shell),
+                "",
+                "空包管理器不应产生任何版本检查命令"
+            );
+            assert_eq!(
+                build_startup_script("", "", shell),
+                "",
+                "空包管理器不应产生任何启动脚本"
+            );
+        }
+    }
+
+    #[test]
+    fn whitespace_only_package_manager_is_treated_as_empty() {
+        assert_eq!(build_startup_script("", "   ", StartupShell::Cmd), "");
+    }
+
+    /***********************node 项目仍注入版本*********************/
+
+    #[test]
+    fn node_project_still_gets_version_check() {
+        // node_dir 为空时定位不到 npm-cli.js，回退为 `<pm> -v`，仍必须输出版本
+        let cmd = build_startup_script("", "npm", StartupShell::Cmd);
+        assert_eq!(cmd, "node -v && npm -v");
+
+        let ps = build_startup_script("", "pnpm", StartupShell::PowerShell);
+        assert_eq!(ps, "node -v; pnpm -v", "PowerShell 用 `;` 作为分隔符");
+    }
+
+    #[test]
+    fn non_npm_package_manager_uses_path_resolution() {
+        // 只有 npm 需要绕过 npm.cmd 软链问题，其它 PM 直接依赖注入的 PATH
+        assert_eq!(build_pm_alias("", "yarn", StartupShell::Cmd), "");
+        assert_eq!(
+            build_startup_script("", "yarn", StartupShell::Bash),
+            "node -v && yarn -v"
+        );
+    }
 }

@@ -4,14 +4,26 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import { useI18n } from 'vue-i18n';
 import { api } from '../api';
 import type { Project, CustomCommand } from '../types';
-import type { ProjectInfo, SubProjectCandidate } from '../api/types';
+import type { ProjectInfo, ImportNode } from '../api/types';
 import { normalizeNvmVersion, findInstalledNodeVersion } from '../utils/nvm';
 import { ensureNodeInstallCommand, getInstallDependenciesCommand } from '../utils/projectCommands';
 import { useSettingsStore } from '../stores/settings';
 import { useProjectStore } from '../stores/project';
 import type { PackageManagerResolveResult } from '../api/types';
 import { collectProjectTags, normalizeProjectTags } from '../utils/projectTags';
-import { convertSubProjectCandidates } from '../utils/importProjectTree';
+import { countModulesInNode } from '../utils/scanCandidateTree';
+import { MAX_PROJECT_DEPTH } from '../utils/projectTree';
+import SubProjectScanModal from './SubProjectScanModal.vue';
+
+/**
+ * 新建项目扫描子项目时可用的层级数。
+ *
+ * 新项目一定是一级项目（深度 1），其子项目从第 2 层起算，
+ * 故还能向下延伸 MAX_PROJECT_DEPTH - 1 层。若按默认的 MAX_PROJECT_DEPTH 扫描，
+ * 会多扫出一层——那层在 addProjectTree 挂载时必然被截断丢弃，
+ * 却已经出现在层级选择弹窗里让用户白勾一遍。
+ */
+const NEW_PROJECT_SUB_DEPTH = MAX_PROJECT_DEPTH - 1;
 
 type ProjectForm = {
   id: string;
@@ -42,7 +54,7 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{
   (e: 'update:modelValue', value: boolean): void;
-  (e: 'add', project: Project, children: Omit<Project, 'id' | 'parentId'>[]): void;
+  (e: 'add', project: Project, subProjectTree: ImportNode[]): void;
   (e: 'update', project: Project): void;
 }>();
 
@@ -79,7 +91,28 @@ const remoteBranches = ref<string[]>([]);
 const loadingRemoteBranches = ref(false);
 const cloneOperationId = ref<string | null>(null);
 const cloneCancelling = ref(false);
-const scannedSubProjects = ref<SubProjectCandidate[]>([]);
+const scannedSubProjects = ref<ImportNode[]>([]);
+/** 扫描到的可识别子模块总数，用于提示"提交后可选择层级" */
+const scannedSubModuleCount = computed(() =>
+  scannedSubProjects.value.reduce((sum, node) => sum + countModulesInNode(node), 0),
+);
+
+/***********************编辑态：调整子项目层级*********************/
+/** 层级管理弹窗开关 */
+const showLevelManager = ref(false);
+
+/**
+ * 编辑的项目是否还能**新增**子项目（三级项目不能再挂）。
+ * 注意：即使不能新增，层级管理弹窗仍可打开——那里还要支持移除已有子项目。
+ */
+const canManageSubLevels = computed(() => {
+  if (!props.editProject) return false;
+  return projectStore.getProjectDepth(props.editProject.id) < MAX_PROJECT_DEPTH;
+});
+
+function openLevelManager() {
+  showLevelManager.value = true;
+}
 
 const form = ref<ProjectForm>({
   id: '',
@@ -414,7 +447,7 @@ async function selectFolder() {
         api.gitCheck(selected).catch(() => false),
         api.readDir(selected).catch(() => []),
         api.scanProject(selected),
-        api.scanSubProjects(selected).catch((error) => {
+        api.scanSubProjects(selected, NEW_PROJECT_SUB_DEPTH).catch((error) => {
           console.error('Failed to scan sub projects for manual import', error);
           return [];
         }),
@@ -422,6 +455,8 @@ async function selectFolder() {
 
       pathIsGitRepo.value = isGitRepo;
       pathEntryCount.value = entries.length;
+      // 扫描到的子项目树先暂存，提交时交给 Dashboard 弹出层级选择弹窗，
+      // 不再直接全部平铺挂载——单个添加时由用户决定要挂到哪一级
       scannedSubProjects.value = subProjects;
       await applyScanResult(info, { preferDetectedName: !form.value.name });
     } catch (error) {
@@ -574,7 +609,7 @@ async function submit() {
 
       const info = await api.scanProject(form.value.path);
       await applyScanResult(info, { preferDetectedName: true });
-      scannedSubProjects.value = await api.scanSubProjects(form.value.path).catch((error) => {
+      scannedSubProjects.value = await api.scanSubProjects(form.value.path, NEW_PROJECT_SUB_DEPTH).catch((error) => {
         console.error('Failed to scan cloned project sub projects', error);
         return [];
       });
@@ -584,7 +619,7 @@ async function submit() {
     if (isEdit.value) {
       emit('update', project);
     } else {
-      emit('add', project, convertSubProjectCandidates(scannedSubProjects.value));
+      emit('add', project, scannedSubProjects.value);
     }
 
     visible.value = false;
@@ -695,6 +730,20 @@ async function cancelClone() {
         <div v-if="form.path" class="mt-2 text-xs text-slate-500 dark:text-slate-400">
           <span v-if="pathIsGitRepo">{{ t('project.gitLocalRepoDetected') }}</span>
           <span v-else>{{ t('project.gitLocalRepoMissing') }}</span>
+        </div>
+        <!-- 扫描到子项目时提示：提交后会弹出层级选择弹窗，由用户决定挂载哪几级 -->
+        <div v-if="!isEdit && scannedSubModuleCount > 0" class="mt-1 text-xs text-emerald-600 dark:text-emerald-400">
+          {{ t('project.subProjectsDetected', { count: scannedSubModuleCount }) }}
+        </div>
+        <!-- 编辑态：随时重新扫描并调整子项目层级（含移除已有子项目） -->
+        <div v-if="isEdit" class="mt-2">
+          <el-button size="small" plain @click="openLevelManager">
+            <div class="i-mdi-file-tree-outline mr-1" />
+            {{ t('dashboard.manageSubProjects') }}
+          </el-button>
+          <span v-if="!canManageSubLevels" class="ml-2 text-xs text-slate-400">
+            {{ t('dashboard.maxDepthReached') }}
+          </span>
         </div>
       </el-form-item>
 
@@ -880,6 +929,13 @@ async function cancelClone() {
       </div>
     </template>
   </el-dialog>
+
+  <!-- 编辑态的子项目层级管理：重新扫描并调整挂载层级 -->
+  <SubProjectScanModal
+    v-if="isEdit && editProject"
+    v-model="showLevelManager"
+    :parent-project="editProject"
+  />
 </template>
 
 <style scoped>

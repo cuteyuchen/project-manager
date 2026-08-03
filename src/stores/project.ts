@@ -2,7 +2,7 @@ import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { api } from '../api';
 import type { Project, ProjectGroup } from '../types';
-import type { PackageManagerResolveResult } from '../api/types';
+import type { PackageManagerResolveResult, ImportNode } from '../api/types';
 import { useNodeStore } from './node';
 import { useSettingsStore } from './settings';
 import { useUsageStore } from './usage';
@@ -12,6 +12,8 @@ import { normalizeNvmVersion } from '../utils/nvm';
 import { scanFrontendEnvProject } from '../utils/frontendEnvSwitcher';
 import { normalizeProjectTags } from '../utils/projectTags';
 import { createProjectId } from '../utils/projectId';
+import { flattenImportNodeTree } from '../utils/importProjectTree';
+import { MAX_PROJECT_DEPTH, normalizeProjectPath, assignSortOrders } from '../utils/projectTree';
 import { ElMessage } from 'element-plus';
 
 type WorkspaceTab = 'console' | 'git' | 'files' | 'memo' | 'env';
@@ -214,6 +216,64 @@ export const useProjectStore = defineStore('project', () => {
     // 更新父项目扫描时间戳
     const parent = projects.value.find((p) => p.id === parentId);
     if (parent) parent.subScannedAt = Date.now();
+    return created;
+  }
+
+  /**
+   * 将一棵扫描出的项目树按**真实层级**挂到指定父项目下
+   * （`parentId` 为空表示作为一级项目导入）。
+   *
+   * 与只处理单层的 `addSubProjects` 不同：孙级会挂到它真实的父节点上，
+   * 而不是被平铺成同一个父项目的直接子级。路径已存在的节点复用既有项目
+   * 作为其后代的父级，超过 `MAX_PROJECT_DEPTH` 的节点直接截断丢弃。
+   */
+  function addProjectTree(parentId: string | undefined, nodes: ImportNode[]): Project[] {
+    if (nodes.length === 0) return [];
+
+    // 父项目自身占一层，故其子节点从 parentDepth + 1 起算。
+    const parentDepth = parentId ? getProjectDepth(parentId) : 0;
+    const remainingDepth = MAX_PROJECT_DEPTH - parentDepth;
+    if (remainingDepth <= 0) return [];
+
+    const existingByPath = new Map<string, string>();
+    for (const project of projects.value) {
+      existingByPath.set(normalizeProjectPath(project.path), project.id);
+    }
+
+    const flattened = flattenImportNodeTree(nodes, parentId, {
+      resolveExistingId: (path) => existingByPath.get(normalizeProjectPath(path)),
+      maxDepth: remainingDepth,
+    });
+
+    // sortOrder 按父级分桶：每个父级下的子项目各自从已有数量续号。
+    const ordered = assignSortOrders(flattened, (id) => getChildren(id).length);
+
+    const created: Project[] = [];
+    const touchedParentIds = new Set<string>();
+    for (const newProject of ordered) {
+      const key = normalizeProjectPath(newProject.path);
+      // flattenImportNodeTree 已跳过入库前就存在的路径；这里再挡一次
+      // 同批次内部可能出现的重复路径。
+      if (existingByPath.has(key)) continue;
+
+      projects.value.push(newProject);
+      existingByPath.set(key, newProject.id);
+      created.push(newProject);
+      if (newProject.parentId) touchedParentIds.add(newProject.parentId);
+
+      try { useUsageStore().markAdded(newProject.id); } catch {}
+      void scanFrontendEnvForProject(newProject.id).catch((error) => {
+        console.error(`Failed to scan frontend env for added sub project ${newProject.name}`, error);
+      });
+    }
+
+    // 更新所有被挂载了子项目的父项目扫描时间戳
+    if (parentId) touchedParentIds.add(parentId);
+    for (const id of touchedParentIds) {
+      const parent = projects.value.find((p) => p.id === id);
+      if (parent) parent.subScannedAt = Date.now();
+    }
+
     return created;
   }
 
@@ -635,6 +695,7 @@ export const useProjectStore = defineStore('project', () => {
     getRootProjectId,
     collectDescendantIds,
     addSubProjects,
+    addProjectTree,
     favoriteProject,
     unfavoriteProject,
     toggleFavorite,

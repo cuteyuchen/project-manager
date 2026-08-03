@@ -12,9 +12,10 @@ import FileManager from '../FileManager.vue';
 import ProjectMemo from '../ProjectMemo.vue';
 import FrontendEnvPanel from '../FrontendEnvPanel.vue';
 import SubProjectScanModal from '../SubProjectScanModal.vue';
+import { MAX_PROJECT_DEPTH } from '../../utils/projectTree';
 
-/** 最大钻取层级（一级→二级→三级） */
-const MAX_DEPTH = 3;
+/** 最大钻取层级（一级→二级→三级），与扫描深度共用同一常量 */
+const MAX_DEPTH = MAX_PROJECT_DEPTH;
 
 const props = defineProps<{
   /** 钻取进入的一级项目 id */
@@ -107,6 +108,16 @@ const activeLeaf = computed<Project | null>(() => {
   return currentNode.value;
 });
 
+/** 文件、备忘录以及能力判断绑定当前层级或选中的子项目，避免父子项目共用数据 */
+const workspaceProject = computed<Project | null>(() => activeLeaf.value || currentNode.value);
+const hasRunnableCommands = computed(() => {
+  const project = workspaceProject.value;
+  if (!project) return false;
+  const scripts = project.visibleScripts?.length ? project.visibleScripts : project.scripts;
+  return (scripts?.length || 0) > 0 || (project.customCommands?.length || 0) > 0;
+});
+const hasFrontendEnv = computed(() => (workspaceProject.value?.frontendEnvGroups?.length || 0) > 0);
+
 /** 把 store 的双 active id 与当前状态同步 */
 function syncActiveIds() {
   projectStore.activeRootId = props.rootId;
@@ -128,7 +139,7 @@ function handleOpenChild(project: Project) {
     selectedLeafId.value = null;
   } else {
     selectedLeafId.value = project.id;
-    rightTab.value = 'console';
+    rightTab.value = defaultLeafTab.value;
   }
   syncActiveIds();
 }
@@ -147,17 +158,30 @@ function restoreCurrentScrollPosition() {
 function handleOpenParentProject() {
   if (!currentNode.value) return;
   selectedLeafId.value = currentNode.value.id;
-  rightTab.value = hasRunnableCommands.value ? 'console' : 'files';
+  rightTab.value = defaultLeafTab.value;
   syncActiveIds();
 }
 
 /** *********************右侧工作区 tab*********************/
 type WorkTab = 'console' | 'git' | 'files' | 'memo' | 'env';
-const rightTab = ref<WorkTab>('console');
+// 初值取 git：它无条件渲染。若初值给 console，无脚本的项目会先渲染一个
+// 并不存在的页签、再被下面的 watcher 纠正，视觉上闪一下。
+const rightTab = ref<WorkTab>('git');
 
-// 叶子模式默认停在 console；容器模式默认停在 files（一级功能，无需先选子项目）
-watch(isContainer, (container) => {
-  rightTab.value = container ? 'files' : 'console';
+/**
+ * 默认页签。
+ *
+ * 命令入口带 `v-if="hasRunnableCommands"`，没有脚本时整个页签不存在，
+ * 此时落到「Git 管理」——它无条件渲染（没有 v-if），且比「文件」更常用。
+ *
+ * 容器模式（当前节点有子项目）默认选中的是父项目自身，同样按它有没有
+ * 可运行命令来决定，不再一律给「文件」。
+ */
+const defaultLeafTab = computed<WorkTab>(() => (hasRunnableCommands.value ? 'console' : 'git'));
+
+// 切换容器/叶子模式时重置到默认页签
+watch(isContainer, () => {
+  rightTab.value = defaultLeafTab.value;
 }, { immediate: true });
 
 // 跨组件请求切 tab（运行命令时联动到 console）
@@ -193,7 +217,7 @@ function selectTargetProject(targetId: string | null | undefined) {
     drillStack.value = ancestors.slice(0, -1);
     selectedLeafId.value = target.id;
   }
-  rightTab.value = 'console';
+  rightTab.value = defaultLeafTab.value;
   syncActiveIds();
 }
 
@@ -211,16 +235,6 @@ watch(activeLeaf, (leaf) => {
   if (leaf) void gitStore.checkGitRepo(leaf.id, leaf.path);
 });
 
-/** 文件、备忘录以及能力判断绑定当前层级或选中的子项目，避免父子项目共用数据 */
-const workspaceProject = computed<Project | null>(() => activeLeaf.value || currentNode.value);
-const hasRunnableCommands = computed(() => {
-  const project = workspaceProject.value;
-  if (!project) return false;
-  const scripts = project.visibleScripts?.length ? project.visibleScripts : project.scripts;
-  return (scripts?.length || 0) > 0 || (project.customCommands?.length || 0) > 0;
-});
-const hasFrontendEnv = computed(() => (workspaceProject.value?.frontendEnvGroups?.length || 0) > 0);
-
 watch(currentNode, (node) => {
   if (node) void gitStore.checkGitRepo(node.id, node.path);
 }, { immediate: true });
@@ -228,12 +242,16 @@ watch(currentNode, (node) => {
 /** 当前层级始终有活动项目；防御项目被删除等瞬时空状态 */
 const leafTabsDisabled = computed(() => !activeLeaf.value);
 
-// 若当前在需要叶子的 tab 但没有选中叶子，回退到 files
+// 当前页签失效时的回退：
+// - 没选中叶子却停在需要叶子的 tab（console/git/env）→ 只能退到 files
+// - 命令/环境入口消失 → 退到 git（它无条件渲染），而不是 files
 watch([leafTabsDisabled, hasRunnableCommands, hasFrontendEnv, rightTab], ([disabled, runnable, hasEnv, tab]) => {
-  if ((disabled && (tab === 'console' || tab === 'git' || tab === 'env'))
-    || (tab === 'console' && !runnable)
-    || (tab === 'env' && !hasEnv)) {
+  if (disabled && (tab === 'console' || tab === 'git' || tab === 'env')) {
     rightTab.value = 'files';
+    return;
+  }
+  if ((tab === 'console' && !runnable) || (tab === 'env' && !hasEnv)) {
+    rightTab.value = 'git';
   }
 });
 

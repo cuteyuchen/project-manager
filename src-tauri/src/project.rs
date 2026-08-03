@@ -204,35 +204,11 @@ const SCAN_IGNORED_DIRS: &[&str] = &[
     "public", "static", "www", "htdocs", "public_html", "httpdocs",
 ];
 
-/** 识别出的子项目候选 */
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SubProjectCandidate {
-    /// 目录名（显示名）
-    name: String,
-    /// 绝对路径
-    path: String,
-    /// 模块类型：frontend / backend / node / go / rust / python / dotnet / static / unknown
-    kind: String,
-    /// 具体框架（如 Vue / React / Spring Boot / Gradle）
-    framework: Option<String>,
-    /// 是否含 package.json
-    has_package_json: bool,
-    /// 该目录下的 npm scripts（仅 node/前端项目有值）
-    scripts: Vec<String>,
-}
-
-/** 预扫描导入候选 */
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ImportCandidate {
-    name: String,
-    path: String,
-    /// 已识别到的子模块数量
-    sub_module_count: usize,
-    /// 是否为 Git 仓库
-    has_git: bool,
-}
+/**
+ * 扫描的最大层级，与前端项目树的 MAX_PROJECT_DEPTH（src/utils/projectTree.ts）保持一致。
+ * 一级 → 二级 → 三级；超出该层级的目录直接丢弃，不会被上提压平到父级。
+ */
+pub const MAX_SCAN_DEPTH: usize = 3;
 
 /** 嵌套导入树节点。容器目录作为 `kind="unknown"` 占位节点保留，其下可挂子节点。 */
 #[derive(Serialize, Deserialize)]
@@ -335,181 +311,23 @@ fn identify_module(dir: &Path) -> Option<(String, Option<String>)> {
 }
 
 /**
- * 递归扫描目录识别代码模块（最大深度 max_depth）。
- * 识别到模块的目录不再递归其子目录。
- */
-fn scan_modules_recursive(dir: &Path, depth: usize, max_depth: usize, found: &mut Vec<SubProjectCandidate>) {
-    if depth > max_depth {
-        return;
-    }
-
-    // 先尝试识别当前目录
-    if let Some((kind, framework)) = identify_module(dir) {
-        let name = dir
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("Unknown")
-            .to_string();
-        let has_pkg = dir.join("package.json").exists();
-        let scripts = if has_pkg { read_package_scripts(dir) } else { Vec::new() };
-        found.push(SubProjectCandidate {
-            name,
-            path: dir.to_string_lossy().to_string(),
-            kind,
-            framework,
-            has_package_json: has_pkg,
-            scripts,
-        });
-        // 已识别 → 不再递归子目录
-        return;
-    }
-
-    // 未识别 → 递归子目录
-    let Ok(entries) = fs::read_dir(dir) else { return };
-    for entry in entries.flatten() {
-        let Ok(file_type) = entry.file_type() else { continue };
-        if !file_type.is_dir() {
-            continue;
-        }
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') || SCAN_IGNORED_DIRS.contains(&name.as_str()) {
-            continue;
-        }
-        scan_modules_recursive(&entry.path(), depth + 1, max_depth, found);
-    }
-}
-
-/**
- * 扫描一级项目目录，识别其下的子项目（前端/后端等）。
- * 只扫描直接子目录中的模块（每个子目录内递归至多 3 层）。
- */
-#[command]
-pub async fn scan_sub_projects(path: String) -> Result<Vec<SubProjectCandidate>, String> {
-    run_project_task(move || {
-        let root = Path::new(&path);
-        if !root.exists() || !root.is_dir() {
-            return Err("Directory does not exist".to_string());
-        }
-
-        let mut found = Vec::new();
-        // 遍历一级子目录，对每个子目录做递归识别（不识别根目录自身）
-        let entries = fs::read_dir(root).map_err(|e| e.to_string())?;
-        for entry in entries.flatten() {
-            let Ok(file_type) = entry.file_type() else { continue };
-            if !file_type.is_dir() {
-                continue;
-            }
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') || SCAN_IGNORED_DIRS.contains(&name.as_str()) {
-                continue;
-            }
-            scan_modules_recursive(&entry.path(), 1, 3, &mut found);
-        }
-
-        Ok(found)
-    })
-    .await
-}
-
-/**
- * 递归扫描导入候选。
+ * 统一的项目树扫描：递归识别 `dir` 并返回**保留真实层级**的节点。
  *
- * 当一个目录自身不能被识别为模块（既没有 package.json / go.mod / Cargo.toml
- * 等项目标识，也不是 Git 仓库）但其下存在可识别的子目录时，跳过该目录，
- * 继续向其子孙目录下沉——以确保候选项是真实项目，而非纯粹的容器文件夹。
+ * 三种情况的处理（注意 Git 与构建清单的规则是非对称的）：
  *
- * 识别为候选目录的条件：
- *   - `identify_module(dir)` 返回 Some，或
- *   - 目录下存在 `.git`（已初始化的 Git 仓库，即便没有可识别的框架标记文件）。
+ * | 条件                   | 是否项目节点     | 是否继续向内递归 | 理由                                       |
+ * |------------------------|------------------|------------------|--------------------------------------------|
+ * | 含 `.git`              | 是               | **是**           | 仓库根常同时承载多个模块（单仓多模块）     |
+ * | 有构建清单但无 `.git`  | 是               | 否               | 单个完整包，避免把包内部目录误当子项目     |
+ * | 两者都无               | `unknown` 占位   | 是               | 纯分组容器目录                             |
  *
- * `depth` 表示当前正在处理的目录相对于扫描根的层数，根的直接子目录为 1。
- * 超过 `max_depth` 时停止下沉，直接返回（不再加入候选）。
+ * `depth` 是该目录在**项目树中的绝对层级**（不是相对各分支重新起算），
+ * 超过 `max_depth` 时直接返回空——即截断丢弃，绝不把深层模块上提压平到父级。
+ *
+ * 返回 `Vec` 而非 `Option` 只是为了让调用方能用 `extend` 平滑拼接：
+ * 被忽略/去重/截断的目录返回空，正常目录返回恰好一个节点。
  */
-fn scan_import_preview_dir(
-    dir: &Path,
-    depth: usize,
-    max_depth: usize,
-    candidates: &mut Vec<ImportCandidate>,
-    seen: &mut std::collections::HashSet<String>,
-) {
-    if depth > max_depth {
-        return;
-    }
-
-    let name = dir
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("Unknown")
-        .to_string();
-    if name.starts_with('.') || SCAN_IGNORED_DIRS.contains(&name.as_str()) {
-        return;
-    }
-
-    // 将路径归一化后做去重，防止不同扫描根产出同一目录的重复候选。
-    let path_key = dir.to_string_lossy().replace('\\', "/");
-    if !seen.insert(path_key) {
-        return;
-    }
-
-    let is_module = identify_module(dir).is_some();
-    let has_git = dir.join(".git").exists();
-
-    if is_module || has_git {
-        let mut modules = Vec::new();
-        scan_modules_recursive(dir, 1, 3, &mut modules);
-        candidates.push(ImportCandidate {
-            name,
-            path: dir.to_string_lossy().to_string(),
-            sub_module_count: modules.len(),
-            has_git,
-        });
-        return;
-    }
-
-    // 容器目录：跳过自身，向子目录继续下沉。
-    let Ok(entries) = fs::read_dir(dir) else { return };
-    for entry in entries.flatten() {
-        let Ok(file_type) = entry.file_type() else { continue };
-        if !file_type.is_dir() {
-            continue;
-        }
-        scan_import_preview_dir(&entry.path(), depth + 1, max_depth, candidates, seen);
-    }
-}
-
-/**
- * 预扫描一个根目录下的导入候选。
- *
- * 直接子目录中可识别为项目的目录作为候选；不能识别但包含可识别项目
- * 的容器目录会被跳过，向其孙目录下沉（至多 3 层）——避免把空容器
- * 文件夹当成项目导入。
- */
-#[command]
-pub async fn scan_import_preview(path: String) -> Result<Vec<ImportCandidate>, String> {
-    run_project_task(move || {
-        let root = Path::new(&path);
-        if !root.exists() || !root.is_dir() {
-            return Err("Directory does not exist".to_string());
-        }
-
-        let mut candidates = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        let entries = fs::read_dir(root).map_err(|e| e.to_string())?;
-        for entry in entries.flatten() {
-            let Ok(file_type) = entry.file_type() else { continue };
-            if !file_type.is_dir() {
-                continue;
-            }
-            scan_import_preview_dir(&entry.path(), 1, 3, &mut candidates, &mut seen);
-        }
-
-        Ok(candidates)
-    })
-    .await
-}
-
-/** 递归扫描导入候选，返回嵌套树结构。容器目录作为 `kind="unknown"` 占位节点保留，其下挂子节点；已识别模块节点不再递归。 */
-fn scan_import_tree_dir(
+fn scan_project_tree(
     dir: &Path,
     depth: usize,
     max_depth: usize,
@@ -528,63 +346,117 @@ fn scan_import_tree_dir(
         return Vec::new();
     }
 
-    // 路径去重，防止不同扫描根产出同一目录的重复节点。
+    // 路径归一化后去重，防止不同扫描根产出同一目录的重复节点。
     let path_key = dir.to_string_lossy().replace('\\', "/");
     if !seen.insert(path_key) {
         return Vec::new();
     }
 
-    let identified = identify_module(dir);
     let has_git = dir.join(".git").exists();
+    let identified = identify_module(dir);
     let has_pkg = dir.join("package.json").exists();
     let scripts = if has_pkg { read_package_scripts(dir) } else { Vec::new() };
 
-    if let Some((kind, framework)) = identified {
-        // 已识别为模块 → 不再递归子目录
-        vec![ImportNode {
-            name,
-            path: dir.to_string_lossy().to_string(),
-            kind,
-            framework,
-            has_git,
-            has_package_json: has_pkg,
-            scripts,
-            children: Vec::new(),
-        }]
-    } else {
-        // 容器目录：保留为 unknown 占位节点，并递归构建其子节点
-        let mut children = Vec::new();
-        if let Ok(entries) = fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let Ok(file_type) = entry.file_type() else { continue };
-                if !file_type.is_dir() {
-                    continue;
-                }
-                let mut sub_nodes = scan_import_tree_dir(&entry.path(), depth + 1, max_depth, seen);
-                children.append(&mut sub_nodes);
-            }
-        }
-        // 没有任何子节点的空容器目录不入结果，避免产生无意义的占位项目
-        if children.is_empty() {
-            return Vec::new();
-        }
-        vec![ImportNode {
-            name,
-            path: dir.to_string_lossy().to_string(),
-            kind: "unknown".into(),
-            framework: None,
-            has_git,
-            has_package_json: has_pkg,
-            scripts,
-            children,
-        }]
+    let make_node = |kind: String, framework: Option<String>, children: Vec<ImportNode>| ImportNode {
+        name: name.clone(),
+        path: dir.to_string_lossy().to_string(),
+        kind,
+        framework,
+        has_git,
+        has_package_json: has_pkg,
+        scripts: scripts.clone(),
+        children,
+    };
+
+    // Git 仓库：本身即项目边界，同时继续向内递归挂载其内部模块。
+    if has_git {
+        let children = scan_child_dirs(dir, depth + 1, max_depth, seen);
+        let (kind, framework) = identified.unwrap_or_else(|| ("unknown".into(), None));
+        // 注意：即使既无清单也无任何子模块（例如只有 README 的仓库），
+        // 仍必须保留该节点——它是真实仓库，不能像空容器那样被丢弃。
+        return vec![make_node(kind, framework, children)];
     }
+
+    // 有构建清单但不是仓库根：视为一个完整项目，不再向内递归。
+    if let Some((kind, framework)) = identified {
+        return vec![make_node(kind, framework, Vec::new())];
+    }
+
+    // 纯容器目录：作为 unknown 占位节点保留层级，并递归其子目录。
+    let children = scan_child_dirs(dir, depth + 1, max_depth, seen);
+    // 子孙中没有任何模块的空容器不入结果，避免产生无意义的占位项目。
+    if children.is_empty() {
+        return Vec::new();
+    }
+    vec![make_node("unknown".into(), None, children)]
 }
 
 /**
- * 扫描所选目录下子项目，返回嵌套树结构（最多 max_depth 层）。
- * 容器目录作为 `kind="unknown"` 占位节点保留；已识别模块节点不再递归。
- * 等价于 scan_import_preview 的"保留层级"版本。
+ * 扫描 `dir` 的所有直接子目录并汇总为节点列表。
+ *
+ * 排序落实"优先扫描带有 git 仓库的"：同层内 Git 仓库排在前面，
+ * 其余按目录名升序，保证结果稳定（`read_dir` 本身不保证顺序）。
+ */
+fn scan_child_dirs(
+    dir: &Path,
+    depth: usize,
+    max_depth: usize,
+    seen: &mut std::collections::HashSet<String>,
+) -> Vec<ImportNode> {
+    // 超出层级时不必再读目录，直接返回。
+    if depth > max_depth {
+        return Vec::new();
+    }
+
+    let Ok(entries) = fs::read_dir(dir) else { return Vec::new() };
+    let mut child_dirs: Vec<std::path::PathBuf> = entries
+        .flatten()
+        .filter(|entry| entry.file_type().map(|t| t.is_dir()).unwrap_or(false))
+        .map(|entry| entry.path())
+        .collect();
+    // 先按名称排序，保证同类节点顺序稳定。
+    child_dirs.sort();
+
+    let mut nodes = Vec::new();
+    for child in child_dirs {
+        nodes.extend(scan_project_tree(&child, depth, max_depth, seen));
+    }
+    // Git 仓库优先展示（sort_by_key 是稳定排序，同类保持上面的名称顺序）。
+    nodes.sort_by_key(|node| !node.has_git);
+    nodes
+}
+
+/**
+ * 扫描一个**已存在项目**目录下的子项目，返回保留层级的嵌套树。
+ *
+ * `max_depth` 是本次扫描还可以向下延伸的层级数，由前端按
+ * `MAX_PROJECT_DEPTH - 父项目当前深度` 算出后传入——后端不知道该项目在
+ * 项目树中处于第几级，必须由调用方给出。省略时回退 `MAX_SCAN_DEPTH`。
+ *
+ * 根目录自身不作为候选，其直接子目录为本次扫描的层级 1。
+ */
+#[command]
+pub async fn scan_sub_projects(
+    path: String,
+    max_depth: Option<usize>,
+) -> Result<Vec<ImportNode>, String> {
+    run_project_task(move || {
+        let root = Path::new(&path);
+        if !root.exists() || !root.is_dir() {
+            return Err("Directory does not exist".to_string());
+        }
+
+        let limit = max_depth.unwrap_or(MAX_SCAN_DEPTH);
+        let mut seen = std::collections::HashSet::new();
+        Ok(scan_child_dirs(root, 1, limit, &mut seen))
+    })
+    .await
+}
+
+/**
+ * 批量导入：扫描所选目录，返回保留真实层级的嵌套树（最多 `MAX_SCAN_DEPTH` 层）。
+ *
+ * 根目录自身不作为候选（它只是用户选中的扫描范围），其直接子目录为层级 1。
  */
 #[command]
 pub async fn scan_import_tree(path: String) -> Result<Vec<ImportNode>, String> {
@@ -594,19 +466,238 @@ pub async fn scan_import_tree(path: String) -> Result<Vec<ImportNode>, String> {
             return Err("Directory does not exist".to_string());
         }
 
-        let mut tree = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        let entries = fs::read_dir(root).map_err(|e| e.to_string())?;
-        for entry in entries.flatten() {
-            let Ok(file_type) = entry.file_type() else { continue };
-            if !file_type.is_dir() {
-                continue;
-            }
-            let mut sub_nodes = scan_import_tree_dir(&entry.path(), 1, 3, &mut seen);
-            tree.append(&mut sub_nodes);
-        }
-
-        Ok(tree)
+        Ok(scan_child_dirs(root, 1, MAX_SCAN_DEPTH, &mut seen))
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{scan_child_dirs, ImportNode, MAX_SCAN_DEPTH};
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    /***********************测试目录辅助函数*********************/
+
+    fn create_temp_dir(tag: &str) -> PathBuf {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be valid")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "project-manager-scan-tests-{}-{}-{}",
+            tag,
+            std::process::id(),
+            timestamp,
+        ));
+        fs::create_dir_all(&dir).expect("temp dir should be created");
+        dir
+    }
+
+    /** 在 root 下创建目录（relative 为多级路径），并写入若干标记文件 */
+    fn make_dir(root: &Path, relative: &str, marker_files: &[&str]) {
+        let dir = root.join(relative);
+        fs::create_dir_all(&dir).expect("dir should be created");
+        for file in marker_files {
+            fs::write(dir.join(file), "{}").expect("marker file should be written");
+        }
+    }
+
+    /** 伪造一个 Git 仓库：只需存在 .git 目录即可被识别为仓库边界 */
+    fn make_git_repo(root: &Path, relative: &str, marker_files: &[&str]) {
+        make_dir(root, relative, marker_files);
+        fs::create_dir_all(root.join(relative).join(".git")).expect(".git should be created");
+    }
+
+    fn scan(root: &Path, max_depth: usize) -> Vec<ImportNode> {
+        let mut seen = std::collections::HashSet::new();
+        scan_child_dirs(root, 1, max_depth, &mut seen)
+    }
+
+    fn find<'a>(nodes: &'a [ImportNode], name: &str) -> &'a ImportNode {
+        nodes
+            .iter()
+            .find(|node| node.name == name)
+            .unwrap_or_else(|| panic!("节点 {} 应存在于结果中，实际为 {:?}", name, names(nodes)))
+    }
+
+    fn names(nodes: &[ImportNode]) -> Vec<String> {
+        nodes.iter().map(|node| node.name.clone()).collect()
+    }
+
+    /** 递归收集整棵树中的所有路径，用于断言"某目录未被提升到任何层级" */
+    fn collect_paths(nodes: &[ImportNode], out: &mut Vec<String>) {
+        for node in nodes {
+            out.push(node.path.replace('\\', "/"));
+            collect_paths(&node.children, out);
+        }
+    }
+
+    /***********************Git 仓库作为边界并继续向内递归*********************/
+
+    #[test]
+    fn git_repo_becomes_project_and_keeps_inner_modules_as_children() {
+        let root = create_temp_dir("git-repo");
+        // 仓库根没有构建清单，但内部有前端与后端两个模块
+        make_git_repo(&root, "MyRepo", &[]);
+        make_dir(&root, "MyRepo/frontend", &["package.json"]);
+        make_dir(&root, "MyRepo/backend", &["pom.xml"]);
+
+        let tree = scan(&root, MAX_SCAN_DEPTH);
+
+        assert_eq!(tree.len(), 1, "仓库目录本身应作为唯一的顶层节点");
+        let repo = find(&tree, "MyRepo");
+        assert!(repo.has_git, "仓库节点应标记 has_git");
+        assert_eq!(
+            repo.children.len(),
+            2,
+            "仓库内部两个模块应作为其子节点，而不是被平铺到顶层"
+        );
+
+        let mut child_names = names(&repo.children);
+        child_names.sort();
+        assert_eq!(child_names, vec!["backend", "frontend"]);
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /***********************纯容器目录保留为占位层级*********************/
+
+    #[test]
+    fn plain_container_dir_is_kept_as_unknown_placeholder() {
+        let root = create_temp_dir("container");
+        // group 既无 .git 也无构建清单，仅用于分组
+        make_dir(&root, "group", &[]);
+        make_dir(&root, "group/ProjectA", &["package.json"]);
+        make_dir(&root, "group/ProjectB", &["pom.xml"]);
+
+        let tree = scan(&root, MAX_SCAN_DEPTH);
+
+        assert_eq!(tree.len(), 1, "容器目录应作为唯一顶层节点保留层级");
+        let group = find(&tree, "group");
+        assert_eq!(group.kind, "unknown", "容器目录应为 unknown 占位节点");
+        assert_eq!(group.children.len(), 2, "两个项目应挂在容器之下");
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /***********************超出层级直接截断而不是上提*********************/
+
+    #[test]
+    fn dirs_beyond_max_depth_are_dropped_not_flattened() {
+        let root = create_temp_dir("depth");
+        // a/b/c 均为纯容器，模块位于第 4 层的 d 处
+        make_dir(&root, "a/b/c/d", &["pom.xml"]);
+
+        let tree = scan(&root, MAX_SCAN_DEPTH);
+
+        let mut paths = Vec::new();
+        collect_paths(&tree, &mut paths);
+        assert!(
+            !paths.iter().any(|path| path.ends_with("/d")),
+            "第 4 层的模块应被截断丢弃，不得出现在任何层级，实际为 {:?}",
+            paths
+        );
+        // a/b/c 三层容器最终都没有可识别子孙，应作为空容器一并丢弃
+        assert!(tree.is_empty(), "没有任何可识别模块时结果应为空，实际为 {:?}", names(&tree));
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /***********************孙级不得平铺到父级*********************/
+
+    #[test]
+    fn grandchild_never_appears_as_direct_child_of_root() {
+        let root = create_temp_dir("nesting");
+        // 用户报告的场景：一个文件夹下有两个子项目，中间还隔着一层 packages
+        make_dir(&root, "MyApp/packages/web", &["package.json"]);
+        make_dir(&root, "MyApp/packages/api", &["go.mod"]);
+
+        let tree = scan(&root, MAX_SCAN_DEPTH);
+
+        let my_app = find(&tree, "MyApp");
+        assert_eq!(names(&my_app.children), vec!["packages"], "MyApp 的直接子级只应有 packages");
+
+        let packages = find(&my_app.children, "packages");
+        let mut leaf_names = names(&packages.children);
+        leaf_names.sort();
+        assert_eq!(leaf_names, vec!["api", "web"], "两个模块应挂在 packages 之下");
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /***********************空容器不入结果*********************/
+
+    #[test]
+    fn empty_container_without_any_module_is_skipped() {
+        let root = create_temp_dir("empty");
+        make_dir(&root, "empty-group/nested", &[]);
+
+        let tree = scan(&root, MAX_SCAN_DEPTH);
+
+        assert!(tree.is_empty(), "没有任何模块的空容器不应入结果");
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /***********************无清单无子模块的仓库仍需保留*********************/
+
+    #[test]
+    fn bare_git_repo_without_manifest_is_still_kept() {
+        let root = create_temp_dir("bare-repo");
+        // 只有 README 的仓库：既无构建清单，也无任何可识别子模块
+        make_git_repo(&root, "DocsRepo", &["README.md"]);
+
+        let tree = scan(&root, MAX_SCAN_DEPTH);
+
+        assert_eq!(tree.len(), 1, "真实仓库即使没有清单也不能被当成空容器丢弃");
+        let repo = find(&tree, "DocsRepo");
+        assert!(repo.has_git);
+        assert!(repo.children.is_empty(), "该仓库内部没有子模块");
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /***********************同层内 Git 仓库优先展示*********************/
+
+    #[test]
+    fn git_repos_are_sorted_before_non_git_siblings() {
+        let root = create_temp_dir("git-order");
+        // 名称上 aaa-plain 在前，但 zzz-repo 是仓库，应被排到前面
+        make_dir(&root, "aaa-plain", &["package.json"]);
+        make_git_repo(&root, "zzz-repo", &["package.json"]);
+
+        let tree = scan(&root, MAX_SCAN_DEPTH);
+
+        assert_eq!(
+            names(&tree),
+            vec!["zzz-repo", "aaa-plain"],
+            "带 git 仓库的节点应优先排在同层前面"
+        );
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /***********************有清单但非仓库根时不再向内递归*********************/
+
+    #[test]
+    fn identified_module_without_git_does_not_recurse_inward() {
+        let root = create_temp_dir("no-recurse");
+        // 单个完整包：内部的 examples 子包不应被当作子项目
+        make_dir(&root, "SinglePkg", &["package.json"]);
+        make_dir(&root, "SinglePkg/examples", &["package.json"]);
+
+        let tree = scan(&root, MAX_SCAN_DEPTH);
+
+        let pkg = find(&tree, "SinglePkg");
+        assert!(
+            pkg.children.is_empty(),
+            "有构建清单但非仓库根的目录不应向内递归，实际子节点 {:?}",
+            names(&pkg.children)
+        );
+
+        fs::remove_dir_all(&root).ok();
+    }
 }

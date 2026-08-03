@@ -41,12 +41,8 @@ export class TauriAdapter implements PlatformAPI {
         return invoke('scan_project', { path });
     }
 
-    async scanSubProjects(path: string): Promise<import('../types').SubProjectCandidate[]> {
-        return invoke('scan_sub_projects', { path });
-    }
-
-    async scanImportPreview(path: string): Promise<import('../types').ImportCandidate[]> {
-        return invoke('scan_import_preview', { path });
+    async scanSubProjects(path: string, maxDepth?: number): Promise<import('../types').ImportNode[]> {
+        return invoke('scan_sub_projects', { path, maxDepth });
     }
 
     async scanImportTree(path: string): Promise<import('../types').ImportNode[]> {
