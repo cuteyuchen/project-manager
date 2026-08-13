@@ -128,83 +128,70 @@ async function rollbackHunk(hunk: DiffHunk) {
 </script>
 
 <template>
-  <div class="h-full flex flex-col overflow-hidden">
+  <div class="git-diff-view">
     <!-- No file selected -->
-    <div v-if="!hasSelectedFile" class="flex-1 flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 gap-1">
-      <div class="i-mdi-file-document-outline text-2xl" />
-      <span class="text-[11px]">{{ t('git.selectFileToView') }}</span>
+    <div v-if="!hasSelectedFile" class="git-empty">
+      <div class="i-mdi-file-document-outline git-empty-icon" />
+      <span>{{ t('git.selectFileToView') }}</span>
     </div>
 
     <!-- File selected but no diff content -->
-    <div v-else-if="!diffContent" class="flex-1 flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 gap-1">
-      <div class="i-mdi-check-circle-outline text-2xl" />
-      <span class="text-[11px]">{{ t('git.noDiff') }}</span>
+    <div v-else-if="!diffContent" class="git-empty">
+      <div class="i-mdi-check-circle-outline git-empty-icon" />
+      <span>{{ t('git.noDiff') }}</span>
     </div>
 
     <template v-else>
       <!-- Header -->
-      <div class="flex items-center gap-2 px-3 py-1.5 border-b border-slate-200/40 dark:border-slate-700/30 shrink-0 text-[11px]">
-        <span class="font-medium text-slate-700 dark:text-slate-300 truncate flex-1">{{ diffFile || t('git.commitDetail') }}</span>
-        <span v-if="!isUnsupported" class="text-green-500 font-mono">+{{ stats.adds }}</span>
-        <span v-if="!isUnsupported" class="text-red-500 font-mono">-{{ stats.dels }}</span>
+      <div class="git-diff-header">
+        <span class="git-diff-title">{{ diffFile || t('git.commitDetail') }}</span>
+        <span v-if="!isUnsupported" class="git-diff-stat-add">+{{ stats.adds }}</span>
+        <span v-if="!isUnsupported" class="git-diff-stat-del">-{{ stats.dels }}</span>
       </div>
 
       <!-- Binary / Too large message -->
-      <div v-if="isUnsupported" class="flex-1 flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 gap-2">
-        <div :class="isBinaryFile ? 'i-mdi-file-question-outline' : 'i-mdi-file-alert-outline'" class="text-3xl" />
-        <span class="text-[12px]">{{ isBinaryFile ? t('git.binaryFileNoDiff') : t('git.fileTooLargeNoDiff') }}</span>
+      <div v-if="isUnsupported" class="git-empty">
+        <div :class="isBinaryFile ? 'i-mdi-file-question-outline' : 'i-mdi-file-alert-outline'" class="git-empty-icon" />
+        <span>{{ isBinaryFile ? t('git.binaryFileNoDiff') : t('git.fileTooLargeNoDiff') }}</span>
       </div>
 
       <!-- Diff content -->
-      <div v-if="!isUnsupported" class="flex-1 overflow-auto font-mono text-[11px] leading-[18px] p-2 space-y-2 select-text cursor-text">
-        <div
-          v-if="!hasParsedHunks"
-          class="rounded-md border border-slate-200/50 dark:border-slate-700/40 overflow-hidden"
-        >
-          <div class="px-2 py-1 bg-slate-100/60 dark:bg-slate-800/50 border-b border-slate-200/40 dark:border-slate-700/40 text-[10px] text-blue-600 dark:text-blue-400">
-            {{ diffFile || t('git.commitDetail') }}
+      <div v-if="!isUnsupported" class="git-diff-body select-text cursor-text">
+        <div v-if="!hasParsedHunks" class="git-diff-hunk">
+          <div class="git-diff-hunk-header">
+            <span class="truncate">{{ diffFile || t('git.commitDetail') }}</span>
           </div>
-          <pre class="m-0 p-2 overflow-auto whitespace-pre-wrap text-slate-700 dark:text-slate-300">{{ rawDiffLines.join('\n') }}</pre>
+          <pre class="m-0 p-2 overflow-auto whitespace-pre-wrap">{{ rawDiffLines.join('\n') }}</pre>
         </div>
         <div
           v-for="(hunk, hunkIndex) in parsedHunks"
           :key="hunkIndex"
-          class="border border-slate-200/50 dark:border-slate-700/40 rounded-md overflow-hidden"
+          class="git-diff-hunk"
         >
-          <div class="px-2 py-1 bg-slate-100/60 dark:bg-slate-800/50 border-b border-slate-200/40 dark:border-slate-700/40 text-[10px] flex items-center">
-            <span class="text-blue-600 dark:text-blue-400 truncate">{{ hunk.header }}</span>
+          <div class="git-diff-hunk-header">
+            <span class="truncate">{{ hunk.header }}</span>
             <button
-              class="ml-auto px-2 py-0.5 rounded text-[10px] bg-rose-500/10 text-rose-600 hover:bg-rose-500/18 disabled:opacity-60 cursor-pointer"
+              type="button"
+              class="git-diff-rollback"
               :disabled="reverting"
               @click="rollbackHunk(hunk)"
             >
               回滚区块
             </button>
           </div>
-          <table class="w-full border-collapse">
+          <table class="git-diff-table">
             <tbody>
               <tr
                 v-for="(line, i) in hunk.lines"
                 :key="i"
                 :class="{
-                  'bg-green-500/8': line.type === 'add',
-                  'bg-red-500/8': line.type === 'del',
+                  'is-add': line.type === 'add',
+                  'is-del': line.type === 'del',
                 }"
               >
-                <td class="w-[1px] whitespace-nowrap px-1.5 text-right text-slate-400/60 dark:text-slate-500/40 select-none border-r border-slate-200/20 dark:border-slate-700/15">
-                  {{ line.oldNum || '' }}
-                </td>
-                <td class="w-[1px] whitespace-nowrap px-1.5 text-right text-slate-400/60 dark:text-slate-500/40 select-none border-r border-slate-200/20 dark:border-slate-700/15">
-                  {{ line.newNum || '' }}
-                </td>
-                <td
-                  class="px-2 whitespace-pre"
-                  :class="{
-                    'text-green-700 dark:text-green-300': line.type === 'add',
-                    'text-red-700 dark:text-red-300': line.type === 'del',
-                    'text-slate-700 dark:text-slate-300': line.type === 'context',
-                  }"
-                >{{ line.content }}</td>
+                <td class="git-diff-ln">{{ line.oldNum || '' }}</td>
+                <td class="git-diff-ln">{{ line.newNum || '' }}</td>
+                <td class="git-diff-code">{{ line.content }}</td>
               </tr>
             </tbody>
           </table>

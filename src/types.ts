@@ -152,6 +152,10 @@ export interface Settings {
   gitAiApiKey?: string;
   gitAiModel?: string;
   gitAiPromptTemplate?: string;
+  /** pull 策略：ff-only 仅快进；default 使用 git pull 默认行为 */
+  gitPullStrategy?: 'ff-only' | 'default';
+  /** 危险操作（hard reset 等）是否二次确认，默认 true */
+  gitConfirmDestructive?: boolean;
   // Usage weight sorting
   usageWeightEnabled?: boolean;
   // Sort mode: 'default' (manual drag), 'smart' (usage weight)
@@ -317,6 +321,33 @@ export interface GitRemote {
   remote_type: string;
 }
 
+/** 仓库进行中的 Git 状态机（merge/rebase 等） */
+export type GitOperationState = 'merge' | 'rebase' | 'cherry-pick' | 'revert';
+
+/** 结构化 Git 操作结果（写操作可返回，便于展示原始输出） */
+export interface GitOperationResult {
+  ok: boolean;
+  command: string;
+  stdout: string;
+  stderr: string;
+  exit_code: number;
+  message_zh?: string;
+}
+
+export interface GitStashEntry {
+  index: number;
+  message: string;
+  date: string;
+}
+
+export interface GitTag {
+  name: string;
+  hash: string;
+}
+
+export type GitResetMode = 'soft' | 'mixed' | 'hard';
+export type GitPullStrategy = 'ff-only' | 'default';
+
 export interface GitSummary {
   branch: string;
   is_detached: boolean;
@@ -324,6 +355,15 @@ export interface GitSummary {
   behind: number;
   has_remote: boolean;
   remote_name?: string;
+  /** 跟踪分支，如 origin/main */
+  upstream?: string;
+  has_conflicts: boolean;
+  conflicted_count: number;
+  staged_count: number;
+  unstaged_count: number;
+  untracked_count: number;
+  /** 进行中的高级操作；无则为 null/undefined */
+  operation_state?: GitOperationState | null;
 }
 
 export interface GitCommitFile {

@@ -18,7 +18,12 @@ const {
   skippedProjects,
   calendarDays,
   totalCommits,
+  canGoNextMonth,
+  isViewingCurrentMonth,
   refresh,
+  goPrevMonth,
+  goNextMonth,
+  goCurrentMonth,
 } = useCommitCalendar();
 
 const weekdays = computed(() => {
@@ -164,14 +169,52 @@ onActivated(refreshIfNeeded);
           </p>
         </div>
 
-        <button
-          class="app-primary-action !min-h-8 !rounded-md !px-3 !py-1.5 !text-xs"
-          :disabled="loading"
-          @click="refresh"
-        >
-          <div class="i-mdi-refresh text-sm" :class="{ 'animate-spin': loading }" />
-          <span>{{ t('common.refresh') }}</span>
-        </button>
+        <div class="flex items-center gap-1.5 shrink-0">
+          <!-- 月份切换：仅允许当前月及之前 -->
+          <div class="commit-calendar-month-nav flex items-center gap-0.5 rounded-md border border-slate-200/70 dark:border-slate-700/50 bg-white/60 dark:bg-slate-900/40 p-0.5">
+            <button
+              type="button"
+              class="month-nav-btn"
+              :disabled="loading"
+              :title="t('commitCalendar.prevMonth')"
+              @click="goPrevMonth"
+            >
+              <div class="i-mdi-chevron-left text-base" />
+            </button>
+            <span class="min-w-18 px-1 text-center text-xs font-semibold tabular-nums text-slate-700 dark:text-slate-200">
+              {{ range.title }}
+            </span>
+            <button
+              type="button"
+              class="month-nav-btn"
+              :disabled="loading || !canGoNextMonth"
+              :title="canGoNextMonth ? t('commitCalendar.nextMonth') : t('commitCalendar.nextMonthDisabled')"
+              @click="goNextMonth"
+            >
+              <div class="i-mdi-chevron-right text-base" />
+            </button>
+          </div>
+
+          <button
+            v-if="!isViewingCurrentMonth"
+            type="button"
+            class="month-current-btn"
+            :disabled="loading"
+            :title="t('commitCalendar.backToCurrentMonth')"
+            @click="goCurrentMonth"
+          >
+            <span>{{ t('commitCalendar.thisMonth') }}</span>
+          </button>
+
+          <button
+            class="app-primary-action !min-h-8 !rounded-md !px-3 !py-1.5 !text-xs"
+            :disabled="loading"
+            @click="refresh()"
+          >
+            <div class="i-mdi-refresh text-sm" :class="{ 'animate-spin': loading }" />
+            <span>{{ t('common.refresh') }}</span>
+          </button>
+        </div>
       </div>
 
       <div
@@ -314,6 +357,54 @@ onActivated(refreshIfNeeded);
 </template>
 
 <style scoped>
+.month-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--app-text-secondary, #64748b);
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.month-nav-btn:hover:not(:disabled) {
+  background: var(--app-primary-soft, #dbeafe);
+  color: var(--app-primary, #2563eb);
+}
+
+.month-nav-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.month-current-btn {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--app-border, #e2e8f0);
+  background: var(--app-surface-soft, #f8fafc);
+  color: var(--app-text-secondary, #475569);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.month-current-btn:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--app-primary, #2563eb) 30%, transparent);
+  color: var(--app-primary, #2563eb);
+  background: var(--app-primary-soft, #dbeafe);
+}
+
+.month-current-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .commit-calendar-grid {
   height: 100%;
   background: var(--app-border);

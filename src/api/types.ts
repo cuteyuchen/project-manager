@@ -1,4 +1,16 @@
-import type { NodeVersion, GitStatusResult, GitBranch, GitCommit, GitSummary, GitCommitFile, GitOwnCommitResult } from '../types';
+import type {
+    NodeVersion,
+    GitStatusResult,
+    GitBranch,
+    GitCommit,
+    GitSummary,
+    GitCommitFile,
+    GitOwnCommitResult,
+    GitStashEntry,
+    GitTag,
+    GitResetMode,
+    GitPullStrategy,
+} from '../types';
 
 /** 包管理器解析结果 */
 export interface PackageManagerResolveResult {
@@ -131,7 +143,7 @@ export interface PlatformAPI {
         filters?: { name: string; extensions: string[] }[];
         defaultPath?: string;
     }): Promise<string | string[] | null>;
-    
+
     saveDialog(options?: {
         filters?: { name: string; extensions: string[] }[];
         defaultPath?: string;
@@ -173,8 +185,23 @@ export interface PlatformAPI {
     gitStageAll(path: string): Promise<string>;
     gitUnstageAll(path: string): Promise<string>;
     gitCommit(path: string, message: string): Promise<string>;
-    gitPull(path: string, remote?: string, branch?: string, operationId?: string): Promise<string>;
-    gitPush(path: string, remote?: string, branch?: string, force?: boolean, setUpstream?: boolean, operationId?: string): Promise<string>;
+    gitAmend(path: string, message?: string): Promise<string>;
+    gitPull(
+        path: string,
+        remote?: string,
+        branch?: string,
+        operationId?: string,
+        strategy?: GitPullStrategy,
+    ): Promise<string>;
+    gitPush(
+        path: string,
+        remote?: string,
+        branch?: string,
+        force?: boolean,
+        setUpstream?: boolean,
+        operationId?: string,
+        forceWithLease?: boolean,
+    ): Promise<string>;
     gitFetch(path: string, remote?: string, operationId?: string): Promise<string>;
     gitDiff(path: string, file?: string, staged?: boolean): Promise<string>;
     gitDiffForAi(path: string): Promise<string>;
@@ -187,6 +214,21 @@ export interface PlatformAPI {
     gitCreateAndSwitchBranch(path: string, name: string, startPoint?: string): Promise<string>;
     gitDeleteBranch(path: string, name: string, force?: boolean): Promise<string>;
     gitRenameBranch(path: string, oldName: string, newName: string): Promise<string>;
+    gitMerge(path: string, branch: string): Promise<string>;
+    gitMergeContinue(path: string): Promise<string>;
+    gitMergeAbort(path: string): Promise<string>;
+    gitRebase(path: string, branch: string): Promise<string>;
+    gitReset(path: string, mode: GitResetMode, target?: string): Promise<string>;
+    gitCherryPick(path: string, hash: string): Promise<string>;
+    gitRevertCommit(path: string, hash: string): Promise<string>;
+    gitStashList(path: string): Promise<GitStashEntry[]>;
+    gitStashSave(path: string, message?: string): Promise<string>;
+    gitStashPop(path: string, index?: number): Promise<string>;
+    gitStashApply(path: string, index?: number): Promise<string>;
+    gitStashDrop(path: string, index: number): Promise<string>;
+    gitTags(path: string): Promise<GitTag[]>;
+    gitCreateTag(path: string, name: string, message?: string, target?: string): Promise<string>;
+    gitDeleteTag(path: string, name: string): Promise<string>;
     gitHistory(path: string, maxCount?: number): Promise<GitCommit[]>;
     gitOwnCommits(path: string, since: string, until: string): Promise<GitOwnCommitResult>;
     gitCommitDetail(path: string, hash: string): Promise<GitCommit>;

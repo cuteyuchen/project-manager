@@ -1,9 +1,13 @@
 import {
   buildCommitCalendarDays,
+  canGoToNextCalendarMonth,
   formatCommitCalendarEntry,
   groupCommitCalendarItemsByDate,
   hasWeekendCommits,
+  isCurrentCalendarMonth,
   resolveCurrentMonthRange,
+  resolveMonthRange,
+  shiftCalendarMonth,
 } from '../src/utils/commitCalendar';
 import type { CommitCalendarItem } from '../src/utils/commitCalendar';
 
@@ -30,6 +34,30 @@ function assertEq<T>(actual: T, expected: T, message: string) {
   assertEq(range.endDate, '2026-08-01', '结束日期应为下月 1 号');
   assertEq(range.year, 2026, '应保留本月年份');
   assertEq(range.month, 6, 'month 应使用 Date 的 0-based 月份');
+}
+
+/***********************任意月份范围与切换边界*********************/
+
+{
+  const june = resolveMonthRange(2026, 5);
+  assertEq(june.startDate, '2026-06-01', '6 月开始日期');
+  assertEq(june.endDate, '2026-07-01', '6 月结束日期为下月 1 号');
+  assertEq(june.title, '2026-06', '标题应为 YYYY-MM');
+
+  const prev = shiftCalendarMonth(2026, 0, -1);
+  assertEq(prev.year, 2025, '1 月上翻应跨年');
+  assertEq(prev.month, 11, '1 月上翻应为 12 月');
+
+  const next = shiftCalendarMonth(2025, 11, 1);
+  assertEq(next.year, 2026, '12 月下翻应跨年');
+  assertEq(next.month, 0, '12 月下翻应为 1 月');
+
+  const now = new Date('2026-08-12T10:00:00+08:00');
+  assert(canGoToNextCalendarMonth(2026, 6, now), '从 7 月可切到 8 月（当前月）');
+  assert(!canGoToNextCalendarMonth(2026, 7, now), '已在当前月 8 月时不可再下翻');
+  assert(!canGoToNextCalendarMonth(2026, 8, now), '未来月不可再下翻');
+  assert(isCurrentCalendarMonth(2026, 7, now), '2026-08 应为当前月');
+  assert(!isCurrentCalendarMonth(2026, 6, now), '2026-07 不是当前月');
 }
 
 /***********************月历网格生成*********************/

@@ -6,6 +6,7 @@ import 'element-plus/theme-chalk/dark/css-vars.css';
 import App from "./App.vue";
 import QuickSearchWindow from './QuickSearchWindow.vue';
 import "./styles/theme.css";
+import "./styles/git-ui.css";
 import "virtual:uno.css";
 import i18n from "./i18n";
 

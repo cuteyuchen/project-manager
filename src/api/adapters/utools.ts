@@ -1,5 +1,17 @@
 import type { PlatformAPI, ProjectInfo, TerminalInfo, EditorInfo, PortEntry, PackageManagerResolveResult } from '../types';
-import type { NodeVersion, GitStatusResult, GitBranch, GitCommit, GitSummary, GitCommitFile, GitOwnCommitResult } from '../../types';
+import type {
+  NodeVersion,
+  GitStatusResult,
+  GitBranch,
+  GitCommit,
+  GitSummary,
+  GitCommitFile,
+  GitOwnCommitResult,
+  GitStashEntry,
+  GitTag,
+  GitResetMode,
+  GitPullStrategy,
+} from '../../types';
 
 // Declare global interface for uTools services
 declare global {
@@ -169,7 +181,7 @@ export class UToolsAdapter implements PlatformAPI {
           return this.service.getPlatformInfo();
       }
       return Promise.resolve({
-          os: navigator.platform.toLowerCase().includes('win') ? 'windows' : 
+          os: navigator.platform.toLowerCase().includes('win') ? 'windows' :
               navigator.platform.toLowerCase().includes('mac') ? 'macos' : 'linux',
           arch: 'x86_64' // default fallback
       });
@@ -215,8 +227,27 @@ export class UToolsAdapter implements PlatformAPI {
   async gitStageAll(path: string): Promise<string> { return this.service.gitStageAll(path); }
   async gitUnstageAll(path: string): Promise<string> { return this.service.gitUnstageAll(path); }
   async gitCommit(path: string, message: string): Promise<string> { return this.service.gitCommit(path, message); }
-  async gitPull(path: string, remote?: string, branch?: string, operationId?: string): Promise<string> { return this.service.gitPull(path, remote, branch, operationId); }
-  async gitPush(path: string, remote?: string, branch?: string, force?: boolean, setUpstream?: boolean, operationId?: string): Promise<string> { return this.service.gitPush(path, remote, branch, force, setUpstream, operationId); }
+  async gitAmend(path: string, message?: string): Promise<string> { return this.service.gitAmend(path, message); }
+  async gitPull(
+    path: string,
+    remote?: string,
+    branch?: string,
+    operationId?: string,
+    strategy?: GitPullStrategy,
+  ): Promise<string> {
+    return this.service.gitPull(path, remote, branch, operationId, strategy);
+  }
+  async gitPush(
+    path: string,
+    remote?: string,
+    branch?: string,
+    force?: boolean,
+    setUpstream?: boolean,
+    operationId?: string,
+    forceWithLease?: boolean,
+  ): Promise<string> {
+    return this.service.gitPush(path, remote, branch, force, setUpstream, operationId, forceWithLease);
+  }
   async gitFetch(path: string, remote?: string, operationId?: string): Promise<string> { return this.service.gitFetch(path, remote, operationId); }
   async gitDiff(path: string, file?: string, staged?: boolean): Promise<string> { return this.service.gitDiff(path, file, staged); }
   async gitDiffForAi(path: string): Promise<string> {
@@ -234,6 +265,23 @@ export class UToolsAdapter implements PlatformAPI {
   async gitCreateAndSwitchBranch(path: string, name: string, startPoint?: string): Promise<string> { return this.service.gitCreateAndSwitchBranch(path, name, startPoint); }
   async gitDeleteBranch(path: string, name: string, force?: boolean): Promise<string> { return this.service.gitDeleteBranch(path, name, force); }
   async gitRenameBranch(path: string, oldName: string, newName: string): Promise<string> { return this.service.gitRenameBranch(path, oldName, newName); }
+  async gitMerge(path: string, branch: string): Promise<string> { return this.service.gitMerge(path, branch); }
+  async gitMergeContinue(path: string): Promise<string> { return this.service.gitMergeContinue(path); }
+  async gitMergeAbort(path: string): Promise<string> { return this.service.gitMergeAbort(path); }
+  async gitRebase(path: string, branch: string): Promise<string> { return this.service.gitRebase(path, branch); }
+  async gitReset(path: string, mode: GitResetMode, target?: string): Promise<string> { return this.service.gitReset(path, mode, target); }
+  async gitCherryPick(path: string, hash: string): Promise<string> { return this.service.gitCherryPick(path, hash); }
+  async gitRevertCommit(path: string, hash: string): Promise<string> { return this.service.gitRevertCommit(path, hash); }
+  async gitStashList(path: string): Promise<GitStashEntry[]> { return this.service.gitStashList(path); }
+  async gitStashSave(path: string, message?: string): Promise<string> { return this.service.gitStashSave(path, message); }
+  async gitStashPop(path: string, index?: number): Promise<string> { return this.service.gitStashPop(path, index); }
+  async gitStashApply(path: string, index?: number): Promise<string> { return this.service.gitStashApply(path, index); }
+  async gitStashDrop(path: string, index: number): Promise<string> { return this.service.gitStashDrop(path, index); }
+  async gitTags(path: string): Promise<GitTag[]> { return this.service.gitTags(path); }
+  async gitCreateTag(path: string, name: string, message?: string, target?: string): Promise<string> {
+    return this.service.gitCreateTag(path, name, message, target);
+  }
+  async gitDeleteTag(path: string, name: string): Promise<string> { return this.service.gitDeleteTag(path, name); }
   async gitHistory(path: string, maxCount?: number): Promise<GitCommit[]> { return this.service.gitHistory(path, maxCount); }
   async gitOwnCommits(path: string, since: string, until: string): Promise<GitOwnCommitResult> {
       if ((this.service as any).gitOwnCommits) {

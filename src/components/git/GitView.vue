@@ -15,6 +15,7 @@ import GitHistory from './GitHistory.vue';
 import GitBranchDialog from './GitBranchDialog.vue';
 import GitCommitFileList from './GitCommitFileList.vue';
 import GitRemoteSettingsDialog from './GitRemoteSettingsDialog.vue';
+import GitRepoCenterDialog from './GitRepoCenterDialog.vue';
 import { showPersistentGitError } from './message';
 
 const { t } = useI18n();
@@ -25,6 +26,7 @@ const settingsStore = useSettingsStore();
 const activeTab = ref<'changes' | 'history'>('changes');
 const showBranchDialog = ref(false);
 const showSettingsDialog = ref(false);
+const showRepoCenter = ref(false);
 
 const activeProject = computed(() =>
   projectStore.projects.find(p => p.id === projectStore.activeProjectId)
@@ -49,39 +51,128 @@ function persistLayoutNumber(storageKey: string, value: number) {
   settingsStore.settings.layoutState[storageKey] = value;
 }
 
+/***********************Changes 左右分栏（百分比，默认 50%）*********************/
+// 相对「整个状态+Diff 容器宽度」存比例，窗口缩放时按比例重算，避免大窗像素写死、小窗挤爆右侧
+
+const LEFT_PANE_DEFAULT_RATIO = 0.5;
+const LEFT_PANE_MAX_RATIO = 0.5;
+const LEFT_PANE_MIN_PX = 180;
+const LEFT_PANE_STORAGE_KEY = 'git.changes.leftPane';
+
 const leftPaneContainerRef = useTemplateRef<HTMLElement>('leftPaneContainerRef');
 const leftContainerWidth = ref(0);
+const isDraggingLeftPane = ref(false);
 let leftResizeObserver: ResizeObserver | null = null;
+let leftPaneDragStartX = 0;
+let leftPaneDragStartRatio = LEFT_PANE_DEFAULT_RATIO;
+
+/** 读取已存比例：0~1 为相对全宽；>1 为旧版像素，待有容器宽后换算 */
+function readLeftPaneRatioFromStorage(): number {
+  const stored = settingsStore.settings.layoutState?.[LEFT_PANE_STORAGE_KEY];
+  if (typeof stored !== 'number' || !Number.isFinite(stored) || stored <= 0) {
+    return LEFT_PANE_DEFAULT_RATIO;
+  }
+  // 新格式：相对容器全宽的比例
+  if (stored <= 1) {
+    return Math.min(LEFT_PANE_MAX_RATIO, Math.max(0.05, stored));
+  }
+  // 旧格式像素：尚无容器宽度时先回默认，测量后再迁移
+  return LEFT_PANE_DEFAULT_RATIO;
+}
+
+const leftPaneRatio = ref(readLeftPaneRatioFromStorage());
+/** 旧版像素值，等 ResizeObserver 量到宽度后一次性迁成比例 */
+let leftPaneLegacyPixels: number | null = (() => {
+  const stored = settingsStore.settings.layoutState?.[LEFT_PANE_STORAGE_KEY];
+  if (typeof stored === 'number' && stored > 1) return stored;
+  return null;
+})();
+
+function clampLeftPaneRatio(ratio: number, containerW: number): number {
+  if (containerW <= 0) {
+    return Math.min(LEFT_PANE_MAX_RATIO, Math.max(0.05, ratio));
+  }
+  const minRatio = Math.min(LEFT_PANE_MAX_RATIO, LEFT_PANE_MIN_PX / containerW);
+  return Math.min(LEFT_PANE_MAX_RATIO, Math.max(minRatio, ratio));
+}
+
+function persistLeftPaneRatio() {
+  if (!settingsStore.settings.layoutState) {
+    settingsStore.settings.layoutState = {};
+  }
+  const ratio = Math.round(leftPaneRatio.value * 1000) / 1000;
+  settingsStore.settings.layoutState[LEFT_PANE_STORAGE_KEY] = ratio;
+}
+
+/** 左侧像素宽：始终由 ratio × 当前容器宽得出；未测量时为 null，样式回退到 50% */
+const leftPaneWidthPx = computed((): number | null => {
+  const w = leftContainerWidth.value;
+  if (w <= 0) return null;
+  const ratio = clampLeftPaneRatio(leftPaneRatio.value, w);
+  return Math.round(ratio * w);
+});
+
+const leftPaneStyle = computed(() => {
+  const px = leftPaneWidthPx.value;
+  if (px != null && px > 0) {
+    return { width: `${px}px`, maxWidth: `${LEFT_PANE_MAX_RATIO * 100}%` };
+  }
+  // 首帧未测量：默认一半，不写死像素
+  return { width: `${LEFT_PANE_DEFAULT_RATIO * 100}%`, maxWidth: `${LEFT_PANE_MAX_RATIO * 100}%` };
+});
+
+function applyLeftContainerWidth(w: number) {
+  if (w <= 0) return;
+  leftContainerWidth.value = w;
+
+  // 旧像素 → 相对全宽比例（并封顶 50%）
+  if (leftPaneLegacyPixels !== null) {
+    leftPaneRatio.value = clampLeftPaneRatio(leftPaneLegacyPixels / w, w);
+    leftPaneLegacyPixels = null;
+    persistLeftPaneRatio();
+    return;
+  }
+
+  if (!isDraggingLeftPane.value) {
+    leftPaneRatio.value = clampLeftPaneRatio(leftPaneRatio.value, w);
+  }
+}
+
+function measureLeftContainerWidth() {
+  const el = leftPaneContainerRef.value;
+  if (!el) return;
+  applyLeftContainerWidth(el.getBoundingClientRect().width);
+}
+
+function bindLeftPaneResizeObserver(el: HTMLElement) {
+  leftResizeObserver?.disconnect();
+  leftResizeObserver = new ResizeObserver((entries) => {
+    const entry = entries[0];
+    if (!entry) return;
+    applyLeftContainerWidth(entry.contentRect.width);
+  });
+  leftResizeObserver.observe(el);
+  nextTick(() => measureLeftContainerWidth());
+}
+
+// Changes 页 v-if 挂载/卸载时重绑，保证切回 Tab 与窗口缩放都能更新
+watch(leftPaneContainerRef, (el) => {
+  if (!el) {
+    leftResizeObserver?.disconnect();
+    leftResizeObserver = null;
+    leftContainerWidth.value = 0;
+    return;
+  }
+  bindLeftPaneResizeObserver(el);
+});
 
 onMounted(() => {
   enterActiveMode();
-
-  if (!leftPaneContainerRef.value) return;
-  leftResizeObserver = new ResizeObserver((entries) => {
-    const entry = entries[0];
-    if (entry) leftContainerWidth.value = entry.contentRect.width;
-  });
-  leftResizeObserver.observe(leftPaneContainerRef.value);
-  // 确保首次布局后立即测量容器宽度，避免 ResizeObserver 延迟导致 leftContainerWidth 为 0
-  nextTick(() => {
-    if (leftPaneContainerRef.value && leftContainerWidth.value === 0) {
-      leftContainerWidth.value = leftPaneContainerRef.value.getBoundingClientRect().width;
-    }
-  });
+  if (leftPaneContainerRef.value) {
+    bindLeftPaneResizeObserver(leftPaneContainerRef.value);
+  }
 });
 
-onUnmounted(() => {
-  leftResizeObserver?.disconnect();
-});
-
-const leftPaneMax = computed(() => leftContainerWidth.value > 0 ? leftContainerWidth.value * 0.5 : 500);
-const leftPane = useSplitPane({
-  initial: 280,
-  min: 180,
-  max: leftPaneMax,
-  direction: 'horizontal',
-  storageKey: 'git.changes.leftPane',
-});
 const commitPane = useSplitPane({
   initial: 180,
   min: 120,
@@ -120,12 +211,37 @@ const statusPanelRef = useTemplateRef<HTMLElement>('statusPanelRef');
 const isViewActive = ref(false);
 let refreshTimer: number | null = null;
 
-// 左右分割拖拽开始前，确保容器宽度已测量
+// 左右分割：拖拽改的是百分比，松手后持久化比例
 function onLeftPaneMouseDown(e: MouseEvent) {
-  if (leftContainerWidth.value === 0 && leftPaneContainerRef.value) {
-    leftContainerWidth.value = leftPaneContainerRef.value.getBoundingClientRect().width;
-  }
-  leftPane.onMouseDown(e);
+  e.preventDefault();
+  measureLeftContainerWidth();
+  if (leftContainerWidth.value <= 0) return;
+
+  isDraggingLeftPane.value = true;
+  leftPaneDragStartX = e.clientX;
+  leftPaneDragStartRatio = clampLeftPaneRatio(leftPaneRatio.value, leftContainerWidth.value);
+  document.addEventListener('mousemove', onLeftPaneMouseMove);
+  document.addEventListener('mouseup', onLeftPaneMouseUp);
+  document.body.style.cursor = 'col-resize';
+  document.body.style.userSelect = 'none';
+}
+
+function onLeftPaneMouseMove(e: MouseEvent) {
+  if (!isDraggingLeftPane.value) return;
+  const w = leftContainerWidth.value;
+  if (w <= 0) return;
+  const deltaRatio = (e.clientX - leftPaneDragStartX) / w;
+  leftPaneRatio.value = clampLeftPaneRatio(leftPaneDragStartRatio + deltaRatio, w);
+}
+
+function onLeftPaneMouseUp() {
+  if (!isDraggingLeftPane.value) return;
+  isDraggingLeftPane.value = false;
+  document.removeEventListener('mousemove', onLeftPaneMouseMove);
+  document.removeEventListener('mouseup', onLeftPaneMouseUp);
+  document.body.style.cursor = '';
+  document.body.style.userSelect = '';
+  persistLeftPaneRatio();
 }
 
 function onStagedSplitMouseDown(e: MouseEvent) {
@@ -248,7 +364,14 @@ api.onWindowFocus(() => {
 onUnmounted(() => {
   clearScheduledRefresh();
   unlistenFocus?.();
+  leftResizeObserver?.disconnect();
+  leftResizeObserver = null;
+  document.removeEventListener('mousemove', onLeftPaneMouseMove);
+  document.removeEventListener('mouseup', onLeftPaneMouseUp);
+  document.body.style.cursor = '';
+  document.body.style.userSelect = '';
   persistLayoutNumber('git.changes.stagedRatio', stagedRatio.value);
+  persistLeftPaneRatio();
 });
 
 onActivated(enterActiveMode);
@@ -345,13 +468,12 @@ async function copyText(value: string, successMessage: string) {
 </script>
 
 <template>
-  <div class="h-full flex flex-col overflow-hidden">
+  <div class="git-module">
     <!-- Not a git repo -->
-    <div v-if="!isGitRepo" class="flex-1 flex flex-col items-center justify-center gap-3">
-      <div class="i-mdi-source-branch text-4xl text-slate-300 dark:text-slate-600" />
-      <p class="text-sm text-slate-500 dark:text-slate-400">{{ t('git.notGitRepo') }}</p>
-      <button @click="handleInitRepo"
-        class="px-4 py-1.5 rounded-md text-xs font-medium bg-blue-500 hover:bg-blue-600 text-white transition-colors cursor-pointer">
+    <div v-if="!isGitRepo" class="git-empty">
+      <div class="i-mdi-source-branch git-empty-icon" />
+      <p>{{ t('git.notGitRepo') }}</p>
+      <button type="button" class="git-empty-action" @click="handleInitRepo">
         {{ t('git.initRepo') }}
       </button>
     </div>
@@ -363,30 +485,33 @@ async function copyText(value: string, successMessage: string) {
         :project="activeProject"
         @open-branch-dialog="showBranchDialog = true"
         @open-settings-dialog="showSettingsDialog = true"
+        @open-repo-center="showRepoCenter = true"
         @refresh="handleRefresh"
       />
 
       <!-- Tab bar -->
-      <div class="flex border-b border-slate-200/40 dark:border-slate-700/30 shrink-0 px-2">
+      <div class="git-tabs">
         <button
           v-for="tab in tabs"
           :key="tab.value"
+          type="button"
+          class="git-tab"
+          :class="{ 'is-active': activeTab === tab.value }"
           @click="activeTab = tab.value"
-          class="px-3 py-1.5 text-[11px] font-medium transition-colors border-b-2 -mb-px cursor-pointer"
-          :class="activeTab === tab.value
-            ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-            : 'border-transparent text-slate-500 dark:text-slate-300 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100/60 dark:hover:bg-slate-700/40'"
         >
           {{ tab.label }}
         </button>
       </div>
 
       <!-- ===== CHANGES TAB: SourceTree-style layout ===== -->
-      <div v-if="activeTab === 'changes'" class="flex-1 flex flex-col min-h-0">
+      <div v-if="activeTab === 'changes'" class="git-changes-layout flex-1 flex flex-col min-h-0">
         <!-- Top area: status panel (left) + diff view (right) -->
         <div ref="leftPaneContainerRef" class="flex-1 flex min-h-0">
           <!-- Left: file status panel (staged top / unstaged bottom) -->
-          <div class="flex flex-col shrink-0 border-r border-slate-200/40 dark:border-slate-700/30" :style="{ width: leftPane.size.value + 'px' }">
+          <div
+            class="git-side-panel flex flex-col shrink-0 min-w-0"
+            :style="leftPaneStyle"
+          >
             <div ref="statusPanelRef" class="flex-1 flex flex-col min-h-0 overflow-hidden">
               <GitStatusPanel
                 :project="activeProject"
@@ -396,14 +521,12 @@ async function copyText(value: string, successMessage: string) {
             </div>
           </div>
 
-          <!-- Vertical drag handle: left ↔ right -->
+          <!-- Vertical drag handle: left ↔ right（持久化百分比） -->
           <div
-            class="w-1 hover:w-1.5 shrink-0 cursor-col-resize transition-all group relative"
-            :class="leftPane.isDragging.value ? 'bg-blue-500/40 w-1.5' : 'hover:bg-blue-500/20'"
+            class="git-split-v"
+            :class="{ 'is-dragging': isDraggingLeftPane }"
             @mousedown="onLeftPaneMouseDown"
-          >
-            <div class="absolute inset-y-0 -left-1 -right-1" />
-          </div>
+          />
 
           <!-- Right: diff view -->
           <div class="flex-1 min-w-0">
@@ -413,24 +536,22 @@ async function copyText(value: string, successMessage: string) {
 
         <!-- Horizontal drag handle: workspace ↔ commit -->
         <div
-          class="h-1 hover:h-1.5 shrink-0 cursor-row-resize transition-all"
-          :class="commitPane.isDragging.value ? 'bg-blue-500/40 h-1.5' : 'hover:bg-blue-500/20'"
+          class="git-split-h"
+          :class="{ 'is-dragging': commitPane.isDragging.value }"
           @mousedown="commitPane.onMouseDown"
-        >
-          <div class="absolute inset-x-0 -top-1 -bottom-1 relative" />
-        </div>
+        />
 
         <!-- Bottom: commit area spanning full width -->
-        <div class="shrink-0 border-t border-slate-200/40 dark:border-slate-700/30" :style="{ height: commitPane.size.value + 'px' }">
+        <div class="shrink-0" :style="{ height: commitPane.size.value + 'px' }">
           <GitCommitArea :project="activeProject" class="h-full" />
         </div>
       </div>
 
       <!-- ===== HISTORY TAB: top-bottom layout ===== -->
-      <div v-else class="flex-1 flex flex-col min-h-0">
+      <div v-else class="git-history-layout flex-1 flex flex-col min-h-0">
         <!-- Top: commit list -->
         <div
-          class="shrink-0 overflow-hidden border-b border-slate-200/40 dark:border-slate-700/30"
+          class="shrink-0 overflow-hidden"
           :class="selectedHistoryHash ? '' : 'flex-1'"
           :style="selectedHistoryHash ? { height: historyTopPane.size.value + 'px' } : undefined"
         >
@@ -440,32 +561,31 @@ async function copyText(value: string, successMessage: string) {
         <!-- Drag handle: history list ↕ detail workspace -->
         <div
           v-if="selectedHistoryHash"
-          class="h-1 hover:h-1.5 shrink-0 cursor-row-resize transition-all"
-          :class="historyTopPane.isDragging.value ? 'bg-blue-500/40 h-1.5' : 'hover:bg-blue-500/20'"
+          class="git-split-h"
+          :class="{ 'is-dragging': historyTopPane.isDragging.value }"
           @mousedown="historyTopPane.onMouseDown"
-        >
-          <div class="absolute inset-x-0 -top-1 -bottom-1 relative" />
-        </div>
+        />
 
         <!-- Bottom: commit detail (info + files | diff) -->
         <div v-if="selectedHistoryHash" class="flex-1 flex min-h-0">
           <!-- Left: commit info + file list -->
           <div
-            class="flex flex-col border-r border-slate-200/40 dark:border-slate-700/30 shrink-0 min-w-0"
+            class="git-side-panel flex flex-col shrink-0 min-w-0"
             :style="{ width: historyLeftPane.size.value + 'px' }"
           >
             <!-- Commit info header -->
             <div
               v-if="selectedHistoryCommit"
-              class="px-3 py-2 border-b border-slate-200/40 dark:border-slate-700/20 shrink-0 text-[11px] space-y-2 overflow-auto select-text"
+              class="git-history-detail px-3 py-2 shrink-0 text-[11px] space-y-2 overflow-auto select-text"
               :style="{ height: historyDetailPane.size.value + 'px' }"
             >
-              <div class="flex items-center justify-between gap-2 pb-1 border-b border-slate-200/40 dark:border-slate-700/20">
-                <span class="text-[10px] font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
+              <div class="flex items-center justify-between gap-2 pb-1 border-b border-[color:var(--git-border)]">
+                <span class="git-history-detail-label">
                   {{ t('git.commitDetail') }}
                 </span>
                 <button
-                  class="shrink-0 rounded px-1.5 py-0.5 text-[10px] bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-300 transition-colors"
+                  type="button"
+                  class="git-history-detail-close"
                   @click="closeHistoryDetail"
                 >
                   {{ t('common.close') }}
@@ -516,12 +636,10 @@ async function copyText(value: string, successMessage: string) {
 
             <!-- Drag handle: commit detail ↕ files -->
             <div
-              class="h-1 hover:h-1.5 shrink-0 cursor-row-resize transition-all"
-              :class="historyDetailPane.isDragging.value ? 'bg-blue-500/40 h-1.5' : 'hover:bg-blue-500/20'"
+              class="git-split-h"
+              :class="{ 'is-dragging': historyDetailPane.isDragging.value }"
               @mousedown="historyDetailPane.onMouseDown"
-            >
-              <div class="absolute inset-x-0 -top-1 -bottom-1 relative" />
-            </div>
+            />
 
             <!-- File list -->
             <div class="flex-1 min-h-0">
@@ -531,12 +649,10 @@ async function copyText(value: string, successMessage: string) {
 
           <!-- Drag handle: left panel ↔ diff -->
           <div
-            class="w-1 hover:w-1.5 shrink-0 cursor-col-resize transition-all group relative"
-            :class="historyLeftPane.isDragging.value ? 'bg-blue-500/40 w-1.5' : 'hover:bg-blue-500/20'"
+            class="git-split-v"
+            :class="{ 'is-dragging': historyLeftPane.isDragging.value }"
             @mousedown="historyLeftPane.onMouseDown"
-          >
-            <div class="absolute inset-y-0 -left-1 -right-1" />
-          </div>
+          />
 
           <!-- Right: diff view -->
           <div class="flex-1 min-w-0">
@@ -559,6 +675,13 @@ async function copyText(value: string, successMessage: string) {
         v-model="showSettingsDialog"
         :project="activeProject"
         @changed="handleRepositoryChanged"
+      />
+
+      <!-- 仓库中心：stash / tags / remotes / branches -->
+      <GitRepoCenterDialog
+        v-model="showRepoCenter"
+        :project="activeProject"
+        @open-branches="showBranchDialog = true"
       />
     </template>
   </div>

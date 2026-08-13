@@ -119,17 +119,6 @@ function statusIcon(status: string): string {
   }
 }
 
-function statusColor(status: string): string {
-  switch (status) {
-    case 'modified': return 'text-yellow-500';
-    case 'added': case 'untracked': return 'text-green-500';
-    case 'deleted': return 'text-red-500';
-    case 'renamed': case 'copied': return 'text-blue-500';
-    case 'conflicted': return 'text-orange-500';
-    default: return 'text-slate-500';
-  }
-}
-
 function fileName(path: string): string {
   return path.split('/').pop() || path;
 }
@@ -225,126 +214,156 @@ async function handleBatchDiscard() {
 </script>
 
 <template>
-  <div class="h-full flex flex-col text-[11px] select-none">
+  <div class="git-status-panel">
     <!-- No changes -->
-    <div v-if="!hasChanges" class="flex-1 flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 gap-1 p-4">
-      <div class="i-mdi-check-circle-outline text-2xl" />
+    <div v-if="!hasChanges" class="git-empty">
+      <div class="i-mdi-check-circle-outline git-empty-icon" />
       <span>{{ t('git.noChanges') }}</span>
     </div>
 
     <template v-else>
       <!-- Staged area (top) -->
-      <div class="flex flex-col min-h-0 overflow-hidden" :style="{ height: stagedRatio + '%' }">
-        <div class="flex items-center gap-1 px-2 py-1 bg-green-500/5 border-b border-slate-200/30 dark:border-slate-700/20 shrink-0">
-          <span class="font-medium text-green-600 dark:text-green-400 flex-1">
-            {{ t('git.stagedChanges') }} ({{ stagedFiles.length }})
+      <div class="git-scm-section" :style="{ height: stagedRatio + '%' }">
+        <div class="git-scm-section-header is-staged">
+          <span class="flex-1 min-w-0 truncate">
+            {{ t('git.stagedChanges') }}
+            <span class="git-scm-count">{{ stagedFiles.length }}</span>
             <template v-if="selectedStagedCount > 0">
-              <span class="text-blue-500 dark:text-blue-400 font-normal"> · {{ t('git.selectedCount', { count: selectedStagedCount }) }}</span>
+              <span class="font-normal opacity-80"> · {{ t('git.selectedCount', { count: selectedStagedCount }) }}</span>
             </template>
           </span>
-          <template v-if="selectedStagedCount > 1">
-            <button @click="handleBatchUnstage" class="text-[10px] px-1 py-0.5 rounded bg-orange-500/10 text-orange-600 dark:text-orange-400 hover:bg-orange-500/20 cursor-pointer" :title="t('git.batchUnstage')">
-              {{ t('git.batchUnstage') }}
+          <div class="git-scm-actions">
+            <template v-if="selectedStagedCount > 1">
+              <button type="button" class="git-scm-chip-btn" :title="t('git.batchUnstage')" @click="handleBatchUnstage">
+                {{ t('git.batchUnstage') }}
+              </button>
+              <button type="button" class="git-scm-icon-btn" :title="t('git.clearSelection')" @click="selectedFiles.clear()">
+                <div class="i-mdi-close-circle-outline" />
+              </button>
+            </template>
+            <button
+              v-else-if="stagedFiles.length > 0"
+              type="button"
+              class="git-scm-icon-btn"
+              :title="t('git.unstageAll')"
+              @click="handleUnstageAll"
+            >
+              <div class="i-mdi-minus-circle-outline" />
             </button>
-            <button @click="selectedFiles.clear()" class="text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 cursor-pointer" :title="t('git.clearSelection')">
-              <div class="i-mdi-close-circle-outline" />
-            </button>
-          </template>
-          <button v-else-if="stagedFiles.length > 0" @click="handleUnstageAll" class="text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 cursor-pointer" :title="t('git.unstageAll')">
-            <div class="i-mdi-minus-circle-outline" />
-          </button>
+          </div>
         </div>
-        <div class="flex-1 overflow-auto">
-          <div v-if="stagedFiles.length === 0" class="flex items-center justify-center h-full text-slate-400/60 dark:text-slate-500/40 text-[10px]">
+        <div class="git-scm-list">
+          <div v-if="stagedFiles.length === 0" class="git-scm-list-empty">
             {{ t('git.noChanges') }}
           </div>
-          <div v-for="file in stagedFiles" :key="'s:' + file.path"
+          <div
+            v-for="file in stagedFiles"
+            :key="'s:' + file.path"
+            class="git-scm-file-row"
+            :class="{ 'is-selected': isFileSelected(file) }"
             @click="handleFileClick($event, file, 'staged')"
-            class="flex items-center gap-1 px-2 py-1 cursor-pointer group select-none"
-            :class="isFileSelected(file) ? 'bg-blue-500/12 dark:bg-blue-500/18 ring-1 ring-blue-400/30' : 'hover:bg-slate-100/60 dark:hover:bg-slate-800/30'">
-            <span class="w-4 text-center font-mono font-bold text-[10px] shrink-0" :class="statusColor(file.status)">{{ statusIcon(file.status) }}</span>
-            <span class="flex-1 truncate text-slate-700 dark:text-slate-300">
-              <span class="text-slate-400 dark:text-slate-500">{{ fileDir(file.path) }}</span>{{ fileName(file.path) }}
+          >
+            <span class="git-scm-file-status" :class="`is-${file.status}`">{{ statusIcon(file.status) }}</span>
+            <span class="git-scm-file-main">
+              <span class="git-scm-file-dir">{{ fileDir(file.path) }}</span><span class="git-scm-file-name">{{ fileName(file.path) }}</span>
             </span>
-            <button @click.stop="unstageFile(file)" class="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-orange-500 transition-opacity cursor-pointer" :class="isFileSelected(file) ? '!opacity-100' : ''" :title="t('git.unstage')">
-              <div class="i-mdi-minus text-xs" />
-            </button>
+            <div class="git-scm-file-actions">
+              <button type="button" :title="t('git.unstage')" @click.stop="unstageFile(file)">
+                <div class="i-mdi-minus text-xs" />
+              </button>
+            </div>
           </div>
         </div>
       </div>
 
       <!-- Staged/Unstaged drag handle -->
       <div
-        class="h-1 hover:h-1.5 shrink-0 cursor-row-resize transition-all hover:bg-blue-500/20"
+        class="git-split-h"
         @mousedown="emit('staged-split-mousedown', $event)"
-      >
-        <div class="relative inset-x-0 -top-1 -bottom-1" />
-      </div>
+      />
 
       <!-- Unstaged area (bottom) -->
-      <div class="flex flex-col min-h-0 overflow-hidden" :style="{ height: (100 - stagedRatio) + '%' }">
+      <div class="git-scm-section" :style="{ height: (100 - stagedRatio) + '%' }">
         <!-- Conflicted files at top of unstaged -->
         <template v-if="conflictedFiles.length > 0">
-          <div class="flex items-center gap-1 px-2 py-1 bg-orange-500/5 border-b border-slate-200/30 dark:border-slate-700/20 shrink-0">
-            <span class="font-medium text-orange-600 dark:text-orange-400 flex-1">
-              {{ t('git.conflictedFiles') }} ({{ conflictedFiles.length }})
+          <div class="git-scm-section-header is-conflict">
+            <span class="flex-1 min-w-0 truncate">
+              {{ t('git.conflictedFiles') }}
+              <span class="git-scm-count">{{ conflictedFiles.length }}</span>
             </span>
           </div>
           <div class="max-h-[100px] overflow-auto shrink-0">
-            <div v-for="file in conflictedFiles" :key="'c:' + file.path"
+            <div
+              v-for="file in conflictedFiles"
+              :key="'c:' + file.path"
+              class="git-scm-file-row"
+              :class="{ 'is-selected': isFileSelected(file) }"
               @click="handleFileClick($event, file, 'conflicted')"
-              class="flex items-center gap-1 px-2 py-1 cursor-pointer group select-none"
-              :class="isFileSelected(file) ? 'bg-blue-500/12 dark:bg-blue-500/18 ring-1 ring-blue-400/30' : 'hover:bg-slate-100/60 dark:hover:bg-slate-800/30'">
-              <span class="w-4 text-center font-mono font-bold text-[10px] text-orange-500 shrink-0">C</span>
-              <span class="flex-1 truncate text-slate-700 dark:text-slate-300">
-                <span class="text-slate-400 dark:text-slate-500">{{ fileDir(file.path) }}</span>{{ fileName(file.path) }}
+            >
+              <span class="git-scm-file-status is-conflicted">C</span>
+              <span class="git-scm-file-main">
+                <span class="git-scm-file-dir">{{ fileDir(file.path) }}</span><span class="git-scm-file-name">{{ fileName(file.path) }}</span>
               </span>
-              <button @click.stop="stageFile(file)" class="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-green-500 transition-opacity cursor-pointer" :class="isFileSelected(file) ? '!opacity-100' : ''" :title="t('git.stage')">
-                <div class="i-mdi-plus text-xs" />
-              </button>
+              <div class="git-scm-file-actions">
+                <button type="button" class="is-success" :title="t('git.stage')" @click.stop="stageFile(file)">
+                  <div class="i-mdi-plus text-xs" />
+                </button>
+              </div>
             </div>
           </div>
         </template>
 
-        <div class="flex items-center gap-1 px-2 py-1 bg-yellow-500/5 border-b border-slate-200/30 dark:border-slate-700/20 shrink-0">
-          <span class="font-medium text-yellow-600 dark:text-yellow-400 flex-1">
-            {{ t('git.unstagedChanges') }} ({{ unstagedFiles.length }})
+        <div class="git-scm-section-header is-unstaged">
+          <span class="flex-1 min-w-0 truncate">
+            {{ t('git.unstagedChanges') }}
+            <span class="git-scm-count">{{ unstagedFiles.length }}</span>
             <template v-if="selectedUnstagedCount > 0">
-              <span class="text-blue-500 dark:text-blue-400 font-normal"> · {{ t('git.selectedCount', { count: selectedUnstagedCount }) }}</span>
+              <span class="font-normal opacity-80"> · {{ t('git.selectedCount', { count: selectedUnstagedCount }) }}</span>
             </template>
           </span>
-          <template v-if="selectedUnstagedCount > 1">
-            <button @click="handleBatchStage" class="text-[10px] px-1 py-0.5 rounded bg-green-500/10 text-green-600 dark:text-green-400 hover:bg-green-500/20 cursor-pointer" :title="t('git.batchStage')">
-              {{ t('git.batchStage') }}
+          <div class="git-scm-actions">
+            <template v-if="selectedUnstagedCount > 1">
+              <button type="button" class="git-scm-chip-btn" :title="t('git.batchStage')" @click="handleBatchStage">
+                {{ t('git.batchStage') }}
+              </button>
+              <button type="button" class="git-scm-chip-btn" :title="t('git.batchDiscard')" @click="handleBatchDiscard">
+                {{ t('git.batchDiscard') }}
+              </button>
+              <button type="button" class="git-scm-icon-btn" :title="t('git.clearSelection')" @click="selectedFiles.clear()">
+                <div class="i-mdi-close-circle-outline" />
+              </button>
+            </template>
+            <button
+              v-else-if="unstagedFiles.length > 0"
+              type="button"
+              class="git-scm-icon-btn"
+              :title="t('git.stageAll')"
+              @click="handleStageAll"
+            >
+              <div class="i-mdi-plus-circle-outline" />
             </button>
-            <button @click="handleBatchDiscard" class="text-[10px] px-1 py-0.5 rounded bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20 cursor-pointer" :title="t('git.batchDiscard')">
-              {{ t('git.batchDiscard') }}
-            </button>
-            <button @click="selectedFiles.clear()" class="text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 cursor-pointer" :title="t('git.clearSelection')">
-              <div class="i-mdi-close-circle-outline" />
-            </button>
-          </template>
-          <button v-else-if="unstagedFiles.length > 0" @click="handleStageAll" class="text-[10px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 cursor-pointer" :title="t('git.stageAll')">
-            <div class="i-mdi-plus-circle-outline" />
-          </button>
+          </div>
         </div>
-        <div class="flex-1 overflow-auto">
-          <div v-if="unstagedFiles.length === 0" class="flex items-center justify-center h-full text-slate-400/60 dark:text-slate-500/40 text-[10px]">
+        <div class="git-scm-list">
+          <div v-if="unstagedFiles.length === 0" class="git-scm-list-empty">
             {{ t('git.noChanges') }}
           </div>
-          <div v-for="file in unstagedFiles" :key="'u:' + file.path"
+          <div
+            v-for="file in unstagedFiles"
+            :key="'u:' + file.path"
+            class="git-scm-file-row"
+            :class="{ 'is-selected': isFileSelected(file) }"
             @click="handleFileClick($event, file, 'unstaged')"
-            class="flex items-center gap-1 px-2 py-1 cursor-pointer group select-none"
-            :class="isFileSelected(file) ? 'bg-blue-500/12 dark:bg-blue-500/18 ring-1 ring-blue-400/30' : 'hover:bg-slate-100/60 dark:hover:bg-slate-800/30'">
-            <span class="w-4 text-center font-mono font-bold text-[10px] shrink-0" :class="statusColor(file.status)">{{ statusIcon(file.status) }}</span>
-            <span class="flex-1 truncate text-slate-700 dark:text-slate-300">
-              <span class="text-slate-400 dark:text-slate-500">{{ fileDir(file.path) }}</span>{{ fileName(file.path) }}
+          >
+            <span class="git-scm-file-status" :class="`is-${file.status}`">{{ statusIcon(file.status) }}</span>
+            <span class="git-scm-file-main">
+              <span class="git-scm-file-dir">{{ fileDir(file.path) }}</span><span class="git-scm-file-name">{{ fileName(file.path) }}</span>
             </span>
-            <div class="opacity-0 group-hover:opacity-100 flex gap-0.5 transition-opacity shrink-0" :class="isFileSelected(file) ? '!opacity-100' : ''">
-              <button @click.stop="stageFile(file)" class="text-slate-400 hover:text-green-500 cursor-pointer" :title="t('git.stage')">
+            <div class="git-scm-file-actions">
+              <button type="button" class="is-success" :title="t('git.stage')" @click.stop="stageFile(file)">
                 <div class="i-mdi-plus text-xs" />
               </button>
-              <button @click.stop="discardFile(file)" class="text-slate-400 hover:text-red-500 cursor-pointer" :title="t('git.discard')">
+              <button type="button" class="is-danger" :title="t('git.discard')" @click.stop="discardFile(file)">
                 <div class="i-mdi-undo text-xs" />
               </button>
             </div>

@@ -28,3 +28,7 @@ dist-ztools
 *.sw?
 BLOG_DRAFT.md
 promo-video
+# Local reference clones (do not commit)
+.tmp-git-ui-pro/
+.tmp-git-ui-pro-src/
+

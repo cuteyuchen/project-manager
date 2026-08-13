@@ -12,11 +12,11 @@ fn read_config_file(filename: String) -> Result<String, String> {
     let mut path = std::env::current_exe().map_err(|e| e.to_string())?;
     path.pop();
     path.push(filename);
-    
+
     if !path.exists() {
         return Ok("".to_string());
     }
-    
+
     std::fs::read_to_string(path).map_err(|e| e.to_string())
 }
 
@@ -25,7 +25,7 @@ fn write_config_file(filename: String, content: String) -> Result<(), String> {
     let mut path = std::env::current_exe().map_err(|e| e.to_string())?;
     path.pop();
     path.push(filename);
-    
+
     std::fs::write(path, content).map_err(|e| e.to_string())
 }
 
@@ -132,6 +132,22 @@ pub fn run() {
             git::git_create_and_switch_branch,
             git::git_delete_branch,
             git::git_rename_branch,
+            git::git_merge,
+            git::git_merge_continue,
+            git::git_merge_abort,
+            git::git_rebase,
+            git::git_amend,
+            git::git_reset,
+            git::git_cherry_pick,
+            git::git_revert_commit,
+            git::git_stash_list,
+            git::git_stash_save,
+            git::git_stash_pop,
+            git::git_stash_apply,
+            git::git_stash_drop,
+            git::git_tags,
+            git::git_create_tag,
+            git::git_delete_tag,
             git::git_history,
             git::git_own_commits,
             git::git_commit_detail,

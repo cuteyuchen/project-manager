@@ -181,6 +181,7 @@ async function deleteBranch(name: string, force = false) {
     :title="t('git.branch')"
     width="480px"
     :close-on-click-modal="false"
+    append-to-body
     align-center
     class="branch-dialog"
   >
@@ -371,7 +372,11 @@ async function deleteBranch(name: string, force = false) {
   background: color-mix(in srgb, var(--app-warning) 12%, transparent);
 }
 
-:deep(.branch-dialog .el-dialog) {
+</style>
+
+<!-- append-to-body 后弹层挂到 body，需非 scoped 才能命中 -->
+<style>
+.branch-dialog .el-dialog {
   width: min(480px, calc(100vw - 32px));
   max-height: 90vh;
   display: flex;
@@ -379,7 +384,7 @@ async function deleteBranch(name: string, force = false) {
   overflow: hidden;
 }
 
-:deep(.branch-dialog .el-dialog__body) {
+.branch-dialog .el-dialog__body {
   flex: 1;
   min-height: 0;
   max-height: calc(90vh - 120px);

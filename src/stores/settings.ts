@@ -60,6 +60,8 @@ export const useSettingsStore = defineStore('settings', () => {
     gitAiApiKey: '',
     gitAiModel: 'gpt-4o-mini',
     gitAiPromptTemplate: '',
+    gitPullStrategy: 'default',
+    gitConfirmDestructive: true,
   });
 
   const availableTerminals = ref<TerminalInfo[]>([]);
@@ -167,13 +169,13 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.backgroundImageOpacity = 0.35;
   }
   settings.value.backgroundImageOpacity = Math.min(1, Math.max(0.1, settings.value.backgroundImageOpacity));
-  
+
   const systemThemeMedia = window.matchMedia('(prefers-color-scheme: dark)');
-  
+
   const updateTheme = (e?: MediaQueryListEvent) => {
       const mode = settings.value.themeMode;
       const isDark = mode === 'dark' || (mode === 'auto' && (e ? e.matches : systemThemeMedia.matches));
-      
+
       if (isDark) {
           document.documentElement.classList.add('dark');
       } else {
@@ -244,7 +246,7 @@ export const useSettingsStore = defineStore('settings', () => {
       // @ts-ignore
       i18n.global.locale.value = settings.value.locale;
     }
-    
+
     // Theme Mode
     updateTheme();
     void applyBackgroundImage();

@@ -120,6 +120,22 @@ pub struct GitSummary {
     pub behind: i32,
     pub has_remote: bool,
     pub remote_name: Option<String>,
+    /// 跟踪分支，如 origin/main
+    #[serde(default)]
+    pub upstream: Option<String>,
+    #[serde(default)]
+    pub has_conflicts: bool,
+    #[serde(default)]
+    pub conflicted_count: i32,
+    #[serde(default)]
+    pub staged_count: i32,
+    #[serde(default)]
+    pub unstaged_count: i32,
+    #[serde(default)]
+    pub untracked_count: i32,
+    /// merge | rebase | cherry-pick | revert
+    #[serde(default)]
+    pub operation_state: Option<String>,
 }
 
 // ─── Helper ──────────────────────────────────────────────────────────────────
@@ -577,6 +593,23 @@ pub async fn git_commit(path: String, message: String) -> Result<String, String>
     run_git_task(move || run_git(&path, &["commit", "-m", &message])).await
 }
 
+/// 修改最近一次提交信息（--amend）
+#[tauri::command]
+pub async fn git_amend(
+    path: String,
+    message: Option<String>,
+) -> Result<String, String> {
+    run_git_task(move || {
+        if let Some(ref msg) = message {
+            if !msg.trim().is_empty() {
+                return run_git(&path, &["commit", "--amend", "-m", msg.trim()]);
+            }
+        }
+        run_git(&path, &["commit", "--amend", "--no-edit"])
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn git_pull(
     state: tauri::State<'_, GitOperationState>,
@@ -584,6 +617,8 @@ pub async fn git_pull(
     remote: Option<String>,
     branch: Option<String>,
     operation_id: Option<String>,
+    // strategy: "ff-only" | 其他/空 表示默认 pull
+    strategy: Option<String>,
 ) -> Result<String, String> {
     let git_state = GitOperationState {
         processes: state.processes.clone(),
@@ -592,6 +627,9 @@ pub async fn git_pull(
 
     run_git_task(move || {
         let mut args = vec!["pull"];
+        if strategy.as_deref() == Some("ff-only") {
+            args.push("--ff-only");
+        }
         if let Some(ref r) = remote {
             args.push(r.as_str());
         }
@@ -617,6 +655,8 @@ pub async fn git_push(
     force: Option<bool>,
     set_upstream: Option<bool>,
     operation_id: Option<String>,
+    // force_with_lease 优先于 force：使用 --force-with-lease
+    force_with_lease: Option<bool>,
 ) -> Result<String, String> {
     let git_state = GitOperationState {
         processes: state.processes.clone(),
@@ -625,7 +665,9 @@ pub async fn git_push(
 
     run_git_task(move || {
         let mut args = vec!["push"];
-        if force.unwrap_or(false) {
+        if force_with_lease.unwrap_or(false) {
+            args.push("--force-with-lease");
+        } else if force.unwrap_or(false) {
             args.push("--force");
         }
         if set_upstream.unwrap_or(false) {
@@ -705,7 +747,7 @@ pub fn git_branches(path: String) -> Result<Vec<GitBranch>, String> {
         .trim()
         .to_string();
 
-    // Get all local branches 
+    // Get all local branches
     let local_output = run_git(&path, &["branch", "--format=%(refname:short)\t%(upstream:short)\t%(upstream:track)"])?;
     for line in local_output.lines() {
         if line.trim().is_empty() {
@@ -715,9 +757,9 @@ pub fn git_branches(path: String) -> Result<Vec<GitBranch>, String> {
         let name = parts.get(0).unwrap_or(&"").to_string();
         let upstream = parts.get(1).and_then(|s| if s.is_empty() { None } else { Some(s.to_string()) });
         let track = parts.get(2).unwrap_or(&"").to_string();
-        
+
         let (ahead, behind) = parse_track_info(&track);
-        
+
         branches.push(GitBranch {
             is_current: name == current,
             name,
@@ -752,14 +794,14 @@ fn parse_track_info(track: &str) -> (i32, i32) {
     // Format: [ahead 3, behind 2] or [ahead 3] or [behind 2] or empty
     let mut ahead = 0;
     let mut behind = 0;
-    
+
     if track.is_empty() {
         return (ahead, behind);
     }
 
     // Remove brackets
     let inner = track.trim_start_matches('[').trim_end_matches(']');
-    
+
     for part in inner.split(',') {
         let part = part.trim();
         if part.starts_with("ahead ") {
@@ -863,7 +905,7 @@ pub fn git_log(path: String, max_count: Option<i32>, all: Option<bool>) -> Resul
         max_count_arg.as_str(),
         "--format=%H%n%h%n%an%n%ae%n%aI%n%s%n%P%n%D%n---END---",
     ];
-    
+
     if all.unwrap_or(true) {
         args.push("--all");
     }
@@ -1182,7 +1224,123 @@ pub fn git_delete_tag(path: String, name: String) -> Result<String, String> {
     run_git(&path, &["tag", "-d", &name])
 }
 
+#[tauri::command]
+pub fn git_create_tag(path: String, name: String, message: Option<String>, target: Option<String>) -> Result<String, String> {
+    let mut args = vec!["tag".to_string()];
+    if let Some(ref msg) = message {
+        if !msg.trim().is_empty() {
+            args.push("-a".to_string());
+            args.push(name.clone());
+            args.push("-m".to_string());
+            args.push(msg.trim().to_string());
+        } else {
+            args.push(name.clone());
+        }
+    } else {
+        args.push(name.clone());
+    }
+    if let Some(ref t) = target {
+        if !t.is_empty() {
+            args.push(t.clone());
+        }
+    }
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    run_git(&path, &arg_refs)
+}
+
+#[tauri::command]
+pub fn git_merge_continue(path: String) -> Result<String, String> {
+    run_git(&path, &["merge", "--continue"])
+}
+
+#[tauri::command]
+pub fn git_merge_abort(path: String) -> Result<String, String> {
+    run_git(&path, &["merge", "--abort"])
+}
+
+/// soft | mixed | hard，默认 target 为 HEAD~1
+#[tauri::command]
+pub fn git_reset(path: String, mode: String, target: Option<String>) -> Result<String, String> {
+    let mode_flag = match mode.as_str() {
+        "soft" => "--soft",
+        "hard" => "--hard",
+        _ => "--mixed",
+    };
+    let rev = target.unwrap_or_else(|| "HEAD~1".to_string());
+    run_git(&path, &["reset", mode_flag, &rev])
+}
+
+#[tauri::command]
+pub fn git_cherry_pick(path: String, hash: String) -> Result<String, String> {
+    run_git(&path, &["cherry-pick", &hash])
+}
+
+#[tauri::command]
+pub fn git_revert_commit(path: String, hash: String) -> Result<String, String> {
+    // 非交互：自动生成默认 revert 信息
+    run_git(&path, &["revert", "--no-edit", &hash])
+}
+
 // ─── New Commands (Phase 1 Refactor) ─────────────────────────────────────────
+
+/// 探测仓库是否处于 merge/rebase/cherry-pick/revert 进行中
+fn detect_operation_state(path: &str) -> Option<String> {
+    let git_dir = match run_git(path, &["rev-parse", "--git-dir"]) {
+        Ok(dir) => dir.trim().to_string(),
+        Err(_) => return None,
+    };
+    let base = std::path::Path::new(path).join(&git_dir);
+    if base.join("MERGE_HEAD").exists() {
+        return Some("merge".to_string());
+    }
+    if base.join("CHERRY_PICK_HEAD").exists() {
+        return Some("cherry-pick".to_string());
+    }
+    if base.join("REVERT_HEAD").exists() {
+        return Some("revert".to_string());
+    }
+    if base.join("REBASE_HEAD").exists()
+        || base.join("rebase-merge").exists()
+        || base.join("rebase-apply").exists()
+    {
+        return Some("rebase".to_string());
+    }
+    None
+}
+
+/// 从 porcelain status 统计变更数量（与 git_status 分类一致）
+fn count_status_buckets(path: &str) -> (i32, i32, i32, i32, bool) {
+    let output = run_git_relaxed(path, &["status", "--porcelain=v1", "-uall"]).unwrap_or_default();
+    let mut staged = 0;
+    let mut unstaged = 0;
+    let mut untracked = 0;
+    let mut conflicted = 0;
+
+    for line in output.lines() {
+        if line.len() < 3 {
+            continue;
+        }
+        let x = line.as_bytes()[0] as char;
+        let y = line.as_bytes()[1] as char;
+
+        if (x == 'U' || y == 'U') || (x == 'A' && y == 'A') || (x == 'D' && y == 'D') {
+            conflicted += 1;
+            continue;
+        }
+        if x == '?' && y == '?' {
+            untracked += 1;
+            continue;
+        }
+        if x != ' ' && x != '?' {
+            staged += 1;
+        }
+        if y != ' ' && y != '?' {
+            unstaged += 1;
+        }
+    }
+
+    (staged, unstaged, untracked, conflicted, conflicted > 0)
+}
 
 #[tauri::command]
 pub async fn git_summary(path: String) -> Result<GitSummary, String> {
@@ -1204,6 +1362,7 @@ pub async fn git_summary(path: String) -> Result<GitSummary, String> {
         let mut behind = 0;
         let mut has_remote = false;
         let mut remote_name = None;
+        let mut upstream_name = None;
 
         if !is_detached {
             if let Ok(upstream) = run_git(
@@ -1213,7 +1372,17 @@ pub async fn git_summary(path: String) -> Result<GitSummary, String> {
                 let remote = upstream.trim().to_string();
                 if !remote.is_empty() {
                     has_remote = true;
-                    remote_name = Some(remote);
+                    remote_name = Some(remote.clone());
+                    // 解析完整 upstream ref
+                    if let Ok(up_ref) = run_git(
+                        &path,
+                        &["rev-parse", "--abbrev-ref", &format!("{}@{{upstream}}", branch_raw)],
+                    ) {
+                        let up = up_ref.trim().to_string();
+                        if !up.is_empty() {
+                            upstream_name = Some(up);
+                        }
+                    }
                     if let Ok(track) = run_git(
                         &path,
                         &[
@@ -1233,6 +1402,10 @@ pub async fn git_summary(path: String) -> Result<GitSummary, String> {
             }
         }
 
+        let (staged_count, unstaged_count, untracked_count, conflicted_count, has_conflicts) =
+            count_status_buckets(&path);
+        let operation_state = detect_operation_state(&path);
+
         Ok(GitSummary {
             branch,
             is_detached,
@@ -1240,6 +1413,13 @@ pub async fn git_summary(path: String) -> Result<GitSummary, String> {
             behind,
             has_remote,
             remote_name,
+            upstream: upstream_name,
+            has_conflicts,
+            conflicted_count,
+            staged_count,
+            unstaged_count,
+            untracked_count,
+            operation_state,
         })
     })
     .await

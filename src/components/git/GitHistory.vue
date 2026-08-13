@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { computed, ref, watch, onUnmounted } from 'vue';
+import { computed, ref, watch, onUnmounted, onMounted } from 'vue';
 import { useGitStore } from '../../stores/git';
+import { useSettingsStore } from '../../stores/settings';
 import { useI18n } from 'vue-i18n';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import type { Project, GitCommit } from '../../types';
+import { showPersistentGitError } from './message';
 
 const props = defineProps<{
   project: Project;
@@ -10,14 +13,109 @@ const props = defineProps<{
 
 const { t } = useI18n();
 const gitStore = useGitStore();
+const settingsStore = useSettingsStore();
 
 const selectedHash = computed(() => gitStore.selectedCommitHash[props.project.id] || '');
-const commits = computed(() => gitStore.history[props.project.id] || []);
+const allCommits = computed(() => gitStore.history[props.project.id] || []);
 const headerRef = ref<HTMLElement | null>(null);
 const listRef = ref<HTMLElement | null>(null);
 const loadingMore = ref(false);
 const hasMore = ref(true);
 const requestedCount = ref(100);
+
+/***********************筛选*********************/
+const searchQuery = ref('');
+const commits = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase();
+  if (!q) return allCommits.value;
+  return allCommits.value.filter((c) => {
+    const hay = `${c.hash} ${c.short_hash} ${c.message} ${c.author} ${c.email} ${c.refs.join(' ')}`.toLowerCase();
+    return hay.includes(q);
+  });
+});
+
+/***********************右键菜单*********************/
+const ctxMenu = ref<{ x: number; y: number; commit: GitCommit } | null>(null);
+
+function openContextMenu(e: MouseEvent, commit: GitCommit) {
+  e.preventDefault();
+  ctxMenu.value = { x: e.clientX, y: e.clientY, commit };
+}
+
+function closeContextMenu() {
+  ctxMenu.value = null;
+}
+
+onMounted(() => document.addEventListener('click', closeContextMenu));
+onUnmounted(() => document.removeEventListener('click', closeContextMenu));
+
+async function copyText(value: string, successKey: string) {
+  try {
+    await navigator.clipboard.writeText(value);
+    ElMessage.success(t(successKey));
+  } catch (e) {
+    showPersistentGitError(t('git.operationFailed', { error: String(e) }));
+  }
+  closeContextMenu();
+}
+
+async function createBranchFromCommit(commit: GitCommit) {
+  closeContextMenu();
+  try {
+    const raw = await ElMessageBox.prompt(
+      t('git.branchNamePlaceholder'),
+      t('git.createBranch'),
+      { inputPattern: /.+/, inputErrorMessage: t('git.branchNameInvalid') },
+    );
+    const name = String(raw ?? '').trim();
+    if (!name) return;
+    await gitStore.createAndSwitchBranch(props.project.id, props.project.path, name, commit.hash);
+    ElMessage.success(t('git.createBranchSuccess', { name }));
+  } catch (e: any) {
+    if (e === 'cancel' || String(e).includes('cancel')) return;
+    showPersistentGitError(t('git.operationFailed', { error: String(e) }));
+  }
+}
+
+async function cherryPickCommit(commit: GitCommit) {
+  closeContextMenu();
+  try {
+    await gitStore.cherryPick(props.project.id, props.project.path, commit.hash);
+    ElMessage.success(t('git.cherryPickSuccess'));
+  } catch (e) {
+    showPersistentGitError(t('git.operationFailed', { error: String(e) }));
+  }
+}
+
+async function revertSelectedCommit(commit: GitCommit) {
+  closeContextMenu();
+  try {
+    await ElMessageBox.confirm(t('git.revertCommitConfirm'), t('common.warning'), { type: 'warning' });
+    await gitStore.revertCommit(props.project.id, props.project.path, commit.hash);
+    ElMessage.success(t('git.revertCommitSuccess'));
+  } catch (e: any) {
+    if (e === 'cancel' || String(e).includes('cancel')) return;
+    showPersistentGitError(t('git.operationFailed', { error: String(e) }));
+  }
+}
+
+async function resetToCommit(commit: GitCommit, mode: 'soft' | 'mixed' | 'hard') {
+  closeContextMenu();
+  try {
+    if (mode === 'hard' || settingsStore.settings.gitConfirmDestructive !== false) {
+      await ElMessageBox.confirm(
+        t(mode === 'hard' ? 'git.resetHardConfirm' : 'git.resetConfirm', { hash: commit.short_hash, mode }),
+        t('common.warning'),
+        { type: 'warning' },
+      );
+    }
+    await gitStore.resetTo(props.project.id, props.project.path, mode, commit.hash);
+    ElMessage.success(t('git.resetSuccess'));
+  } catch (e: any) {
+    if (e === 'cancel' || String(e).includes('cancel')) return;
+    showPersistentGitError(t('git.operationFailed', { error: String(e) }));
+  }
+}
 
 // Current branch name to prioritize as lane 0
 const currentBranch = computed(() => {
@@ -102,8 +200,10 @@ async function selectCommit(commit: GitCommit) {
 
 async function loadMore() {
   if (loadingMore.value || !hasMore.value) return;
+  // 有筛选时不靠滚动加载（前端过滤子集）
+  if (searchQuery.value.trim()) return;
   loadingMore.value = true;
-  const current = commits.value.length;
+  const current = allCommits.value.length;
   const next = current + 100;
   requestedCount.value = next;
   await gitStore.refreshHistory(props.project.id, props.project.path, next);
@@ -297,7 +397,7 @@ watch(() => props.project.id, () => {
   requestedCount.value = 100;
 });
 
-watch(commits, (newCommits, oldCommits) => {
+watch(allCommits, (newCommits, oldCommits) => {
   if (newCommits.length < 100) {
     hasMore.value = false;
     return;
@@ -309,57 +409,72 @@ watch(commits, (newCommits, oldCommits) => {
 </script>
 
 <template>
-  <div class="h-full flex flex-col overflow-hidden text-[11px]">
+  <div class="git-history text-[11px]">
+    <!-- 搜索筛选 -->
+    <div class="git-history-search">
+      <div class="i-mdi-magnify text-sm opacity-60" />
+      <input
+        v-model="searchQuery"
+        type="search"
+        :placeholder="t('git.historySearchPlaceholder')"
+      />
+      <span v-if="searchQuery.trim()" class="text-[10px] opacity-60 shrink-0">
+        {{ commits.length }}/{{ allCommits.length }}
+      </span>
+    </div>
+
     <!-- No commits -->
-    <div v-if="commits.length === 0" class="flex-1 flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 gap-1 p-4">
-      <div class="i-mdi-source-commit text-2xl" />
+    <div v-if="allCommits.length === 0" class="git-empty">
+      <div class="i-mdi-source-commit git-empty-icon" />
       <span>{{ t('git.noCommits') }}</span>
+    </div>
+    <div v-else-if="commits.length === 0" class="git-empty">
+      <div class="i-mdi-filter-off-outline git-empty-icon" />
+      <span>{{ t('git.historyFilterEmpty') }}</span>
     </div>
 
     <template v-else>
       <!-- Column header — syncs horizontal scroll with body -->
-      <div
-        ref="headerRef"
-        class="shrink-0 overflow-hidden border-b border-slate-300 dark:border-slate-600 bg-slate-50/80 dark:bg-slate-800/50"
-      >
+      <div ref="headerRef" class="git-history-header">
         <div
-          class="flex items-center text-[10px] font-medium text-slate-500 dark:text-slate-400 select-none h-6"
+          class="git-history-header-row"
           :style="{ minWidth: minRowWidth + 'px' }"
         >
-          <div class="shrink-0 flex items-center relative border-r border-slate-200 dark:border-slate-700" :style="{ width: colWidths[0] + 'px' }">
-            <span class="px-2 truncate">图谱</span>
-            <div class="absolute right-0 top-0 h-full w-2 -mr-1 cursor-col-resize hover:bg-blue-400/30 z-10" @mousedown="onColMouseDown(0, $event)" />
+          <div class="git-history-col" :style="{ width: colWidths[0] + 'px' }">
+            <span>图谱</span>
+            <div class="git-history-col-resizer" @mousedown="onColMouseDown(0, $event)" />
           </div>
-          <div class="shrink-0 flex items-center relative border-r border-slate-200 dark:border-slate-700" :style="{ width: colWidths[1] + 'px' }">
-            <span class="px-2 truncate">描述</span>
-            <div class="absolute right-0 top-0 h-full w-2 -mr-1 cursor-col-resize hover:bg-blue-400/30 z-10" @mousedown="onColMouseDown(1, $event)" />
+          <div class="git-history-col" :style="{ width: colWidths[1] + 'px' }">
+            <span>描述</span>
+            <div class="git-history-col-resizer" @mousedown="onColMouseDown(1, $event)" />
           </div>
-          <div class="shrink-0 flex items-center relative border-r border-slate-200 dark:border-slate-700" :style="{ width: colWidths[2] + 'px' }">
-            <span class="px-2 truncate">日期</span>
-            <div class="absolute right-0 top-0 h-full w-2 -mr-1 cursor-col-resize hover:bg-blue-400/30 z-10" @mousedown="onColMouseDown(2, $event)" />
+          <div class="git-history-col" :style="{ width: colWidths[2] + 'px' }">
+            <span>日期</span>
+            <div class="git-history-col-resizer" @mousedown="onColMouseDown(2, $event)" />
           </div>
-          <div class="shrink-0 flex items-center relative border-r border-slate-200 dark:border-slate-700" :style="{ width: colWidths[3] + 'px' }">
-            <span class="px-2 truncate">作者</span>
-            <div class="absolute right-0 top-0 h-full w-2 -mr-1 cursor-col-resize hover:bg-blue-400/30 z-10" @mousedown="onColMouseDown(3, $event)" />
+          <div class="git-history-col" :style="{ width: colWidths[3] + 'px' }">
+            <span>作者</span>
+            <div class="git-history-col-resizer" @mousedown="onColMouseDown(3, $event)" />
           </div>
-          <div class="shrink-0 flex items-center" :style="{ width: colWidths[4] + 'px' }">
-            <span class="px-2 truncate">提交</span>
+          <div class="git-history-col" :style="{ width: colWidths[4] + 'px' }">
+            <span>提交</span>
           </div>
         </div>
       </div>
 
       <!-- Commit list — scrolls both X and Y, header syncs X -->
-      <div ref="listRef" class="flex-1 overflow-auto" @scroll="onBodyScroll">
+      <div ref="listRef" class="git-history-list" @scroll="onBodyScroll">
         <div
           v-for="(commit, rowIdx) in commits"
           :key="commit.hash"
-          @click="selectCommit(commit)"
-          class="flex items-center cursor-pointer border-b border-slate-200/20 dark:border-slate-700/15 transition-colors"
+          class="git-commit-row"
+          :class="{
+            'is-active': selectedHash === commit.hash,
+            'is-head': isHeadCommit(commit),
+          }"
           :style="{ height: ROW_HEIGHT + 'px', minWidth: minRowWidth + 'px' }"
-          :class="[
-            selectedHash === commit.hash ? 'bg-blue-500/8' : 'hover:bg-slate-100/50 dark:hover:bg-slate-800/20',
-            isHeadCommit(commit) ? 'font-bold' : '',
-          ]"
+          @click="selectCommit(commit)"
+          @contextmenu="openContextMenu($event, commit)"
         >
             <!-- Graph column -->
             <div class="shrink-0 overflow-hidden" :style="{ width: colWidths[0] + 'px', height: ROW_HEIGHT + 'px' }">
@@ -403,29 +518,29 @@ watch(commits, (newCommits, oldCommits) => {
             </div>
 
             <div class="shrink-0 flex items-center gap-1.5 overflow-hidden px-2 box-border" :style="{ width: colWidths[1] + 'px' }">
-              <span class="truncate" :class="isHeadCommit(commit) ? 'font-bold text-slate-900 dark:text-white' : 'font-medium text-slate-700 dark:text-slate-300'">{{ commit.message }}</span>
+              <span class="git-commit-msg">{{ commit.message }}</span>
               <span
                 v-if="isMergeCommit(commit)"
-                class="text-[9px] px-1.5 py-0 rounded-full font-medium shrink-0"
+                class="git-ref-badge"
                 :style="{ backgroundColor: refColor(rowIdx) + '18', color: refColor(rowIdx) }"
               >merge</span>
               <span
                 v-for="ref in shortRefs(commit.refs).slice(0, 2)"
                 :key="ref"
-                class="text-[9px] px-1.5 py-0 rounded-full font-medium shrink-0 truncate max-w-24"
+                class="git-ref-badge"
                 :style="{ backgroundColor: refColor(rowIdx) + '18', color: refColor(rowIdx) }"
               >{{ ref }}</span>
             </div>
 
-            <div class="shrink-0 px-2 truncate box-border" :class="isHeadCommit(commit) ? 'font-bold text-slate-900 dark:text-white' : 'text-slate-400 dark:text-slate-500'" :style="{ width: colWidths[2] + 'px' }">
+            <div class="git-history-meta shrink-0" :style="{ width: colWidths[2] + 'px' }">
               {{ formatDate(commit.date) }}
             </div>
 
-            <div class="shrink-0 px-2 truncate box-border" :class="isHeadCommit(commit) ? 'font-bold text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400'" :style="{ width: colWidths[3] + 'px' }">
+            <div class="git-history-meta shrink-0" :style="{ width: colWidths[3] + 'px' }">
               {{ commit.author }} &lt;{{ commit.email }}&gt;
             </div>
 
-            <div class="shrink-0 px-2 font-mono truncate box-border" :class="isHeadCommit(commit) ? 'font-bold text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400'" :style="{ width: colWidths[4] + 'px' }">
+            <div class="git-history-meta git-history-hash shrink-0" :style="{ width: colWidths[4] + 'px' }">
               {{ commit.short_hash }}
             </div>
         </div>
@@ -436,5 +551,68 @@ watch(commits, (newCommits, oldCommits) => {
         加载中...
       </div>
     </template>
+
+    <!-- 提交右键菜单 -->
+    <Teleport to="body">
+      <div
+        v-if="ctxMenu"
+        class="git-history-ctx fixed z-50 min-w-44 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg py-1 text-[11px]"
+        :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }"
+        @click.stop
+      >
+        <button type="button" class="ctx-item" @click="copyText(ctxMenu.commit.hash, 'git.copyHashSuccess')">
+          {{ t('git.copyHash') }}
+        </button>
+        <button type="button" class="ctx-item" @click="copyText(ctxMenu.commit.message, 'git.copyCommitMessageSuccess')">
+          {{ t('git.copyCommitMessage') }}
+        </button>
+        <div class="ctx-sep" />
+        <button type="button" class="ctx-item" @click="createBranchFromCommit(ctxMenu.commit)">
+          {{ t('git.createBranch') }}
+        </button>
+        <button type="button" class="ctx-item" @click="cherryPickCommit(ctxMenu.commit)">
+          {{ t('git.cherryPick') }}
+        </button>
+        <button type="button" class="ctx-item" @click="revertSelectedCommit(ctxMenu.commit)">
+          {{ t('git.revertCommit') }}
+        </button>
+        <div class="ctx-sep" />
+        <button type="button" class="ctx-item" @click="resetToCommit(ctxMenu.commit, 'soft')">
+          {{ t('git.resetSoft') }}
+        </button>
+        <button type="button" class="ctx-item" @click="resetToCommit(ctxMenu.commit, 'mixed')">
+          {{ t('git.resetMixed') }}
+        </button>
+        <button type="button" class="ctx-item danger" @click="resetToCommit(ctxMenu.commit, 'hard')">
+          {{ t('git.resetHard') }}
+        </button>
+      </div>
+    </Teleport>
   </div>
 </template>
+
+<style scoped>
+.ctx-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 6px 12px;
+  cursor: pointer;
+  color: var(--app-text-secondary, #475569);
+}
+.ctx-item:hover {
+  background: var(--app-primary-soft, #dbeafe);
+  color: var(--app-primary, #2563eb);
+}
+.ctx-item.danger:hover {
+  background: color-mix(in srgb, var(--app-danger, #dc2626) 12%, transparent);
+  color: var(--app-danger, #dc2626);
+}
+.ctx-sep {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--app-border, #e2e8f0);
+}
+</style>

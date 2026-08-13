@@ -132,6 +132,7 @@ async function handleRemove(name: string) {
     :title="t('git.repoSettings')"
     width="640px"
     :close-on-click-modal="false"
+    append-to-body
     align-center
     class="git-remote-dialog"
   >
