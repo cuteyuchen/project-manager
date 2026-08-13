@@ -681,11 +681,11 @@ window.services = {
         if (process.platform === 'win32') {
             const nvmHome = process.env.NVM_HOME;
             if (!nvmHome) return [];
-            
+
             try {
                 const dirs = fs.readdirSync(nvmHome);
                 const versions = [];
-                
+
                 for (const dir of dirs) {
                     if (dir.startsWith('v')) {
                         versions.push({
@@ -700,19 +700,19 @@ window.services = {
                 console.error(e);
                 return [];
             }
-        } 
+        }
         // macOS / Linux
         else {
             const home = process.env.HOME;
             const nvmDir = process.env.NVM_DIR || path.join(home, '.nvm');
             const versionsDir = path.join(nvmDir, 'versions', 'node');
-            
+
             if (!fs.existsSync(versionsDir)) return [];
-            
+
             try {
                 const dirs = fs.readdirSync(versionsDir);
                 const versions = [];
-                
+
                 for (const dir of dirs) {
                     if (dir.startsWith('v')) {
                         versions.push({
@@ -737,7 +737,7 @@ window.services = {
             return null;
         }
     },
-    
+
     getNodeVersion: async (nodePath) => {
         return new Promise(resolve => {
             const cb = (err, stdout) => {
@@ -767,7 +767,7 @@ window.services = {
                         reject(error);
                         return;
                     }
-                    
+
                     // Best-effort verify installation for numeric versions only.
                     // For aliases (e.g. lts), nvm may install a resolved semver folder.
                     const nvmHome = process.env.NVM_HOME;
@@ -836,7 +836,7 @@ window.services = {
             }
         });
     },
-    
+
     uninstallNode: async (version) => {
         return new Promise((resolve, reject) => {
             if (!isValidVersion(version)) {
@@ -849,7 +849,7 @@ window.services = {
                         reject(error);
                         return;
                     }
-                    
+
                     // Verify uninstallation
                     const nvmHome = process.env.NVM_HOME;
                     if (nvmHome) {
@@ -879,7 +879,7 @@ window.services = {
             }
         });
     },
-    
+
     useNode: async (version) => {
         return new Promise((resolve, reject) => {
             if (!isValidVersion(version)) {
@@ -925,7 +925,7 @@ window.services = {
                     projectType: 'other'
                 };
             }
-            
+
             let pkg = {};
             try {
                 const content = fs.readFileSync(pkgPath, 'utf-8');
@@ -951,7 +951,7 @@ window.services = {
                     nvmVersion = rawNvmVersion;
                 }
             }
-            
+
             return {
                 name: pkg.name || dirName,
                 scripts: Object.keys(pkg.scripts || {}),
@@ -1049,7 +1049,7 @@ window.services = {
 
         function appendLog(text) {
             if (!text) return;
-            
+
             // Update buffer
             logBuffer.push(text);
             if (logBuffer.length > MAX_LOG_LINES) {
@@ -1085,7 +1085,7 @@ window.services = {
         try {
             const userData = platform.getPath('userData');
             const baseLogDir = path.join(userData, 'logs');
-            
+
             // Determine Project Name
             let projectName = path.basename(projectPath);
             try {
@@ -1108,11 +1108,11 @@ window.services = {
             if (!fs.existsSync(projectLogDir)) {
                 fs.mkdirSync(projectLogDir, { recursive: true });
             }
-            
+
             // Sanitize script name
             const safeScript = script.replace(/[<>:"/\\|?*]/g, '_');
             logFilePath = path.join(projectLogDir, `${safeScript}.log`);
-            
+
             // Open with 'w' to overwrite existing file (clearing previous run logs)
             logStream = fs.createWriteStream(logFilePath, { flags: 'w' });
         } catch (e) {
@@ -1177,7 +1177,7 @@ window.services = {
 
             appendLog(`Executing: ${cmdStr}\n`);
             appendLog(`Node Path used: ${nodeDir || 'System Default'}\n`);
-            
+
             const child = spawn(spawnCmd, ['run', script], {
                 cwd: projectPath,
                 shell: true,
@@ -1187,21 +1187,21 @@ window.services = {
             });
 
             spawnParentDeathWatch(child);
-            
+
             processes.set(id, child);
-            
+
             child.stdout.on('data', (data) => {
                 const str = data.toString();
                 if (outputCallback) outputCallback({ id, data: str });
                 appendLog(str);
             });
-            
+
             child.stderr.on('data', (data) => {
                 const str = data.toString();
                 if (outputCallback) outputCallback({ id, data: str });
                 appendLog(`ERR: ${str}`);
             });
-            
+
             child.on('exit', () => {
                 processes.delete(id);
                 // Final rewrite
@@ -1209,7 +1209,7 @@ window.services = {
                 if (logStream) logStream.end();
                 if (exitCallback) exitCallback({ id });
             });
-            
+
             child.on('error', (err) => {
                 console.error('[Runner] Spawn error:', err);
                 const errMsg = `Error spawning process: ${err.message}`;
@@ -1276,7 +1276,7 @@ window.services = {
         outputCallback = cb;
         return () => { outputCallback = null; };
     },
-    
+
     onProjectExit: async (cb) => {
         exitCallback = cb;
         return () => { exitCallback = null; };
@@ -1291,7 +1291,7 @@ window.services = {
         }
         return "";
     },
-    
+
     writeConfigFile: async (filename, content) => {
         const userPath = platform.getPath('userData');
         const filePath = path.join(userPath, filename);
@@ -1309,7 +1309,7 @@ window.services = {
     writeTextFile: async (path, content) => {
         fs.writeFileSync(path, content, 'utf-8');
     },
-    
+
     readDir: async (dirPath) => {
         const entries = fs.readdirSync(dirPath, { withFileTypes: true });
         return entries.map(e => ({
@@ -1317,7 +1317,7 @@ window.services = {
             isDirectory: e.isDirectory()
         }));
     },
-    
+
     openDialog: async (options) => {
         const electronOptions = {
             properties: []
@@ -1342,19 +1342,19 @@ window.services = {
         if (options?.multiple) return result;
         return result[0];
     },
-    
+
     saveDialog: async (options) => {
         return platform.showSaveDialog(options);
     },
-    
+
     openUrl: async (url) => {
         platform.shellOpenExternal(url);
     },
-    
+
     openFolder: async (path) => {
         platform.shellOpenPath(path);
     },
-    
+
     openInEditor: async (path, editor = 'code') => {
         // Validate editor: must be a simple command name or an absolute file path
         const isAbsolutePath = require('path').isAbsolute(editor);
@@ -1365,19 +1365,19 @@ window.services = {
         }
         spawn(editor, [path], { shell: false });
     },
-    
+
     getAppVersion: async () => {
-        return "1.5.6";
+        return "1.5.7";
     },
-    
+
     installUpdate: async (url) => {
         platform.shellOpenExternal(url);
     },
-    
+
     onDownloadProgress: async (cb) => {
         return () => {};
     },
-    
+
     // Window controls
     windowMinimize: async () => {
         platform.hideMainWindow();
@@ -1395,7 +1395,7 @@ window.services = {
     //************* 终端检测 *************
     detectAvailableTerminals: async () => {
         const terminals = [];
-        
+
         // Windows 平台
         if (process.platform === 'win32') {
             terminals.push({
@@ -1430,14 +1430,14 @@ window.services = {
              try { execSync('which konsole', { stdio: 'ignore' }); terminals.push({ id: 'konsole', name: 'Konsole (KDE)' }); } catch(e) {}
              try { execSync('which xfce4-terminal', { stdio: 'ignore' }); terminals.push({ id: 'xfce4-terminal', name: 'XFCE Terminal' }); } catch(e) {}
         }
-        
+
         return terminals;
     },
 
     detectAvailableEditors: async () => {
         return detectAvailableEditorsSync();
     },
-    
+
     //************* 终端打开 *************
     openInTerminal: async (projectPath, terminal, nodePath, packageManager) => {
         const termRaw = (terminal || 'cmd').trim();
@@ -1558,9 +1558,9 @@ window.services = {
                 { id: 'konsole', cmd: 'konsole', args: ['--workdir', projectPath, '-e', 'bash', '-c', bashInner] },
                 { id: 'xfce4-terminal', cmd: 'xfce4-terminal', args: ['--working-directory', projectPath, '-e', xfceInline] }
             ];
-            
+
             const target = terms.find(t => t.id === term);
-            
+
             if (target) {
                  spawn(target.cmd, target.args, spawnOptions).unref();
             } else {
@@ -1837,13 +1837,15 @@ $result | ConvertTo-Json -Compress`;
             ? (runGitSafe(['rev-parse', '--short', 'HEAD']) || 'HEAD')
             : branchRaw;
 
-        let ahead = 0, behind = 0, hasRemote = false, remoteName = null;
+        let ahead = 0, behind = 0, hasRemote = false, remoteName = null, upstream = null;
 
         if (!isDetached) {
             const remote = runGitSafe(['config', `branch.${branchRaw}.remote`]);
             if (remote) {
                 hasRemote = true;
                 remoteName = remote;
+                const upRef = runGitSafe(['rev-parse', '--abbrev-ref', `${branchRaw}@{upstream}`]);
+                if (upRef) upstream = upRef;
                 const track = runGitSafe(['rev-list', '--left-right', '--count', `${branchRaw}@{upstream}...HEAD`]);
                 if (track) {
                     const parts = track.split(/\s+/);
@@ -1855,7 +1857,55 @@ $result | ConvertTo-Json -Compress`;
             }
         }
 
-        return { branch, is_detached: isDetached, ahead, behind, has_remote: hasRemote, remote_name: remoteName };
+        // 状态计数与冲突
+        let stagedCount = 0, unstagedCount = 0, untrackedCount = 0, conflictedCount = 0;
+        try {
+            const porcelain = execSync('git status --porcelain=v1 -uall', {
+                cwd: projectPath, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, maxBuffer: 10 * 1024 * 1024
+            }).toString();
+            for (const line of porcelain.split('\n')) {
+                if (line.length < 3) continue;
+                const x = line[0], y = line[1];
+                if ((x === 'U' || y === 'U') || (x === 'A' && y === 'A') || (x === 'D' && y === 'D')) {
+                    conflictedCount++;
+                    continue;
+                }
+                if (x === '?' && y === '?') { untrackedCount++; continue; }
+                if (x !== ' ' && x !== '?') stagedCount++;
+                if (y !== ' ' && y !== '?') unstagedCount++;
+            }
+        } catch (_) {}
+
+        // 进行中操作
+        let operationState = null;
+        const gitDir = runGitSafe(['rev-parse', '--git-dir']);
+        if (gitDir) {
+            const base = path.isAbsolute(gitDir) ? gitDir : path.join(projectPath, gitDir);
+            if (fs.existsSync(path.join(base, 'MERGE_HEAD'))) operationState = 'merge';
+            else if (fs.existsSync(path.join(base, 'CHERRY_PICK_HEAD'))) operationState = 'cherry-pick';
+            else if (fs.existsSync(path.join(base, 'REVERT_HEAD'))) operationState = 'revert';
+            else if (
+                fs.existsSync(path.join(base, 'REBASE_HEAD')) ||
+                fs.existsSync(path.join(base, 'rebase-merge')) ||
+                fs.existsSync(path.join(base, 'rebase-apply'))
+            ) operationState = 'rebase';
+        }
+
+        return {
+            branch,
+            is_detached: isDetached,
+            ahead,
+            behind,
+            has_remote: hasRemote,
+            remote_name: remoteName,
+            upstream,
+            has_conflicts: conflictedCount > 0,
+            conflicted_count: conflictedCount,
+            staged_count: stagedCount,
+            unstaged_count: unstagedCount,
+            untracked_count: untrackedCount,
+            operation_state: operationState,
+        };
     },
 
     gitStatus: async (projectPath) => {
@@ -1926,6 +1976,17 @@ $result | ConvertTo-Json -Compress`;
         return execSync('git restore --staged .', { cwd: projectPath, windowsHide: true }).toString();
     },
 
+    gitAmend: async (projectPath, message) => {
+        if (message && String(message).trim()) {
+            return execFileSync('git', ['commit', '--amend', '-m', String(message).trim()], {
+                cwd: projectPath, windowsHide: true
+            }).toString();
+        }
+        return execFileSync('git', ['commit', '--amend', '--no-edit'], {
+            cwd: projectPath, windowsHide: true
+        }).toString();
+    },
+
     gitCommit: async (projectPath, message) => {
         // Use spawn to safely pass message without shell injection
         return new Promise((resolve, reject) => {
@@ -1941,8 +2002,9 @@ $result | ConvertTo-Json -Compress`;
         });
     },
 
-    gitPull: async (projectPath, remote, branch, operationId) => {
+    gitPull: async (projectPath, remote, branch, operationId, strategy) => {
         const args = ['pull'];
+        if (strategy === 'ff-only') args.push('--ff-only');
         if (remote) args.push(remote);
         if (branch) args.push(branch);
         return new Promise((resolve, reject) => {
@@ -1963,9 +2025,10 @@ $result | ConvertTo-Json -Compress`;
         });
     },
 
-    gitPush: async (projectPath, remote, branch, force, setUpstream, operationId) => {
+    gitPush: async (projectPath, remote, branch, force, setUpstream, operationId, forceWithLease) => {
         const args = ['push'];
-        if (force) args.push('--force');
+        if (forceWithLease) args.push('--force-with-lease');
+        else if (force) args.push('--force');
         if (setUpstream) args.push('-u');
         if (remote) args.push(remote);
         if (branch) args.push(branch);
@@ -2371,6 +2434,127 @@ $result | ConvertTo-Json -Compress`;
             input: patch,
             stdio: ['pipe', 'pipe', 'pipe'],
         }).toString();
+    },
+
+    gitMerge: async (projectPath, branch) => {
+        return execFileSync('git', ['merge', branch], { cwd: projectPath, windowsHide: true }).toString();
+    },
+    gitMergeContinue: async (projectPath) => {
+        return execFileSync('git', ['merge', '--continue'], { cwd: projectPath, windowsHide: true }).toString();
+    },
+    gitMergeAbort: async (projectPath) => {
+        return execFileSync('git', ['merge', '--abort'], { cwd: projectPath, windowsHide: true }).toString();
+    },
+    gitRebase: async (projectPath, branch) => {
+        return execFileSync('git', ['rebase', branch], { cwd: projectPath, windowsHide: true }).toString();
+    },
+    gitReset: async (projectPath, mode, target) => {
+        const modeFlag = mode === 'soft' ? '--soft' : mode === 'hard' ? '--hard' : '--mixed';
+        const rev = target || 'HEAD~1';
+        return execFileSync('git', ['reset', modeFlag, rev], { cwd: projectPath, windowsHide: true }).toString();
+    },
+    gitCherryPick: async (projectPath, hash) => {
+        return execFileSync('git', ['cherry-pick', hash], { cwd: projectPath, windowsHide: true }).toString();
+    },
+    gitRevertCommit: async (projectPath, hash) => {
+        return execFileSync('git', ['revert', '--no-edit', hash], { cwd: projectPath, windowsHide: true }).toString();
+    },
+    gitStashList: async (projectPath) => {
+        let output = '';
+        try {
+            output = execFileSync('git', ['stash', 'list', '--format=%gd%n%gs%n%aI%n---END---'], {
+                cwd: projectPath, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe']
+            }).toString();
+        } catch (_) {
+            return [];
+        }
+        const entries = [];
+        let lines = [];
+        for (const line of output.split('\n')) {
+            if (line === '---END---') {
+                if (lines.length >= 3) {
+                    const indexStr = lines[0].replace(/^stash@\{/, '').replace(/\}$/, '');
+                    entries.push({
+                        index: parseInt(indexStr, 10) || 0,
+                        message: lines[1],
+                        date: lines[2],
+                    });
+                }
+                lines = [];
+            } else if (line.length) {
+                lines.push(line);
+            }
+        }
+        return entries;
+    },
+    gitStashSave: async (projectPath, message) => {
+        const args = ['stash', 'push'];
+        if (message) { args.push('-m', message); }
+        return execFileSync('git', args, { cwd: projectPath, windowsHide: true }).toString();
+    },
+    gitStashPop: async (projectPath, index) => {
+        const idx = `stash@{${index == null ? 0 : index}}`;
+        return execFileSync('git', ['stash', 'pop', idx], { cwd: projectPath, windowsHide: true }).toString();
+    },
+    gitStashApply: async (projectPath, index) => {
+        const idx = `stash@{${index == null ? 0 : index}}`;
+        return execFileSync('git', ['stash', 'apply', idx], { cwd: projectPath, windowsHide: true }).toString();
+    },
+    gitStashDrop: async (projectPath, index) => {
+        const idx = `stash@{${index}}`;
+        return execFileSync('git', ['stash', 'drop', idx], { cwd: projectPath, windowsHide: true }).toString();
+    },
+    gitTags: async (projectPath) => {
+        let output = '';
+        try {
+            output = execFileSync('git', ['tag', '-l', '--format=%(refname:short)\t%(objectname:short)'], {
+                cwd: projectPath, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe']
+            }).toString();
+        } catch (_) {
+            return [];
+        }
+        return output.split('\n').filter(Boolean).map((line) => {
+            const parts = line.split('\t');
+            return { name: parts[0] || '', hash: parts[1] || '' };
+        });
+    },
+    gitCreateTag: async (projectPath, name, message, target) => {
+        const args = ['tag'];
+        if (message && String(message).trim()) {
+            args.push('-a', name, '-m', String(message).trim());
+        } else {
+            args.push(name);
+        }
+        if (target) args.push(target);
+        return execFileSync('git', args, { cwd: projectPath, windowsHide: true }).toString();
+    },
+    gitDeleteTag: async (projectPath, name) => {
+        return execFileSync('git', ['tag', '-d', name], { cwd: projectPath, windowsHide: true }).toString();
+    },
+    gitRemoteList: async (projectPath) => {
+        let output = '';
+        try {
+            output = execFileSync('git', ['remote', '-v'], {
+                cwd: projectPath, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe']
+            }).toString();
+        } catch (_) {
+            return [];
+        }
+        const remotes = [];
+        for (const line of output.split('\n')) {
+            const m = line.match(/^(\S+)\s+(\S+)\s+\((fetch|push)\)$/);
+            if (m) remotes.push({ name: m[1], url: m[2], remote_type: m[3] });
+        }
+        return remotes;
+    },
+    gitRemoteAdd: async (projectPath, name, url) => {
+        return execFileSync('git', ['remote', 'add', name, url], { cwd: projectPath, windowsHide: true }).toString();
+    },
+    gitRemoteSetUrl: async (projectPath, name, url) => {
+        return execFileSync('git', ['remote', 'set-url', name, url], { cwd: projectPath, windowsHide: true }).toString();
+    },
+    gitRemoteRemove: async (projectPath, name) => {
+        return execFileSync('git', ['remote', 'remove', name], { cwd: projectPath, windowsHide: true }).toString();
     },
 
     //************* 包管理器解析 *************
