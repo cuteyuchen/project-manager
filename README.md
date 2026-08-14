@@ -488,3 +488,7 @@ ztools/              ZTools 插件相关文件
 ## 开源协议
 
 [MIT](LICENSE)
+
+## 友情链接
+
+[LINUX DO](https://linux.do/)
