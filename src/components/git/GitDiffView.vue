@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useGitStore } from '../../stores/git';
 import { useI18n } from 'vue-i18n';
 import type { Project } from '../../types';
@@ -11,10 +11,37 @@ const props = defineProps<{
 const { t } = useI18n();
 const gitStore = useGitStore();
 
-const diffContent = computed(() => gitStore.selectedDiff);
-const diffFile = computed(() => gitStore.selectedDiffFile);
-const hasSelectedFile = computed(() => !!gitStore.selectedDiffFile);
+/** 该项目自己那一桶 diff 选中态（store 已按 projectId 分桶） */
+const selection = computed(() => gitStore.getDiffSelection(props.project.id));
+const diffContent = computed(() => selection.value.content);
+const diffFile = computed(() => selection.value.file);
+const hasSelectedFile = computed(() => !!selection.value.file);
 const reverting = ref(false);
+
+/***********************正文被淘汰后按需重取*********************/
+// 桶数超上限时只丢 content、保留「看的是哪个文件」（见 utils/gitDiffSelection.ts）。
+// 这里把缺失的正文补回来，让淘汰对用户不可见——否则切回项目会显示成「什么都没选」。
+//
+// 每个目标只重取一次：diff 本身可能就是空的（比如空的未跟踪文件），
+// 那样「取回来还是空」会让这个 watch 反复自激成死循环。
+const refetchedTargets = new Set<string>();
+
+watch(selection, (current) => {
+  if (!current.file || current.content) return;
+
+  const target = current.source === 'worktree'
+    ? `worktree:${current.staged ? 'staged' : 'unstaged'}:${current.file}`
+    : `commit:${current.source.commit}:${current.file}`;
+  if (refetchedTargets.has(target)) return;
+  refetchedTargets.add(target);
+
+  const request = current.source === 'worktree'
+    ? gitStore.getDiff(props.project.id, props.project.path, current.file, current.staged)
+    : gitStore.getDiffCommitFile(props.project.id, props.project.path, current.source.commit, current.file);
+
+  // 取不到就维持空态：getDiff 失败时内部已清桶，这里不再重试
+  void request.catch(() => {});
+}, { immediate: true });
 
 const DIFF_BINARY_MARKER = '__BINARY_FILE__';
 const DIFF_TOO_LARGE_MARKER = '__FILE_TOO_LARGE__';
@@ -119,7 +146,7 @@ async function rollbackHunk(hunk: DiffHunk) {
       props.project.id,
       props.project.path,
       patchText,
-      gitStore.selectedDiffStaged,
+      selection.value.staged,
     );
   } finally {
     reverting.value = false;

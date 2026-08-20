@@ -48,8 +48,28 @@ const moduleKindLabel = computed(() =>
     props.project.moduleKind ? t(`project.moduleKind.${props.project.moduleKind}`) : ''
 );
 
-const isRunning = computed(() => {
-    return (store.runningProjectCount[props.project.id] || 0) > 0;
+/***********************运行状态（含子项目）*********************/
+
+/** 项目自身正在运行的命令数 */
+const selfRunningCount = computed(() => store.runningProjectCount[props.project.id] || 0);
+
+/**
+ * 自身 + 全部后代的运行命令数。
+ * 一级项目卡片靠它反映「里面的子项目在跑」——runningProjectCount 只按
+ * 发起命令的项目自身计数，父项目上恒为 0。
+ */
+const subtreeRunningCount = computed(() => store.runningSubtreeCount[props.project.id] || 0);
+
+const isRunning = computed(() => subtreeRunningCount.value > 0);
+
+/** 仅后代在跑：用更淡的样式区分，否则用户点进来找不到运行中的命令会困惑 */
+const isDescendantOnlyRunning = computed(() => isRunning.value && selfRunningCount.value === 0);
+
+const runningTitle = computed(() => {
+    if (!isRunning.value) return '';
+    return isDescendantOnlyRunning.value
+        ? t('dashboard.subProjectRunning', { count: subtreeRunningCount.value })
+        : t('dashboard.running');
 });
 
 /***********************项目附加信息*********************/
@@ -221,7 +241,11 @@ async function openFolder() {
                 <slot name="leading" />
                 <button
                     class="row-star"
-                    :class="project.favorite ? 'text-amber-400' : 'text-slate-300 dark:text-slate-600 hover:text-amber-400'"
+                    :class="[
+                        project.favorite
+                            ? 'row-star-active text-amber-400'
+                            : 'text-slate-300 dark:text-slate-600 hover:text-amber-400',
+                    ]"
                     :title="project.favorite ? t('project.unfavorite') : t('project.favorite')"
                     @click.stop="handleToggleFavorite"
                 >
@@ -229,10 +253,11 @@ async function openFolder() {
                 </button>
             </div>
 
-            <!-- ─── 健康状态点 + pin ─────────────── -->
-            <div v-if="healthSnapshot || project.pinned" class="project-row-status">
-                <HealthBadge v-if="healthSnapshot" :snapshot="healthSnapshot" :level="healthLevel ?? 'unknown'" />
-                <div v-if="project.pinned" class="i-mdi-pin text-amber-500 text-base" />
+            <!-- ─── 健康状态点 ───────────────────────────────
+                 置顶状态不在这里重复显示：行尾操作区的图钉按钮已经用
+                 实心/空心 + 琥珀色表达了置顶与否，两处都画会让卡片很杂乱。 -->
+            <div v-if="healthSnapshot" class="project-row-status">
+                <HealthBadge :snapshot="healthSnapshot" :level="healthLevel ?? 'unknown'" />
             </div>
 
             <!-- ─── 主体：名称 / 路径 / 标签 ─────────────── -->
@@ -243,7 +268,12 @@ async function openFolder() {
                     </h3>
                     <span v-if="moduleKindLabel" class="project-kind-chip shrink-0">{{ moduleKindLabel }}</span>
                     <span class="project-row-path">{{ project.path }}</span>
-                    <div v-if="isRunning" class="project-running-dot shrink-0" />
+                    <div
+                        v-if="isRunning"
+                        class="project-running-dot shrink-0"
+                        :class="{ 'project-running-dot-descendant': isDescendantOnlyRunning }"
+                        :title="runningTitle"
+                    />
                 </div>
                 <div v-if="project.description || displayTags.length > 0 || groupName" class="project-row-meta">
                     <span v-if="project.description" class="text-[10px] text-slate-400 dark:text-slate-500 truncate max-w-40" :title="project.description">
@@ -485,7 +515,28 @@ async function openFolder() {
   height: 30px;
   border: none;
   background: transparent;
-  transition: color var(--app-duration-fast) var(--app-ease);
+  /* 未收藏时不显示：每张卡片左侧都挂一颗灰色空心星会把列表压得很杂乱，
+     尤其是 stacked 的子项目卡片。用 opacity 而非 display 隐藏，
+     保住占位以免 hover 时标题左右跳动。 */
+  opacity: 0;
+  transition:
+    color var(--app-duration-fast) var(--app-ease),
+    opacity var(--app-duration-fast) var(--app-ease);
+}
+
+/* 已收藏：常显，这是需要一眼看到的状态 */
+.row-star-active {
+  opacity: 1;
+}
+
+/* 悬停卡片时露出，让未收藏的项目也能被点收藏 */
+.project-row:hover .row-star {
+  opacity: 1;
+}
+
+/* 键盘 Tab 到它时必须可见，否则焦点会落在一个看不见的按钮上 */
+.row-star:focus-visible {
+  opacity: 1;
 }
 
 .row-action-btn {
@@ -513,6 +564,12 @@ async function openFolder() {
   background: var(--app-success);
   box-shadow: 0 0 6px color-mix(in srgb, var(--app-success) 58%, transparent);
   animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* 仅子项目在跑：不发光、降低不透明度，与「本项目自己在跑」区分开 */
+.project-running-dot-descendant {
+  opacity: 0.5;
+  box-shadow: none;
 }
 
 .project-tag-chip {

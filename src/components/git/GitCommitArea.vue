@@ -7,6 +7,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import type { Project } from '../../types.ts';
 import { showPersistentGitError } from './message.ts';
 import { applyGeneratedCommitMessage } from './aiCommitMessageTarget.ts';
+import { buildAiAttempts } from '../../utils/aiFallback.ts';
 
 /***********************组件输入与依赖*********************/
 
@@ -202,8 +203,10 @@ async function handleUndoLastCommit(mode: 'soft' | 'mixed') {
 
 async function handleAiGenerate() {
   const s = settingsStore.settings;
-  const service = s.gitAiPrimaryService;
-  if (!service?.apiKey?.trim() || !service?.baseUrl?.trim() || !service?.model?.trim()) {
+  // 槽位是否可用的判断收敛在 buildAiAttempts 里：
+  // 空列表 = 压根没配好任何一个渠道
+  const attempts = buildAiAttempts(s);
+  if (attempts.length === 0) {
     ElMessage.warning(t('git.aiConfigMissing'));
     return;
   }
@@ -217,13 +220,18 @@ async function handleAiGenerate() {
     if (willAutoStage.value) {
       await gitStore.stageAll(requestProjectId, requestProjectPath);
     }
-    const msg = await gitStore.generateAiCommitMessage(requestProjectId, requestProjectPath, {
-      service,
+    const result = await gitStore.generateAiCommitMessage(requestProjectId, requestProjectPath, {
+      attempts,
       promptTemplate: s.gitAiPromptTemplate,
       stream: s.gitAiStream,
     });
-    if (applyGeneratedCommitMessage(gitStore.commitMessage, requestProjectId, msg)) {
-      ElMessage.success(t('git.aiSuccess'));
+    if (applyGeneratedCommitMessage(gitStore.commitMessage, requestProjectId, result.text)) {
+      // 发生回退时要告诉用户实际用的不是首选渠道，否则他会以为首选一直正常
+      if (result.didFallback) {
+        ElMessage.success(t('git.aiSuccessFallback', { target: result.usedAttempt.label }));
+      } else {
+        ElMessage.success(t('git.aiSuccess'));
+      }
     }
   } catch (e: any) {
     const msg = String(e);

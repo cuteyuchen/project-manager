@@ -7,6 +7,37 @@ mod system;
 
 use tauri::{Manager, Emitter};
 
+#[cfg(windows)]
+fn disable_browser_accelerator_keys<R: tauri::Runtime>(webview: tauri::Webview<R>) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
+    use windows_core::Interface;
+
+    let label = webview.label().to_string();
+    let callback_label = label.clone();
+    if let Err(error) = webview.with_webview(move |platform| unsafe {
+        let result = platform
+            .controller()
+            .CoreWebView2()
+            .and_then(|core| core.Settings())
+            .and_then(|settings| settings.cast::<ICoreWebView2Settings3>())
+            .and_then(|settings| settings.SetAreBrowserAcceleratorKeysEnabled(false));
+        if let Err(error) = result {
+            eprintln!("Failed to disable WebView2 browser accelerator keys for {callback_label}: {error}");
+        }
+    }) {
+        eprintln!("Failed to access WebView2 for {label}: {error}");
+    }
+}
+
+#[cfg(not(windows))]
+fn disable_browser_accelerator_keys<R: tauri::Runtime>(_webview: tauri::Webview<R>) {}
+
+fn webview_shortcut_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
+    tauri::plugin::Builder::new("webview-shortcuts")
+        .on_webview_ready(disable_browser_accelerator_keys)
+        .build()
+}
+
 #[tauri::command]
 fn read_config_file(filename: String) -> Result<String, String> {
     let mut path = std::env::current_exe().map_err(|e| e.to_string())?;
@@ -48,6 +79,9 @@ fn exit_app(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        // Windows WebView2 默认会优先处理 Ctrl+F/F5/Ctrl+数字/Alt+方向键。
+        // 关闭浏览器专用加速键后，这些产品快捷键才能进入前端 keydown 链路。
+        .plugin(webview_shortcut_plugin())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())

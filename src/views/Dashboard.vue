@@ -20,7 +20,14 @@ import { useWorkspaceProfiles } from '../composables/dashboard/useWorkspaceProfi
 import type { Project, ProjectHealthSnapshot } from '../types';
 import type { ImportNode } from '../api/types';
 import { useI18n } from 'vue-i18n';
-import { calculateDraggedItemCenterY, calculateDraggedItemTranslateY, calculateFlipTransforms } from '../utils/dragPosition';
+import { compareProjectsByPinnedThenOrder } from '../utils/projectTree.ts';
+import { useListDragSort } from '../composables/useListDragSort.ts';
+import { useAppShortcuts } from '../composables/useAppShortcuts.ts';
+import {
+    DEFAULT_FOCUS_SEARCH_SHORTCUT,
+    DEFAULT_NEW_PROJECT_SHORTCUT,
+    DEFAULT_REFRESH_PROJECTS_SHORTCUT,
+} from '../utils/shortcut.ts';
 import { collectProjectTags, projectMatchesSelectedTags } from '../utils/projectTags';
 import { pinyin } from 'pinyin-pro';
 
@@ -51,6 +58,9 @@ function backToList() {
     drilledRootId.value = null;
     projectStore.activeRootId = null;
     projectStore.activeProjectId = null;
+    // 必须清掉搜索跳转目标：它非空会让下次进入同一项目时被自动下钻到旧目标，
+    // 也会让工作区的导航恢复逻辑一直走「搜索优先」的早退分支
+    workspaceTargetProjectId.value = null;
     void nextTick(() => {
         const container = projectListContainer.value;
         if (!container) return;
@@ -72,16 +82,12 @@ watch(() => projectStore.pendingWorkspaceRootId, (rootId) => {
     projectStore.pendingWorkspaceRootId = null;
     projectStore.pendingWorkspaceProjectId = null;
     if (!target) return;
-    if (drilledRootId.value && drilledRootId.value !== rootId) {
-        // 已在其它工作区：Transition mode="out-in" 下同分支仅换 key 会导致新工作区挂载失败，
-        // 先返回列表再于下一帧进入目标，确保离场/入场过渡与组件重建正确执行。
-        drilledRootId.value = null;
-        void nextTick(() => {
-            openProjectWorkspace(target);
-        });
-    } else {
-        openProjectWorkspace(target);
-    }
+    // 直接切 rootId 即可。
+    // 原先这里要「先返回列表、再于下一帧进入目标」，是因为 ProjectWorkspace 带
+    // :key="workspace:${rootId}"，在 Transition mode="out-in" 下同分支换 key 会挂载失败。
+    // 现在 key 已是静态值（为让 KeepAlive 缓存跨一级项目存活），同一个 vnode 只换 props，
+    // Transition 完全不介入，那套绕法既没必要、又会白白闪一下列表页并销毁整份缓存。
+    openProjectWorkspace(target);
 }, { immediate: true });
 
 /** 工作区内请求编辑项目 */
@@ -199,6 +205,8 @@ onBeforeUnmount(() => {
 
 //************* 搜索功能 *************
 const searchQuery = ref('');
+/** el-input 实例：聚焦搜索快捷键需要拿到内部的原生 input */
+const projectSearchInput = useTemplateRef<{ $el?: HTMLElement } | null>('projectSearchInput');
 const showGroupManager = ref(false);
 const showImportModal = ref(false);
 
@@ -298,17 +306,10 @@ const sortedProjects = computed(() => {
             return 0;
         });
     }
-    // Default sort: pinned first, then by sortOrder (manual), then by original array order
-    return [...rootProjects.value].sort((a, b) => {
-        if (a.pinned && !b.pinned) return -1;
-        if (!a.pinned && b.pinned) return 1;
-        if (a.pinned && b.pinned) return (a.pinOrder ?? 0) - (b.pinOrder ?? 0);
-        // For unpinned: use sortOrder if available, otherwise maintain original order
-        const oa = a.sortOrder ?? Infinity;
-        const ob = b.sortOrder ?? Infinity;
-        if (oa !== ob) return oa - ob;
-        return 0;
-    });
+    // 默认排序：置顶优先，其次手动拖拽序号。
+    // 与子项目列表（stores/project.ts 的 getChildren）共用同一个比较器，
+    // 避免两处规则漂移。
+    return [...rootProjects.value].sort(compareProjectsByPinnedThenOrder);
 });
 
 const projectSearchIndex = computed(() => {
@@ -434,8 +435,10 @@ const {
 } = useWorkspaceProfiles();
 
 /***********************健康状态统计与判定*********************/
+// 读聚合值而非 runningProjectCount：后者只按发起命令的项目自身计数，
+// 一级项目卡片会漏掉「子项目正在运行」。
 function isProjectRunning(projectId: string): boolean {
-    return (projectStore.runningProjectCount[projectId] ?? 0) > 0;
+    return (projectStore.runningSubtreeCount[projectId] ?? 0) > 0;
 }
 
 function getRealHealthIssues(snapshot: ProjectHealthSnapshot | undefined) {
@@ -465,173 +468,12 @@ watch([searchQuery, activeQuickFilter, selectedGroupId, selectedTags, sortMode],
 });
 
 /***********************项目列表手动拖拽排序*********************/
-const draggableList = ref<Project[]>([]);
-const dragState = ref({
-    dragging: false,
-    projectId: null as string | null,
-    pointerOffsetY: 0,
-    dragDelta: 0,
-    fromIndex: -1,
-    currentFromIndex: -1,
-    containerEl: null as HTMLElement | null,
+// 拖拽逻辑抽到 composables/useListDragSort.ts，与工作区的子项目列表共用；
+// 这里只负责把新顺序写回项目数据。
+const { draggableList, dragState, onDragMouseDown } = useListDragSort<Project>({
+    items: sortedProjects,
+    onCommit: (ordered) => projectStore.applyManualOrder(ordered),
 });
-let flipAnimating = false;
-
-watch(() => sortedProjects.value, (newSorted) => {
-    if (!dragState.value.dragging) {
-        draggableList.value = [...newSorted];
-    }
-}, { immediate: true });
-
-function onDragMouseDown(e: MouseEvent, projectId: string) {
-    e.preventDefault();
-    const handleEl = e.currentTarget as HTMLElement;
-    const itemEl = handleEl.closest('.draggable-item') as HTMLElement;
-    const listEl = handleEl.closest('.draggable-list') as HTMLElement;
-    if (!itemEl || !listEl) return;
-
-    const startIndex = draggableList.value.findIndex(p => p.id === projectId);
-    if (startIndex < 0) return;
-
-    const itemRect = itemEl.getBoundingClientRect();
-
-    dragState.value = {
-        dragging: true,
-        projectId,
-        pointerOffsetY: e.clientY - itemRect.top,
-        dragDelta: 0,
-        fromIndex: startIndex,
-        currentFromIndex: startIndex,
-        containerEl: listEl,
-    };
-
-    document.addEventListener('mousemove', onDragMouseMove);
-    document.addEventListener('mouseup', onDragMouseUp);
-}
-
-function onDragMouseMove(e: MouseEvent) {
-    const state = dragState.value;
-    if (!state.dragging || !state.containerEl) return;
-
-    // 按当前 DOM 基准位置计算位移，避免换位后叠加初始位移导致元素远离鼠标。
-    const items = Array.from(state.containerEl.children) as HTMLElement[];
-    const draggedItem = items[state.currentFromIndex];
-    if (!draggedItem) return;
-
-    state.dragDelta = calculateDraggedItemTranslateY({
-        pointerClientY: e.clientY,
-        listClientTop: state.containerEl.getBoundingClientRect().top,
-        pointerOffsetY: state.pointerOffsetY,
-        itemOffsetTop: draggedItem.offsetTop,
-    });
-
-    let targetIndex = state.currentFromIndex;
-    const draggedCenter = calculateDraggedItemCenterY({
-        itemOffsetTop: draggedItem.offsetTop,
-        itemHeight: draggedItem.offsetHeight,
-        translateY: state.dragDelta,
-    });
-
-    for (let i = 0; i < items.length; i++) {
-        if (i === state.currentFromIndex) continue;
-        const itemTop = items[i].offsetTop;
-        const itemHeight = items[i].offsetHeight;
-        const itemCenter = itemTop + itemHeight / 2;
-
-        if (state.currentFromIndex < i && draggedCenter > itemCenter) {
-            targetIndex = i;
-        } else if (state.currentFromIndex > i && draggedCenter < itemCenter) {
-            targetIndex = i;
-        }
-    }
-
-    if (targetIndex !== state.currentFromIndex && !flipAnimating) {
-        animateReorder(state.currentFromIndex, targetIndex);
-        state.currentFromIndex = targetIndex;
-    }
-}
-
-function animateReorder(fromIdx: number, toIdx: number) {
-    const listEl = dragState.value.containerEl;
-    if (!listEl) return;
-    flipAnimating = true;
-
-    // 按项目 ID 记录换位前位置，用于 FLIP 动画。
-    const children = Array.from(listEl.children) as HTMLElement[];
-    const oldPositions = children
-        .map(el => ({ id: el.dataset.projectId ?? '', top: el.offsetTop }))
-        .filter(item => item.id);
-
-    // 更新列表顺序，让 DOM 进入换位后的真实布局。
-    const [moved] = draggableList.value.splice(fromIdx, 1);
-    draggableList.value.splice(toIdx, 0, moved);
-
-    // DOM 更新后，让非拖拽元素从旧位置平滑移动到新位置。
-    nextTick(() => {
-        const newChildren = Array.from(listEl.children) as HTMLElement[];
-        const transforms = calculateFlipTransforms({
-            oldPositions,
-            newPositions: newChildren
-                .map(el => ({ id: el.dataset.projectId ?? '', top: el.offsetTop }))
-                .filter(item => item.id),
-            excludedId: dragState.value.projectId,
-        });
-
-        newChildren.forEach((el) => {
-            const translateY = transforms.get(el.dataset.projectId ?? '');
-            if (translateY !== undefined) {
-                el.style.transition = 'none';
-                el.style.transform = `translateY(${translateY}px)`;
-                requestAnimationFrame(() => {
-                    requestAnimationFrame(() => {
-                        el.style.transition = 'transform 0.18s ease';
-                        el.style.transform = '';
-                        el.addEventListener('transitionend', () => {
-                            el.style.transition = '';
-                            el.style.transform = '';
-                        }, { once: true });
-                    });
-                });
-            }
-        });
-
-        setTimeout(() => { flipAnimating = false; }, 200);
-    });
-}
-
-function onDragMouseUp() {
-    document.removeEventListener('mousemove', onDragMouseMove);
-    document.removeEventListener('mouseup', onDragMouseUp);
-
-    const state = dragState.value;
-    if (state.dragging && state.currentFromIndex !== state.fromIndex) {
-        syncDraggableOrder();
-    }
-
-    dragState.value = {
-        dragging: false,
-        projectId: null,
-        pointerOffsetY: 0,
-        dragDelta: 0,
-        fromIndex: -1,
-        currentFromIndex: -1,
-        containerEl: null,
-    };
-}
-
-function syncDraggableOrder() {
-    const projectMap = new Map(projectStore.projects.map(p => [p.id, p]));
-    let unpinnedIndex = 0;
-    draggableList.value.forEach((p, i) => {
-        const proj = projectMap.get(p.id);
-        if (!proj) return;
-        if (p.pinned) {
-            proj.pinOrder = i;
-        } else {
-            proj.sortOrder = unpinnedIndex++;
-        }
-    });
-}
 
 const projectListMetrics = computed(() => {
     let offset = 0;
@@ -714,6 +556,35 @@ async function refreshProjects() {
         refreshing.value = false;
     }
 }
+
+/***********************列表页快捷键*********************/
+// 只在列表页生效：Dashboard 挂载期间注册，工作区那套键位写在 ProjectWorkspace 里。
+// 键位可在设置页改，缺省值见 utils/shortcut.ts。
+useAppShortcuts([
+    {
+        keys: () => settingsStore.settings.focusSearchShortcut || DEFAULT_FOCUS_SEARCH_SHORTCUT,
+        // 搜索框本身也要能用这个键重新聚焦并全选，所以允许在输入框内触发
+        allowInEditable: true,
+        enabled: () => !drilledRootId.value,
+        handler: () => {
+            const input = projectSearchInput.value?.$el?.querySelector?.('input');
+            if (input instanceof HTMLInputElement) {
+                input.focus();
+                input.select();
+            }
+        },
+    },
+    {
+        keys: () => settingsStore.settings.newProjectShortcut || DEFAULT_NEW_PROJECT_SHORTCUT,
+        enabled: () => !drilledRootId.value,
+        handler: openAddModal,
+    },
+    {
+        keys: () => settingsStore.settings.refreshProjectsShortcut || DEFAULT_REFRESH_PROJECTS_SHORTCUT,
+        enabled: () => !drilledRootId.value && !refreshing.value,
+        handler: () => void refreshProjects(),
+    },
+]);
 </script>
 
 <template>
@@ -723,7 +594,7 @@ async function refreshProjects() {
       <!-- ═══ 钻取后：项目工作区页 ═══ -->
       <ProjectWorkspace
         v-if="drilledRootId"
-        :key="`workspace:${drilledRootId}`"
+        key="workspace"
         :root-id="drilledRootId"
         :target-project-id="workspaceTargetProjectId"
         @back="backToList"
@@ -781,6 +652,7 @@ async function refreshProjects() {
             <div class="flex items-center gap-3">
                 <el-input
                     v-model="searchQuery"
+                    ref="projectSearchInput"
                     :placeholder="t('dashboard.searchPlaceholder')"
                     clearable
                     style="width: 280px"
@@ -1109,38 +981,6 @@ async function refreshProjects() {
 .health-chip-active .health-chip-count {
   background: rgba(255, 255, 255, 0.25);
   color: #fff;
-}
-
-/* Draggable list items */
-.draggable-list {
-  position: relative;
-}
-.draggable-item {
-  position: relative;
-}
-.draggable-item-active {
-  box-shadow: var(--app-shadow-md);
-  border-radius: var(--app-radius-lg);
-  opacity: 0.95;
-}
-
-/* Drag handle */
-.drag-handle {
-  width: 22px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  cursor: grab;
-  opacity: 0.6;
-  transition: opacity 0.15s ease;
-}
-.draggable-item:hover .drag-handle {
-  opacity: 1;
-}
-.drag-handle:active {
-  cursor: grabbing;
 }
 
 /* 列表页 ↔ 工作区页过渡：工作区从下方滑入，返回时列表从下方回到原位。 */

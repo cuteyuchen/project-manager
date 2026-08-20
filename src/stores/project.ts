@@ -1,11 +1,13 @@
 import { defineStore } from 'pinia';
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import { api } from '../api';
-import type { Project, ProjectGroup } from '../types';
+import type { Project, ProjectGroup, WorkspaceTab } from '../types';
 import type { PackageManagerResolveResult, ImportNode } from '../api/types';
 import { useNodeStore } from './node';
 import { useSettingsStore } from './settings';
 import { useUsageStore } from './usage';
+import { useGitStore } from './git';
+import { useNavMemoryStore } from './navMemory.ts';
 import { getCustomCommandDisplayNameByLocale } from '../utils/projectCommands';
 import { resolveNodePathFromVersion, resolveProjectNodePath, isExplicitNodeVersion } from '../utils/nodeRuntime';
 import { normalizeNvmVersion } from '../utils/nvm';
@@ -13,10 +15,8 @@ import { scanFrontendEnvProject } from '../utils/frontendEnvSwitcher';
 import { normalizeProjectTags } from '../utils/projectTags';
 import { createProjectId } from '../utils/projectId';
 import { flattenImportNodeTree } from '../utils/importProjectTree';
-import { MAX_PROJECT_DEPTH, normalizeProjectPath, assignSortOrders } from '../utils/projectTree';
+import { MAX_PROJECT_DEPTH, normalizeProjectPath, assignSortOrders, aggregateRunningSubtreeCount, compareProjectsByPinnedThenOrder, computeManualOrderAssignments } from '../utils/projectTree';
 import { ElMessage } from 'element-plus';
-
-type WorkspaceTab = 'console' | 'git' | 'files' | 'memo' | 'env';
 
 export const useProjectStore = defineStore('project', () => {
   const projects = ref<Project[]>([]);
@@ -62,6 +62,16 @@ export const useProjectStore = defineStore('project', () => {
       runningProjectCount.value[projectId] = nextCount;
     }
   }
+
+  /**
+   * 自身 + 全部后代的运行中命令数（key = 项目 id）。
+   *
+   * runningProjectCount 只按发起命令的项目自身计数，所以父项目卡片看不到
+   * 子项目在跑。主页的运行中徽标与「运行中」筛选都读这个聚合值。
+   */
+  const runningSubtreeCount = computed(() =>
+    aggregateRunningSubtreeCount(projects.value, runningProjectCount.value)
+  );
 
   function flushLogs() {
     for (const id in logBuffer) {
@@ -128,15 +138,26 @@ export const useProjectStore = defineStore('project', () => {
     if (activeProjectId.value && idsToRemove.has(activeProjectId.value)) activeProjectId.value = null;
     if (activeRootId.value && idsToRemove.has(activeRootId.value)) activeRootId.value = null;
     try { useUsageStore().cleanupRemovedProjects(projects.value.map(p => p.id)); } catch {}
+    // git store 的按项目分桶缓存（status/history/diff 等）同样要裁掉，
+    // 否则删完项目它们会永久驻留。批量删除也走本函数，一处即全覆盖。
+    try { useGitStore().cleanupRemovedProjects(projects.value.map(p => p.id)); } catch {}
+    // 工作区导航记忆同样按项目 id 存，删完项目要一并裁掉
+    try { useNavMemoryStore().cleanupRemovedProjects(projects.value.map(p => p.id)); } catch {}
   }
 
   /***********************项目嵌套（多级）辅助*********************/
 
-  /** 获取指定父项目的直接子项目（按 sortOrder 升序） */
+  /**
+   * 获取指定父项目的直接子项目。
+   *
+   * 排序规则与一级项目列表共用 compareProjectsByPinnedThenOrder：
+   * 置顶优先 → pinOrder → sortOrder。原先只按 sortOrder 排，导致子项目上的
+   * 置顶按钮点了没有任何效果。
+   */
   function getChildren(parentId: string): Project[] {
     return projects.value
       .filter((p) => p.parentId === parentId)
-      .sort((a, b) => (a.sortOrder ?? Infinity) - (b.sortOrder ?? Infinity));
+      .sort(compareProjectsByPinnedThenOrder);
   }
 
   /** 获取所有一级项目（无 parentId 的根项目） */
@@ -508,6 +529,14 @@ export const useProjectStore = defineStore('project', () => {
           return { ...nextProject, scripts: info.scripts || [] };
         }
 
+        // Java：刷新构建工具与 wrapper 状态。
+        // 用户后来才 `mvn wrapper:wrapper` 生成 mvnw 的情况很常见，
+        // 不刷新的话命令会一直用全局 mvn。已配好的自定义命令不动，
+        // 免得覆盖用户手改过的参数。
+        if (info && p.type === 'java' && info.buildTool) {
+          return { ...nextProject, buildTool: info.buildTool, hasWrapper: !!info.hasWrapper };
+        }
+
         return nextProject;
       })
     );
@@ -544,17 +573,24 @@ export const useProjectStore = defineStore('project', () => {
     );
   }
 
+  /**
+   * 置顶项目：排到**同层级**的最前面。
+   *
+   * pinOrder 是同一 parentId 作用域内的序号，所以重排只能作用于兄弟节点。
+   * 原先会把全局所有 pinned 项目的 pinOrder 一起 +1，让一级项目和各层子项目
+   * 挤在同一个序号空间里互相干扰。
+   */
   function pinProject(id: string) {
     const project = projects.value.find((p) => p.id === id);
     if (!project) return;
-    // Bump all existing pinned projects down by 1
+    // 同层级已置顶的兄弟统一后移一位，腾出首位
     for (const p of projects.value) {
-      if (p.pinned && p.id !== id) {
+      if (p.pinned && p.id !== id && p.parentId === project.parentId) {
         p.pinOrder = (p.pinOrder ?? 0) + 1;
       }
     }
     project.pinned = true;
-    project.pinOrder = 0; // Top position
+    project.pinOrder = 0; // 同层级首位
   }
 
   function unpinProject(id: string) {
@@ -562,6 +598,22 @@ export const useProjectStore = defineStore('project', () => {
     if (!project) return;
     project.pinned = false;
     project.pinOrder = undefined;
+  }
+
+  /**
+   * 把拖拽后的顺序写回项目。
+   *
+   * 传入的列表必须是**同一层级**的兄弟节点（一级项目列表或某个父项目的子项目
+   * 列表），因为 pinOrder / sortOrder 都是同层级内的序号。
+   */
+  function applyManualOrder(ordered: { id: string; pinned?: boolean }[]) {
+    const projectMap = new Map(projects.value.map((p) => [p.id, p]));
+    for (const assignment of computeManualOrderAssignments(ordered)) {
+      const project = projectMap.get(assignment.id);
+      if (!project) continue;
+      if (assignment.pinOrder !== undefined) project.pinOrder = assignment.pinOrder;
+      if (assignment.sortOrder !== undefined) project.sortOrder = assignment.sortOrder;
+    }
   }
 
   /***********************批量选择状态*********************/
@@ -678,6 +730,7 @@ export const useProjectStore = defineStore('project', () => {
     projectGroups,
     runningStatus,
     runningProjectCount,
+    runningSubtreeCount,
     logs,
     activeProjectId,
     activeRootId,
@@ -710,6 +763,7 @@ export const useProjectStore = defineStore('project', () => {
     scanFrontendEnvForAll,
     pinProject,
     unpinProject,
+    applyManualOrder,
     addProjectGroup,
     updateProjectGroup,
     removeProjectGroup,

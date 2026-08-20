@@ -17,11 +17,11 @@ const files = computed(() => {
   return gitStore.getCommitFiles(props.project.id, selectedHash.value);
 });
 
-const selectedFile = computed(() => gitStore.selectedDiffFile);
+const selectedFile = computed(() => gitStore.getDiffSelection(props.project.id).file);
 
 async function selectFile(file: GitCommitFile) {
   if (!selectedHash.value) return;
-  await gitStore.getDiffCommitFile(props.project.path, selectedHash.value, file.path);
+  await gitStore.getDiffCommitFile(props.project.id, props.project.path, selectedHash.value, file.path);
 }
 
 // Auto-select first file when commit selection changes

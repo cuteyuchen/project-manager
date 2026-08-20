@@ -47,8 +47,20 @@ function readPackageJson(projectPath) {
 
 function identifyProjectModule(projectPath) {
     const has = (name) => fs.existsSync(path.join(projectPath, name));
-    if (has('pom.xml')) return { kind: 'backend', framework: 'Spring Boot' };
-    if (has('build.gradle') || has('build.gradle.kts')) return { kind: 'backend', framework: 'Gradle' };
+    // 只有真的引了 spring-boot 才报 Spring Boot，否则一律报 Maven
+    if (has('pom.xml')) {
+        let framework = 'Maven';
+        try {
+            if (fs.readFileSync(path.join(projectPath, 'pom.xml'), 'utf-8').includes('spring-boot')) {
+                framework = 'Spring Boot';
+            }
+        } catch (e) { /* 读不到就按 Maven 处理 */ }
+        return { kind: 'backend', framework };
+    }
+    // settings.gradle(.kts) 也算：多模块仓库根目录可能只有 settings 没有 build
+    if (has('build.gradle') || has('build.gradle.kts') || has('settings.gradle') || has('settings.gradle.kts')) {
+        return { kind: 'backend', framework: 'Gradle' };
+    }
     if (has('package.json')) {
         const pkg = readPackageJson(projectPath);
         const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
@@ -92,6 +104,18 @@ function scanProjectTree(dirPath, depth, maxDepth, seen) {
     const pkg = hasPackageJson ? readPackageJson(dirPath) : {};
     const scripts = Object.keys(pkg.scripts || {}).sort();
 
+    // Java 构建信息：与 src-tauri 的 scan_child_dirs 保持一致，
+    // 否则两条导入路径识别出的项目类型会分叉
+    const isMavenNode = fs.existsSync(path.join(dirPath, 'pom.xml'));
+    const isGradleNode = ['build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts']
+        .some((n) => fs.existsSync(path.join(dirPath, n)));
+    const nodeBuildTool = isMavenNode ? 'maven' : (isGradleNode ? 'gradle' : undefined);
+    const nodeHasWrapper = nodeBuildTool === 'maven'
+        ? (fs.existsSync(path.join(dirPath, 'mvnw')) || fs.existsSync(path.join(dirPath, 'mvnw.cmd')))
+        : (nodeBuildTool === 'gradle'
+            ? (fs.existsSync(path.join(dirPath, 'gradlew')) || fs.existsSync(path.join(dirPath, 'gradlew.bat')))
+            : undefined);
+
     const makeNode = (kind, framework, children) => ({
         name,
         path: dirPath,
@@ -99,6 +123,8 @@ function scanProjectTree(dirPath, depth, maxDepth, seen) {
         framework,
         hasGit,
         hasPackageJson,
+        buildTool: nodeBuildTool,
+        hasWrapper: nodeHasWrapper,
         scripts,
         children,
     });
@@ -915,6 +941,28 @@ window.services = {
             const dirName = path.basename(projectPath);
 
             if (!fs.existsSync(pkgPath)) {
+                // Java：先于 "other" 判定，与 src-tauri/src/project.rs 的 scan_project 保持一致。
+                // 不识别的话前端「命令」页签整个不渲染，Java 项目就只能开编辑器。
+                const isMaven = fs.existsSync(path.join(projectPath, 'pom.xml'));
+                const isGradle = ['build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts']
+                    .some((name) => fs.existsSync(path.join(projectPath, name)));
+                if (isMaven || isGradle) {
+                    const buildTool = isMaven ? 'maven' : 'gradle';
+                    const hasWrapper = isMaven
+                        ? (fs.existsSync(path.join(projectPath, 'mvnw')) || fs.existsSync(path.join(projectPath, 'mvnw.cmd')))
+                        : (fs.existsSync(path.join(projectPath, 'gradlew')) || fs.existsSync(path.join(projectPath, 'gradlew.bat')));
+                    return {
+                        name: dirName,
+                        scripts: [],
+                        path: projectPath,
+                        packageManager: undefined,
+                        nvmVersion: undefined,
+                        projectType: 'java',
+                        buildTool,
+                        hasWrapper
+                    };
+                }
+
                 // Non-Node project
                 return {
                     name: dirName,

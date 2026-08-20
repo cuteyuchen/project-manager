@@ -817,3 +817,44 @@ html.has-custom-background .commit-day-muted {
   opacity: 0;
   transform: translateX(-6px) scale(0.998);
 }
+
+/* ─── 列表手动拖拽排序 ──────────────────────────────────────────────
+   一级项目列表与工作区的子项目列表共用这套 DOM 约定与样式，
+   逻辑在 composables/useListDragSort.ts。放全局是因为两处必须完全一致：
+   位移与换位判定依赖 .draggable-list 的直接子元素与 .draggable-item 的下标对应。 */
+
+.draggable-list {
+  position: relative;
+}
+
+.draggable-item {
+  position: relative;
+}
+
+/* 正在被拖动的那一项：抬起来一点，盖住相邻卡片 */
+.draggable-item-active {
+  box-shadow: var(--app-shadow-md);
+  border-radius: var(--app-radius-lg);
+  opacity: 0.95;
+}
+
+/* 拖拽手柄：参与标题行的正常布局，不用绝对定位，否则会脱离卡片行 */
+.drag-handle {
+  width: 22px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  cursor: grab;
+  opacity: 0.6;
+  transition: opacity var(--app-duration-fast) var(--app-ease);
+}
+
+.draggable-item:hover .drag-handle {
+  opacity: 1;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}

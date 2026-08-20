@@ -1,10 +1,17 @@
 import type { FrontendEnvGroup } from './utils/frontendEnvSwitcher';
 
+/** 内置命令 id：名称在渲染时按当前语言翻译，不写死在数据里 */
+export type BuiltinCommandId =
+  | 'install_dependencies'
+  | 'java_run'
+  | 'java_package'
+  | 'java_test';
+
 export interface CustomCommand {
   id: string;
   name: string;
   command: string;
-  builtinId?: 'install_dependencies';
+  builtinId?: BuiltinCommandId;
 }
 
 export interface EditorConfig {
@@ -66,7 +73,17 @@ export interface Project {
   id: string;
   name: string;
   path: string;
-  type: 'node' | 'other';
+  /**
+   * 项目类型。
+   *
+   * 'java' 是后来加的：所有相关判断都是 `type === 'node'` 的正向 guard，
+   * 新值一律落进「非 node」分支，不会被注入 Node/包管理器环境。
+   */
+  type: 'node' | 'java' | 'other';
+  /** Java 构建工具；仅 type === 'java' 时有值 */
+  buildTool?: 'maven' | 'gradle';
+  /** 是否存在 mvnw / gradlew，有则命令优先走 wrapper */
+  hasWrapper?: boolean;
   gitRemoteUrl?: string;
   gitBranch?: string;
   gitConfigured?: boolean;
@@ -120,6 +137,40 @@ export interface AiServiceConfig {
   model: string;
 }
 
+/***********************AI 多渠道回退*********************/
+
+/**
+ * 回退模式，二选一：
+ * - `single_channel` 单渠道多模型：1 套 baseUrl/apiKey + 最多 3 个模型，依次尝试
+ * - `multi_channel`  多渠道多模型：最多 3 套各自独立的 baseUrl/apiKey/model，依次尝试
+ *
+ * 两种模式都是最多 3 次尝试，不叠加。
+ */
+export type AiFallbackMode = 'single_channel' | 'multi_channel';
+
+/** 一个独立渠道（多渠道模式下的一个槽位） */
+export interface AiChannelConfig extends AiServiceConfig {
+  id: string;
+  /** 关掉的槽位会被跳过，但配置保留 */
+  enabled?: boolean;
+}
+
+/** 单渠道模式的配置：一套服务 + 多个候选模型 */
+export interface AiSingleChannelConfig {
+  service: AiServiceConfig;
+  /** 候选模型，最多 3 个，按顺序回退 */
+  models: string[];
+}
+
+/** 一次尝试：把两种模式展开后的统一形态 */
+export interface AiAttempt extends AiServiceConfig {
+  /** 展示用标签，回退发生时告诉用户实际用的是哪个 */
+  label: string;
+}
+
+/** 回退可配置的最大槽位数（两种模式共用） */
+export const MAX_AI_FALLBACK_SLOTS = 3;
+
 export interface Settings {
   editorPath: string; // legacy fallback
   editors?: EditorConfig[];
@@ -143,10 +194,29 @@ export interface Settings {
   quickSearchGlobalShortcutEnabled?: boolean;
   /** 系统级呼出快速搜索的快捷键，仅桌面 Tauri 环境生效 */
   quickSearchGlobalShortcut?: string;
+  // ─── 应用内常用操作快捷键 ────────────────────────────────────────────────
+  // 说明：关闭弹窗（Esc）与逐级返回（Esc / Alt+←）是硬编码的导航键，不在此处配置。
+  /** 聚焦项目搜索框 */
+  focusSearchShortcut?: string;
+  /** 新建项目 */
+  newProjectShortcut?: string;
+  /** 刷新项目列表 */
+  refreshProjectsShortcut?: string;
+  /** 左侧菜单快捷键，依次映射项目、Node、端口、提交日历、设置 */
+  sidebarMenuShortcuts?: string[];
+  /** @deprecated 旧版误用于工作区页签的字段，仅用于升级迁移 */
+  workspaceTabShortcuts?: string[];
   // AI commit message generation
   gitAiEnabled?: boolean;
   gitAiPrimaryService?: AiServiceConfig;
   gitAiStream?: boolean;
+  // ─── 多渠道回退 ────────────────────────────────────────────────────────
+  /** 回退模式，二选一；缺省为单渠道多模型 */
+  gitAiFallbackMode?: AiFallbackMode;
+  /** 单渠道多模型模式的配置 */
+  gitAiSingleChannel?: AiSingleChannelConfig;
+  /** 多渠道多模型模式的配置，最多 MAX_AI_FALLBACK_SLOTS 个 */
+  gitAiChannels?: AiChannelConfig[];
   // Legacy fields kept for migration/backup compatibility
   gitAiBaseUrl?: string;
   gitAiApiKey?: string;
@@ -167,8 +237,32 @@ export interface Settings {
   workspaceProfiles?: WorkspaceProfile[];
 }
 
-/** 项目列表快捷筛选类型：基础 + 健康状态 */
-export type ProjectQuickFilter =
+/***********************工作区导航记忆*********************/
+
+/**
+ * 右侧工作区页签。
+ *
+ * 统一了原先 `stores/project.ts` 与 `ProjectWorkspace.vue` 里两份字面量完全
+ * 相同的重复定义；`utils/workspaceTabFallback.ts` 也复用同一套取值。
+ */
+export type WorkspaceTab = 'console' | 'git' | 'files' | 'memo' | 'env';
+
+/**
+ * 工作区导航记忆。
+ *
+ * `leafTab` 与 `levelLeaf` **必须分开存**：钻取到最大深度时（drillStack 达到
+ * MAX_PROJECT_DEPTH），一个有子项目的节点也只能被当作叶子选中，于是同一个
+ * project id 既可能作为「层级」被记录选中的子项，又可能作为「叶子」被记录
+ * 停留的页签。合成一个 Record 会让两种语义互相踩。
+ */
+export interface WorkspaceNavMemory {
+  /** 叶子项目 id → 用户最后**手动**选择的页签 */
+  leafTab: Record<string, WorkspaceTab>;
+  /** 层级节点 id → 最后选中的叶子 id；null 表示选中的是层级自身（父项目入口卡） */
+  levelLeaf: Record<string, string | null>;
+}
+
+/** 项目列表快捷筛选类型：基础 + 健康状态 */export type ProjectQuickFilter =
   | 'all'
   | 'pinned'
   | 'recent'

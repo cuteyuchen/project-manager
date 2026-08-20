@@ -26,6 +26,58 @@ pub struct ProjectInfo {
     nvm_version: Option<String>,
     #[serde(rename = "projectType")]
     project_type: String,
+    /// Java 构建工具："maven" | "gradle"；非 Java 项目为 None
+    #[serde(rename = "buildTool", skip_serializing_if = "Option::is_none")]
+    build_tool: Option<String>,
+    /// 是否存在 wrapper（mvnw / gradlew）。有 wrapper 时优先用它，
+    /// 免得机器上没装或装了不同版本的 mvn / gradle。
+    #[serde(rename = "hasWrapper", skip_serializing_if = "Option::is_none")]
+    has_wrapper: Option<bool>,
+}
+
+impl ProjectInfo {
+    /// 非 Java 项目的构造：Java 专属字段留空
+    fn without_build_tool(
+        name: String,
+        scripts: Vec<String>,
+        path: String,
+        package_manager: Option<String>,
+        nvm_version: Option<String>,
+        project_type: String,
+    ) -> Self {
+        ProjectInfo {
+            name,
+            scripts,
+            path,
+            package_manager,
+            nvm_version,
+            project_type,
+            build_tool: None,
+            has_wrapper: None,
+        }
+    }
+}
+
+/// 是否为 Maven 项目
+fn detect_maven(dir: &Path) -> bool {
+    dir.join("pom.xml").exists()
+}
+
+/// 是否为 Gradle 项目。
+///
+/// 多模块项目的根目录可能只有 settings.gradle 而没有 build.gradle，
+/// 所以这两个文件名也要算上——只看 build.gradle 会漏掉整个仓库根。
+fn detect_gradle(dir: &Path) -> bool {
+    ["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"]
+        .iter()
+        .any(|name| dir.join(name).exists())
+}
+
+/// pom.xml 里是否真的引了 Spring Boot（而不是所有 Maven 项目都算）
+fn pom_has_spring_boot(dir: &Path) -> bool {
+    fs::read_to_string(dir.join("pom.xml"))
+        .map(|content| content.contains("spring-boot"))
+        .unwrap_or(false)
 }
 
 #[derive(Deserialize)]
@@ -142,14 +194,41 @@ pub async fn scan_project(path: String) -> Result<ProjectInfo, String> {
             .to_string();
 
         if !package_json_path.exists() {
-            return Ok(ProjectInfo {
-                name: dir_name,
-                scripts: Vec::new(),
+            // Java：先于 "other" 判定。Maven / Gradle 项目扫不出可运行命令时，
+            // 前端的「命令」页签整个不渲染，等于这个工具对 Java 项目只能开编辑器。
+            let is_maven = detect_maven(project_path);
+            let is_gradle = detect_gradle(project_path);
+            if is_maven || is_gradle {
+                let build_tool = if is_maven { "maven" } else { "gradle" };
+                let has_wrapper = if is_maven {
+                    project_path.join("mvnw").exists() || project_path.join("mvnw.cmd").exists()
+                } else {
+                    project_path.join("gradlew").exists() || project_path.join("gradlew.bat").exists()
+                };
+
+                return Ok(ProjectInfo {
+                    name: dir_name,
+                    // 具体命令由前端按 buildTool + hasWrapper 组装（见 utils/projectCommands.ts），
+                    // 这里不返回脚本名：Maven 的 goal 与 Gradle 的 task 语义不同，
+                    // 后端硬编码一份会和前端的预设重复。
+                    scripts: Vec::new(),
+                    path,
+                    package_manager: None,
+                    nvm_version: None,
+                    project_type: "java".to_string(),
+                    build_tool: Some(build_tool.to_string()),
+                    has_wrapper: Some(has_wrapper),
+                });
+            }
+
+            return Ok(ProjectInfo::without_build_tool(
+                dir_name,
+                Vec::new(),
                 path,
-                package_manager: None,
-                nvm_version: None,
-                project_type: "other".to_string(),
-            });
+                None,
+                None,
+                "other".to_string(),
+            ));
         }
 
         let content = fs::read_to_string(&package_json_path).map_err(|e| e.to_string())?;
@@ -180,14 +259,14 @@ pub async fn scan_project(path: String) -> Result<ProjectInfo, String> {
             }
         }
 
-        Ok(ProjectInfo {
+        Ok(ProjectInfo::without_build_tool(
             name,
             scripts,
             path,
             package_manager,
             nvm_version,
-            project_type: "node".to_string(),
-        })
+            "node".to_string(),
+        ))
     })
     .await
 }
@@ -226,6 +305,13 @@ pub struct ImportNode {
     has_package_json: bool,
     /// 该目录下的 npm scripts（仅 node/前端项目有值）
     scripts: Vec<String>,
+    /// Java 构建工具："maven" | "gradle"；非 Java 模块为 None。
+    /// 前端据此把扫描出的后端模块建成 type: 'java' 的项目并预置命令。
+    #[serde(rename = "buildTool", skip_serializing_if = "Option::is_none")]
+    build_tool: Option<String>,
+    /// 是否存在 mvnw / gradlew
+    #[serde(rename = "hasWrapper", skip_serializing_if = "Option::is_none")]
+    has_wrapper: Option<bool>,
     /// 子节点（仅容器目录会继续下沉；已识别模块节点不再递归）
     children: Vec<ImportNode>,
 }
@@ -263,12 +349,15 @@ fn read_package_scripts(dir: &Path) -> Vec<String> {
 fn identify_module(dir: &Path) -> Option<(String, Option<String>)> {
     let has = |name: &str| dir.join(name).exists();
 
-    // 服务端 (Maven)
+    // 服务端 (Maven)：只有真的引了 spring-boot 才报 Spring Boot，
+    // 否则一律报 Maven —— 原先所有带 pom.xml 的项目都被标成 Spring Boot。
     if has("pom.xml") {
-        return Some(("backend".into(), Some("Spring Boot".into())));
+        let framework = if pom_has_spring_boot(dir) { "Spring Boot" } else { "Maven" };
+        return Some(("backend".into(), Some(framework.into())));
     }
-    // 服务端 (Gradle)
-    if has("build.gradle") || has("build.gradle.kts") {
+    // 服务端 (Gradle)：settings.gradle(.kts) 也要算，
+    // 多模块仓库的根目录可能只有 settings 而没有 build
+    if detect_gradle(dir) {
         return Some(("backend".into(), Some("Gradle".into())));
     }
     // 含 package.json：区分 前端(Vue/React) / Node
@@ -357,6 +446,24 @@ fn scan_project_tree(
     let has_pkg = dir.join("package.json").exists();
     let scripts = if has_pkg { read_package_scripts(dir) } else { Vec::new() };
 
+    // Java 构建信息：与 scan_project 用同一套判定，避免两条导入路径识别不一致
+    let is_maven = detect_maven(dir);
+    let is_gradle = detect_gradle(dir);
+    let build_tool = if is_maven {
+        Some("maven".to_string())
+    } else if is_gradle {
+        Some("gradle".to_string())
+    } else {
+        None
+    };
+    let has_wrapper = build_tool.as_deref().map(|tool| {
+        if tool == "maven" {
+            dir.join("mvnw").exists() || dir.join("mvnw.cmd").exists()
+        } else {
+            dir.join("gradlew").exists() || dir.join("gradlew.bat").exists()
+        }
+    });
+
     let make_node = |kind: String, framework: Option<String>, children: Vec<ImportNode>| ImportNode {
         name: name.clone(),
         path: dir.to_string_lossy().to_string(),
@@ -365,6 +472,8 @@ fn scan_project_tree(
         has_git,
         has_package_json: has_pkg,
         scripts: scripts.clone(),
+        build_tool: build_tool.clone(),
+        has_wrapper,
         children,
     };
 

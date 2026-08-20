@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, shallowRef, toRaw } from 'vue';
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, shallowRef, toRaw, useTemplateRef } from 'vue';
 import { useSettingsStore } from '../stores/settings';
 import { useProjectStore } from '../stores/project';
 import { useNodeStore } from '../stores/node';
@@ -7,7 +7,9 @@ import { api } from '../api';
 import { ElMessage } from 'element-plus';
 import { useI18n } from 'vue-i18n';
 import type { AiServiceConfig, EditorConfig, NodeVersion, Project, Settings } from '../types';
-import { isAiServiceConfigured, normalizeAiApiType, requestAiText } from '../utils/ai';
+import { MAX_AI_FALLBACK_SLOTS } from '../types';
+import { normalizeAiApiType, requestAiText } from '../utils/ai';
+import { buildAiAttempts } from '../utils/aiFallback.ts';
 import { mergeDetectedEditors } from '../utils/editorDetection';
 import { isAbortError } from '../utils/network';
 import { ensureNodeInstallCommand } from '../utils/projectCommands';
@@ -15,10 +17,15 @@ import { createTerminalConfig, getTerminalDuplicateKey, normalizeTerminalConfigs
 import {
   DEFAULT_QUICK_SEARCH_APP_SHORTCUT,
   DEFAULT_QUICK_SEARCH_GLOBAL_SHORTCUT,
+  DEFAULT_FOCUS_SEARCH_SHORTCUT,
+  DEFAULT_NEW_PROJECT_SHORTCUT,
+  DEFAULT_REFRESH_PROJECTS_SHORTCUT,
+  DEFAULT_SIDEBAR_MENU_SHORTCUTS,
   normalizeShortcut,
 } from '../utils/shortcut';
 import { createImageDataUrl } from '../utils/backgroundImage';
 import ShortcutRecorder from '../components/ShortcutRecorder.vue';
+import SettingsSectionNav from '../components/settings/SettingsSectionNav.vue';
 
 type ImportChoice = 'keep' | 'incoming';
 type ImportDiff = { key: string; label: string; current: string; incoming: string };
@@ -59,13 +66,31 @@ function normalizeAiServiceConfig(value: unknown, fallback: AiServiceConfig): Ai
 }
 
 function normalizeAiSettings(settings: Settings): Settings {
+  const primaryFallback = normalizeAiServiceConfig(settings.gitAiPrimaryService, createDefaultAiService({
+    baseUrl: settings.gitAiBaseUrl || 'https://api.openai.com/v1',
+    apiKey: settings.gitAiApiKey || '',
+    model: settings.gitAiModel || 'gpt-4o-mini',
+  }));
+  const firstSingleModel = settings.gitAiSingleChannel?.models
+    ?.map(model => model.trim())
+    .find(Boolean);
+  const firstEnabledChannel = settings.gitAiChannels?.find(channel => channel.enabled !== false);
+  const activePrimary = settings.gitAiFallbackMode === 'multi_channel' && firstEnabledChannel
+    ? normalizeAiServiceConfig(firstEnabledChannel, primaryFallback)
+    : settings.gitAiSingleChannel
+      ? {
+          ...normalizeAiServiceConfig(settings.gitAiSingleChannel.service, primaryFallback),
+          model: firstSingleModel || settings.gitAiSingleChannel.service.model || primaryFallback.model,
+        }
+      : primaryFallback;
+
   return {
     ...settings,
-    gitAiPrimaryService: normalizeAiServiceConfig(settings.gitAiPrimaryService, createDefaultAiService({
-      baseUrl: settings.gitAiBaseUrl || 'https://api.openai.com/v1',
-      apiKey: settings.gitAiApiKey || '',
-      model: settings.gitAiModel || 'gpt-4o-mini',
-    })),
+    // 兼容旧版本：始终回写当前模式真正会尝试的第一个服务。
+    gitAiPrimaryService: activePrimary,
+    gitAiBaseUrl: activePrimary.baseUrl,
+    gitAiApiKey: activePrimary.apiKey,
+    gitAiModel: activePrimary.model,
     gitAiStream: typeof settings.gitAiStream === 'boolean' ? settings.gitAiStream : true,
   };
 }
@@ -82,6 +107,8 @@ const contextMenuSupported = ref(false);
 const autoLaunchEnabled = ref(false);
 const aiTestLoading = ref(false);
 const aiTestResult = ref<{ success: boolean; message: string } | null>(null);
+/** 逐槽测试结果，与 buildAiAttempts 展开出的顺序一一对应 */
+const aiSlotTestResults = ref<{ label: string; state: 'pending' | 'ok' | 'fail'; message: string }[]>([]);
 const updateCheckLoading = ref(false);
 const importDialogVisible = ref(false);
 const importPlan = ref<ImportPlan | null>(null);
@@ -92,6 +119,78 @@ const editingEditorIndex = shallowRef<number | null>(null);
 const editorEditForm = ref<EditorConfig>({ id: '', name: '', path: '' });
 const backgroundPreviewUrl = ref('');
 const backgroundPreviewLoading = ref(false);
+
+/***********************设置页目录导航*********************/
+const settingsContent = useTemplateRef<HTMLElement>('settingsContent');
+const activeSettingsSectionId = ref('appearance');
+
+const settingsSectionItems = computed(() => {
+  const items = [
+    { id: 'appearance', label: t('settings.appearance'), icon: 'i-mdi-white-balance-sunny' },
+    ...(!isPlugin ? [{ id: 'window-behavior', label: t('settings.windowBehavior'), icon: 'i-mdi-dock-window' }] : []),
+    { id: 'shortcuts', label: t('settings.shortcuts'), icon: 'i-mdi-keyboard-outline' },
+    { id: 'editors', label: t('settings.editorManagement'), icon: 'i-mdi-monitor' },
+    { id: 'terminals', label: t('settings.terminalManagement'), icon: 'i-mdi-console' },
+    { id: 'updates', label: t('settings.update'), icon: 'i-mdi-update' },
+    { id: 'backup', label: t('settings.dataBackup'), icon: 'i-mdi-database-sync-outline' },
+    { id: 'git-ai', label: t('settings.gitAi'), icon: 'i-mdi-auto-fix' },
+  ] as const;
+  return items;
+});
+
+let settingsScrollAttached = false;
+let settingsScrollFrame = 0;
+
+function updateActiveSettingsSection() {
+  const root = settingsContent.value;
+  if (!root) return;
+
+  if (root.scrollTop + root.clientHeight >= root.scrollHeight - 2) {
+    activeSettingsSectionId.value = settingsSectionItems.value[settingsSectionItems.value.length - 1]?.id || 'appearance';
+    return;
+  }
+
+  const anchor = root.getBoundingClientRect().top + 32;
+  let currentId: string = settingsSectionItems.value[0]?.id || 'appearance';
+  for (const item of settingsSectionItems.value) {
+    const section = root.querySelector<HTMLElement>(`[data-settings-section="${item.id}"]`);
+    if (section && section.getBoundingClientRect().top <= anchor) currentId = item.id;
+  }
+  activeSettingsSectionId.value = currentId;
+}
+
+function scheduleActiveSettingsSectionUpdate() {
+  if (settingsScrollFrame) return;
+  settingsScrollFrame = requestAnimationFrame(() => {
+    settingsScrollFrame = 0;
+    updateActiveSettingsSection();
+  });
+}
+
+function attachSettingsNavigation() {
+  const root = settingsContent.value;
+  if (!root || settingsScrollAttached) return;
+  settingsScrollAttached = true;
+  root.addEventListener('scroll', scheduleActiveSettingsSectionUpdate, { passive: true });
+  scheduleActiveSettingsSectionUpdate();
+}
+
+function detachSettingsNavigation() {
+  const root = settingsContent.value;
+  if (root) root.removeEventListener('scroll', scheduleActiveSettingsSectionUpdate);
+  settingsScrollAttached = false;
+  if (settingsScrollFrame) cancelAnimationFrame(settingsScrollFrame);
+  settingsScrollFrame = 0;
+}
+
+function scrollToSettingsSection(id: string) {
+  const root = settingsContent.value;
+  const section = root?.querySelector<HTMLElement>(`[data-settings-section="${id}"]`);
+  if (!root || !section) return;
+  activeSettingsSectionId.value = id;
+  const top = section.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop - 16;
+  root.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+}
 
 const deepClone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 const draft = ref<Settings>(normalizeDefaultTerminalId(normalizeAiSettings(deepClone(toRaw(settingsStore.settings)))));
@@ -113,8 +212,9 @@ function resetDraft() {
 }
 
 function handleSave() {
+  normalizeQuickSearchAppShortcut();
+  normalizeActionShortcuts();
   if (!isPlugin) {
-    normalizeQuickSearchAppShortcut();
     normalizeQuickSearchGlobalShortcut();
   }
   Object.assign(settingsStore.settings, normalizeDefaultTerminalId(normalizeAiSettings(deepClone(toRaw(draft.value)))));
@@ -198,6 +298,26 @@ function normalizeQuickSearchGlobalShortcut() {
   ) || DEFAULT_QUICK_SEARCH_GLOBAL_SHORTCUT;
 }
 
+/** 项目列表常用操作快捷键：录空或录坏都回落到默认键位 */
+function normalizeActionShortcuts() {
+  draft.value.focusSearchShortcut = normalizeShortcut(
+    draft.value.focusSearchShortcut || DEFAULT_FOCUS_SEARCH_SHORTCUT,
+  ) || DEFAULT_FOCUS_SEARCH_SHORTCUT;
+  draft.value.newProjectShortcut = normalizeShortcut(
+    draft.value.newProjectShortcut || DEFAULT_NEW_PROJECT_SHORTCUT,
+  ) || DEFAULT_NEW_PROJECT_SHORTCUT;
+  draft.value.refreshProjectsShortcut = normalizeShortcut(
+    draft.value.refreshProjectsShortcut || DEFAULT_REFRESH_PROJECTS_SHORTCUT,
+  ) || DEFAULT_REFRESH_PROJECTS_SHORTCUT;
+  const currentMenus = Array.isArray(draft.value.sidebarMenuShortcuts)
+    ? draft.value.sidebarMenuShortcuts
+    : (draft.value.workspaceTabShortcuts || []);
+  draft.value.sidebarMenuShortcuts = DEFAULT_SIDEBAR_MENU_SHORTCUTS.map((fallback, index) =>
+    normalizeShortcut(currentMenus[index] || fallback) || fallback,
+  );
+  delete draft.value.workspaceTabShortcuts;
+}
+
 function handleShortcutRecordingChange(recording: boolean) {
   window.dispatchEvent(new CustomEvent('quick-search-shortcut-recording', {
     detail: recording,
@@ -216,19 +336,24 @@ onMounted(async () => {
   }
   window.addEventListener('manual-check-update-result', handleManualUpdateResult as EventListener);
   await refreshBackgroundPreview();
+  await nextTick();
+  attachSettingsNavigation();
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener('manual-check-update-result', handleManualUpdateResult as EventListener);
+  detachSettingsNavigation();
 });
 
 onDeactivated(() => {
+  detachSettingsNavigation();
   if (isDirty.value) {
     void settingsStore.applyBackgroundImage();
   }
 });
 
 onActivated(() => {
+  void nextTick().then(attachSettingsNavigation);
   if (isDirty.value) {
     void refreshBackgroundPreview();
   }
@@ -444,7 +569,9 @@ function normalizeProject(project: any): Project | null {
     id: typeof project.id === 'string' && project.id ? project.id : crypto.randomUUID(),
     name: project.name || project.path.split(/[\\/]/).pop() || 'Untitled',
     path: project.path,
-    type: project.type === 'other' ? 'other' : 'node',
+    type: project.type === 'java' ? 'java' : (project.type === 'other' ? 'other' : 'node'),
+    buildTool: project.buildTool === 'maven' || project.buildTool === 'gradle' ? project.buildTool : undefined,
+    hasWrapper: typeof project.hasWrapper === 'boolean' ? project.hasWrapper : undefined,
     gitRemoteUrl: typeof project.gitRemoteUrl === 'string' && project.gitRemoteUrl ? project.gitRemoteUrl : undefined,
     gitBranch: typeof project.gitBranch === 'string' && project.gitBranch ? project.gitBranch : undefined,
     gitConfigured: typeof project.gitConfigured === 'boolean' ? project.gitConfigured : undefined,
@@ -821,43 +948,107 @@ function handleManualUpdateResult(event: Event) {
   ElMessage.error(t('settings.updateCheckFailed', { error: customEvent.detail.error || t('common.error') }));
 }
 
+/***********************AI 回退槽位增删*********************/
+
+function addAiModelSlot() {
+  const single = draft.value.gitAiSingleChannel;
+  if (!single || single.models.length >= MAX_AI_FALLBACK_SLOTS) return;
+  single.models.push('');
+}
+
+function removeAiModelSlot(index: number) {
+  const single = draft.value.gitAiSingleChannel;
+  // 至少留一个槽位，否则模式 A 会变成「一个模型都没配」
+  if (!single || single.models.length <= 1) return;
+  single.models.splice(index, 1);
+}
+
+function addAiChannelSlot() {
+  const channels = draft.value.gitAiChannels;
+  if (!channels || channels.length >= MAX_AI_FALLBACK_SLOTS) return;
+  // 新槽位沿用第一个渠道的 apiType，省得每次都要重选
+  channels.push({
+    id: crypto.randomUUID(),
+    apiType: channels[0]?.apiType ?? 'chat_completions',
+    baseUrl: '',
+    apiKey: '',
+    model: '',
+    enabled: true,
+  });
+}
+
+function removeAiChannelSlot(index: number) {
+  const channels = draft.value.gitAiChannels;
+  if (!channels || channels.length <= 1) return;
+  channels.splice(index, 1);
+}
+
+/**
+ * 逐个测试当前模式下的所有槽位。
+ *
+ * 回退能不能生效取决于**每一个**槽位是否可用，所以测试也要逐个报结果，
+ * 只测首选会让用户误以为回退链是通的。
+ */
 async function testAiConnection() {
-  const service = draft.value.gitAiPrimaryService;
-  if (!isAiServiceConfigured(service)) {
+  const attempts = buildAiAttempts(draft.value as Settings);
+  if (attempts.length === 0) {
+    aiSlotTestResults.value = [];
     aiTestResult.value = { success: false, message: t('settings.gitAiTestMissingConfig') };
     return;
   }
 
   aiTestLoading.value = true;
   aiTestResult.value = null;
-  try {
-    await requestAiText({
-      apiType: service.apiType,
-      baseUrl: service.baseUrl,
-      apiKey: service.apiKey,
-      model: service.model,
-      messages: [{ role: 'user', content: 'Reply with OK only.' }],
-      maxTokens: normalizeAiApiType(service.apiType) === 'responses' ? 64 : 32,
-      temperature: 0,
-      stream: draft.value.gitAiStream,
-      timeoutMs: 15000,
-    });
-    aiTestResult.value = { success: true, message: t('settings.gitAiTestSuccess') };
-  } catch (error: any) {
-    if (isAbortError(error)) aiTestResult.value = { success: false, message: t('settings.gitAiTestTimeout') };
-    else if (String(error?.message || '').includes('(401 ') || String(error?.message || '').includes('(403 ')) aiTestResult.value = { success: false, message: t('settings.gitAiTestAuthError') };
-    else if (String(error?.message || '').includes('(404 ')) aiTestResult.value = { success: false, message: t('settings.gitAiTestModelNotFound') };
-    else if (String(error?.message || '').includes('(429 ')) aiTestResult.value = { success: false, message: t('settings.gitAiTestRateLimit') };
-    else if (error.message?.includes('fetch') || error.message?.includes('network') || error.message?.includes('Failed')) aiTestResult.value = { success: false, message: t('settings.gitAiTestUnreachable') };
-    else aiTestResult.value = { success: false, message: t('settings.gitAiTestError', { error: String(error).slice(0, 200) }) };
-  } finally {
-    aiTestLoading.value = false;
+  aiSlotTestResults.value = attempts.map(attempt => ({ label: attempt.label, state: 'pending' as const, message: '' }));
+
+  for (let index = 0; index < attempts.length; index++) {
+    const attempt = attempts[index];
+    try {
+      await requestAiText({
+        apiType: attempt.apiType,
+        baseUrl: attempt.baseUrl,
+        apiKey: attempt.apiKey,
+        model: attempt.model,
+        messages: [{ role: 'user', content: 'Reply with OK only.' }],
+        maxTokens: normalizeAiApiType(attempt.apiType) === 'responses' ? 64 : 32,
+        temperature: 0,
+        stream: draft.value.gitAiStream,
+        timeoutMs: 15000,
+      });
+      aiSlotTestResults.value[index] = { label: attempt.label, state: 'ok', message: t('settings.gitAiTestSuccess') };
+    } catch (error: any) {
+      aiSlotTestResults.value[index] = {
+        label: attempt.label,
+        state: 'fail',
+        message: describeAiTestError(error),
+      };
+    }
   }
+
+  const okCount = aiSlotTestResults.value.filter(r => r.state === 'ok').length;
+  aiTestResult.value = {
+    success: okCount > 0,
+    message: t('settings.gitAiTestSummary', { ok: okCount, total: attempts.length }),
+  };
+  aiTestLoading.value = false;
+}
+
+/** 把 AI 请求错误翻译成人话；与逐槽测试共用 */
+function describeAiTestError(error: any): string {
+  const raw = String(error?.message || error || '');
+  if (isAbortError(error)) return t('settings.gitAiTestTimeout');
+  if (raw.includes('(401 ') || raw.includes('(403 ')) return t('settings.gitAiTestAuthError');
+  if (raw.includes('(404 ')) return t('settings.gitAiTestModelNotFound');
+  if (raw.includes('(429 ')) return t('settings.gitAiTestRateLimit');
+  if (raw.includes('fetch') || raw.includes('network') || raw.includes('Failed')) {
+    return t('settings.gitAiTestUnreachable');
+  }
+  return t('settings.gitAiTestError', { error: raw.slice(0, 200) });
 }
 </script>
 
 <template>
-  <div class="settings-page h-full overflow-y-auto">
+  <div class="settings-page h-full overflow-hidden">
       <header class="app-page-header settings-header">
         <div class="app-content-container app-page-header-main">
         <div class="app-page-heading flex items-center gap-3">
@@ -873,9 +1064,16 @@ async function testAiConnection() {
         </div>
         </div>
       </header>
-    <div class="settings-container">
+    <div class="settings-layout">
+      <SettingsSectionNav
+        :title="t('settings.navigationTitle')"
+        :items="settingsSectionItems"
+        :active-id="activeSettingsSectionId"
+        @select="scrollToSettingsSection"
+      />
+      <div ref="settingsContent" class="settings-container">
 
-      <section class="settings-section">
+      <section id="settings-appearance" data-settings-section="appearance" class="settings-section">
         <div class="settings-section-title">
           <div class="i-mdi-white-balance-sunny settings-section-icon" />
           {{ t('settings.appearance') }}
@@ -947,7 +1145,7 @@ async function testAiConnection() {
         </div>
       </section>
 
-      <section v-if="!isPlugin" class="settings-section">
+      <section v-if="!isPlugin" id="settings-window-behavior" data-settings-section="window-behavior" class="settings-section">
         <div class="settings-section-title">
           <div class="i-mdi-dock-window settings-section-icon" />
           {{ t('settings.windowBehavior') }}
@@ -990,7 +1188,7 @@ async function testAiConnection() {
         </div>
       </section>
 
-      <section v-if="!isPlugin" class="settings-section">
+      <section id="settings-shortcuts" data-settings-section="shortcuts" class="settings-section">
         <div class="settings-section-title">
           <div class="i-mdi-keyboard-outline settings-section-icon" />
           {{ t('settings.shortcuts') }}
@@ -1026,9 +1224,78 @@ async function testAiConnection() {
             @recording-change="handleShortcutRecordingChange"
           />
         </div>
+
+        <!-- 应用内常用操作。关闭弹窗与逐级返回保留固定键位，侧边菜单切换可配置。 -->
+        <div class="settings-row-line">
+          <div>
+            <div class="settings-row-title">{{ t('settings.focusSearchShortcut') }}</div>
+            <div class="settings-row-desc">{{ t('settings.focusSearchShortcutHint') }}</div>
+          </div>
+          <ShortcutRecorder
+            v-model="draft.focusSearchShortcut"
+            :placeholder="DEFAULT_FOCUS_SEARCH_SHORTCUT"
+            :aria-label="t('settings.focusSearchShortcut')"
+            @recording-change="handleShortcutRecordingChange"
+          />
+        </div>
+        <div class="settings-row-line settings-row-top">
+          <div>
+            <div class="settings-row-title">{{ t('settings.sidebarMenuShortcuts') }}</div>
+            <div class="settings-row-desc">{{ t('settings.sidebarMenuShortcutsHint') }}</div>
+          </div>
+          <div class="shortcut-tab-list">
+            <div
+              v-for="(shortcut, index) in (draft.sidebarMenuShortcuts || DEFAULT_SIDEBAR_MENU_SHORTCUTS)"
+              :key="index"
+              class="shortcut-tab-row"
+            >
+              <span class="shortcut-tab-label">{{ t(`settings.sidebarMenuLabels.${['dashboard', 'nodes', 'ports', 'commitCalendar', 'settings'][index]}`) }}</span>
+              <ShortcutRecorder
+                :model-value="shortcut"
+                :placeholder="DEFAULT_SIDEBAR_MENU_SHORTCUTS[index]"
+                :aria-label="`${t('settings.sidebarMenuShortcuts')} ${index + 1}`"
+                @update:model-value="value => {
+                  if (!draft.sidebarMenuShortcuts) draft.sidebarMenuShortcuts = [...DEFAULT_SIDEBAR_MENU_SHORTCUTS];
+                  draft.sidebarMenuShortcuts[index] = value;
+                }"
+                @recording-change="handleShortcutRecordingChange"
+              />
+            </div>
+          </div>
+        </div>
+        <div class="settings-row-line">
+          <div>
+            <div class="settings-row-title">{{ t('settings.newProjectShortcut') }}</div>
+            <div class="settings-row-desc">{{ t('settings.newProjectShortcutHint') }}</div>
+          </div>
+          <ShortcutRecorder
+            v-model="draft.newProjectShortcut"
+            :placeholder="DEFAULT_NEW_PROJECT_SHORTCUT"
+            :aria-label="t('settings.newProjectShortcut')"
+            @recording-change="handleShortcutRecordingChange"
+          />
+        </div>
+        <div class="settings-row-line">
+          <div>
+            <div class="settings-row-title">{{ t('settings.refreshProjectsShortcut') }}</div>
+            <div class="settings-row-desc">{{ t('settings.refreshProjectsShortcutHint') }}</div>
+          </div>
+          <ShortcutRecorder
+            v-model="draft.refreshProjectsShortcut"
+            :placeholder="DEFAULT_REFRESH_PROJECTS_SHORTCUT"
+            :aria-label="t('settings.refreshProjectsShortcut')"
+            @recording-change="handleShortcutRecordingChange"
+          />
+        </div>
+        <div class="settings-row-line">
+          <div>
+            <div class="settings-row-title">{{ t('settings.fixedShortcuts') }}</div>
+            <div class="settings-row-desc">{{ t('settings.fixedShortcutsHint') }}</div>
+          </div>
+        </div>
       </section>
 
-      <section class="settings-section">
+      <section id="settings-editors" data-settings-section="editors" class="settings-section">
         <div class="settings-section-title">
           <div class="i-mdi-monitor settings-section-icon" />
           {{ t('settings.editorManagement') }}
@@ -1066,7 +1333,7 @@ async function testAiConnection() {
         </div>
       </section>
 
-      <section class="settings-section">
+      <section id="settings-terminals" data-settings-section="terminals" class="settings-section">
         <div class="settings-section-title">
           <div class="i-mdi-console settings-section-icon" />
           {{ t('settings.terminalManagement') }}
@@ -1105,7 +1372,7 @@ async function testAiConnection() {
         </div>
       </section>
 
-      <section class="settings-section">
+      <section id="settings-updates" data-settings-section="updates" class="settings-section">
         <div class="settings-section-title">
           <div class="i-mdi-update settings-section-icon" />
           {{ t('settings.update') }}
@@ -1131,7 +1398,7 @@ async function testAiConnection() {
         </div>
       </section>
 
-      <section class="settings-section">
+      <section id="settings-backup" data-settings-section="backup" class="settings-section">
         <div class="settings-section-title">
           <div class="i-mdi-database-sync-outline settings-section-icon" />
           {{ t('settings.dataBackup') }}
@@ -1152,7 +1419,7 @@ async function testAiConnection() {
         </div>
       </section>
 
-      <section class="settings-section">
+      <section id="settings-git-ai" data-settings-section="git-ai" class="settings-section">
         <div class="settings-section-title">
           <div class="i-mdi-auto-fix settings-section-icon" />
           {{ t('settings.gitAi') }}
@@ -1165,13 +1432,86 @@ async function testAiConnection() {
           <el-switch v-model="draft.gitAiEnabled" />
         </div>
         <div v-if="draft.gitAiEnabled" class="ai-settings">
-          <el-select v-model="draft.gitAiPrimaryService!.apiType">
-            <el-option :label="t('settings.gitAiApiTypeChat')" value="chat_completions" />
-            <el-option :label="t('settings.gitAiApiTypeResponses')" value="responses" />
-          </el-select>
-          <el-input v-model="draft.gitAiPrimaryService!.baseUrl" :placeholder="t('settings.gitAiBaseUrlPlaceholder')" clearable />
-          <el-input v-model="draft.gitAiPrimaryService!.model" :placeholder="t('settings.gitAiModelPlaceholder')" clearable />
-          <el-input v-model="draft.gitAiPrimaryService!.apiKey" type="password" show-password :placeholder="t('settings.gitAiApiKeyPlaceholder')" />
+          <!-- 回退模式二选一：两种模式都是最多 3 次尝试，不叠加 -->
+          <div class="settings-row-line settings-row-compact">
+            <div>
+              <div class="settings-row-title">{{ t('settings.gitAiFallbackMode') }}</div>
+              <div class="settings-row-desc">{{ t('settings.gitAiFallbackModeHint') }}</div>
+            </div>
+            <el-radio-group v-model="draft.gitAiFallbackMode">
+              <el-radio-button value="single_channel">{{ t('settings.gitAiModeSingleChannel') }}</el-radio-button>
+              <el-radio-button value="multi_channel">{{ t('settings.gitAiModeMultiChannel') }}</el-radio-button>
+            </el-radio-group>
+          </div>
+
+          <!-- 模式 A：一套服务 + 最多 3 个候选模型 -->
+          <template v-if="draft.gitAiFallbackMode !== 'multi_channel' && draft.gitAiSingleChannel">
+            <el-select v-model="draft.gitAiSingleChannel.service.apiType">
+              <el-option :label="t('settings.gitAiApiTypeChat')" value="chat_completions" />
+              <el-option :label="t('settings.gitAiApiTypeResponses')" value="responses" />
+            </el-select>
+            <el-input v-model="draft.gitAiSingleChannel.service.baseUrl" :placeholder="t('settings.gitAiBaseUrlPlaceholder')" clearable />
+            <el-input v-model="draft.gitAiSingleChannel.service.apiKey" type="password" show-password :placeholder="t('settings.gitAiApiKeyPlaceholder')" />
+            <div class="ai-slot-list">
+              <div class="settings-row-desc">{{ t('settings.gitAiModelsHint', { max: MAX_AI_FALLBACK_SLOTS }) }}</div>
+              <div v-for="(_, index) in draft.gitAiSingleChannel.models" :key="index" class="ai-slot-row">
+                <span class="ai-slot-index">{{ index + 1 }}</span>
+                <el-input
+                  v-model="draft.gitAiSingleChannel.models[index]"
+                  :placeholder="t('settings.gitAiModelPlaceholder')"
+                  clearable
+                />
+                <el-button
+                  v-if="draft.gitAiSingleChannel.models.length > 1"
+                  text
+                  @click="removeAiModelSlot(index)"
+                >
+                  <div class="i-mdi-close text-base" />
+                </el-button>
+              </div>
+              <el-button
+                v-if="draft.gitAiSingleChannel.models.length < MAX_AI_FALLBACK_SLOTS"
+                text
+                type="primary"
+                @click="addAiModelSlot"
+              >
+                <div class="i-mdi-plus text-base mr-1" />{{ t('settings.gitAiAddModel') }}
+              </el-button>
+            </div>
+          </template>
+
+          <!-- 模式 B：最多 3 套各自独立的渠道 -->
+          <template v-else-if="draft.gitAiChannels">
+            <div class="ai-slot-list">
+              <div class="settings-row-desc">{{ t('settings.gitAiChannelsHint', { max: MAX_AI_FALLBACK_SLOTS }) }}</div>
+              <div v-for="(channel, index) in draft.gitAiChannels" :key="channel.id" class="ai-channel-card">
+                <div class="ai-channel-head">
+                  <span class="ai-slot-index">{{ index + 1 }}</span>
+                  <el-switch v-model="channel.enabled" :title="t('settings.gitAiChannelEnabled')" />
+                  <div class="flex-1" />
+                  <el-button v-if="draft.gitAiChannels.length > 1" text @click="removeAiChannelSlot(index)">
+                    <div class="i-mdi-close text-base" />
+                  </el-button>
+                </div>
+                <el-select v-model="channel.apiType">
+                  <el-option :label="t('settings.gitAiApiTypeChat')" value="chat_completions" />
+                  <el-option :label="t('settings.gitAiApiTypeResponses')" value="responses" />
+                </el-select>
+                <el-input v-model="channel.baseUrl" :placeholder="t('settings.gitAiBaseUrlPlaceholder')" clearable />
+                <el-input v-model="channel.model" :placeholder="t('settings.gitAiModelPlaceholder')" clearable />
+                <el-input v-model="channel.apiKey" type="password" show-password :placeholder="t('settings.gitAiApiKeyPlaceholder')" />
+              </div>
+              <el-button
+                v-if="draft.gitAiChannels.length < MAX_AI_FALLBACK_SLOTS"
+                text
+                type="primary"
+                @click="addAiChannelSlot"
+              >
+                <div class="i-mdi-plus text-base mr-1" />{{ t('settings.gitAiAddChannel') }}
+              </el-button>
+            </div>
+          </template>
+
           <el-input v-model="draft.gitAiPromptTemplate" type="textarea" :rows="4" :placeholder="t('settings.gitAiPromptPlaceholder')" />
           <div class="settings-row-line settings-row-compact">
             <div>
@@ -1188,8 +1528,19 @@ async function testAiConnection() {
               <span :class="aiTestResult.success ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'">{{ aiTestResult.message }}</span>
             </div>
           </div>
+          <!-- 逐槽结果：回退能否生效取决于每一个槽位，只报总体结论会掩盖坏掉的那一环 -->
+          <div v-if="aiSlotTestResults.length > 0" class="ai-slot-results">
+            <div v-for="(result, index) in aiSlotTestResults" :key="index" class="ai-slot-result-row">
+              <div v-if="result.state === 'pending'" class="i-mdi-loading animate-spin text-slate-400 text-sm" />
+              <div v-else-if="result.state === 'ok'" class="i-mdi-check-circle text-green-500 text-sm" />
+              <div v-else class="i-mdi-close-circle text-red-500 text-sm" />
+              <span class="ai-slot-result-label">{{ result.label }}</span>
+              <span class="ai-slot-result-msg">{{ result.message }}</span>
+            </div>
+          </div>
         </div>
       </section>
+      </div>
     </div>
 
     <el-dialog
@@ -1334,20 +1685,41 @@ async function testAiConnection() {
 
 <style scoped>
 .settings-page {
-  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
   background: var(--app-bg-muted);
   color: var(--app-text);
 }
 
 .settings-container {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow-y: auto;
+  align-self: stretch;
+  box-sizing: border-box;
+  scrollbar-gutter: stable;
+}
+
+.settings-layout {
+  display: grid;
+  grid-template-columns: 212px minmax(0, 1fr);
+  align-items: stretch;
+  flex: 1 1 0;
+  gap: 24px;
+  min-height: 0;
+  height: 0;
+  overflow: hidden;
   width: min(var(--app-content-max), calc(100vw - 80px));
   margin: 0 auto;
-  padding: 16px 0 32px;
+  padding: 10px 0;
 }
 
 .settings-header {
-  position: sticky;
-  top: 0;
+  flex: 0 0 auto;
   z-index: var(--app-z-sticky);
 }
 
@@ -1376,6 +1748,7 @@ async function testAiConnection() {
 }
 
 .settings-section {
+  scroll-margin-top: 96px;
   margin-bottom: 14px;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-lg);
@@ -1430,6 +1803,35 @@ async function testAiConnection() {
 
 .settings-row-line + .settings-row-line {
   border-top: 1px solid var(--app-border);
+}
+
+.settings-row-top {
+  align-items: flex-start;
+}
+
+.shortcut-tab-list {
+  width: 360px;
+  max-width: 100%;
+  display: grid;
+  gap: 8px;
+}
+
+.shortcut-tab-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.shortcut-tab-label {
+  width: 72px;
+  flex: 0 0 auto;
+  color: var(--app-text-secondary);
+  font-size: 12px;
+}
+
+.shortcut-tab-row :deep(.shortcut-recorder-wrap) {
+  flex: 1;
+  width: auto;
 }
 
 .background-image-control {
@@ -1526,6 +1928,82 @@ async function testAiConnection() {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/* AI 回退槽位 */
+.ai-slot-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-slot-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 槽位序号：顺序就是回退顺序，需要一眼看清 */
+.ai-slot-index {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--app-surface-soft);
+  border: 1px solid var(--app-border);
+  color: var(--app-text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.ai-channel-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-surface-soft);
+}
+
+.ai-channel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-slot-results {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-surface-soft);
+}
+
+.ai-slot-result-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.ai-slot-result-label {
+  font-weight: 600;
+  color: var(--app-text-secondary);
+  white-space: nowrap;
+}
+
+.ai-slot-result-msg {
+  color: var(--app-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .editor-card {
@@ -1648,9 +2126,17 @@ async function testAiConnection() {
 }
 
 @media (max-width: 900px) {
-  .settings-container {
+  .settings-layout {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
     width: min(100% - 32px, 1050px);
-    padding-top: 24px;
+  }
+
+  .settings-container {
+    flex: 1;
+    height: 100%;
+    min-height: 0;
   }
 
   .settings-header,

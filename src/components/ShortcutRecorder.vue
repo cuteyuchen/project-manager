@@ -114,7 +114,7 @@ function handleKeydown(event: KeyboardEvent) {
       </span>
     </button>
     <div v-if="invalid" class="shortcut-recorder-error" role="alert">
-      {{ t('settings.shortcutRequiresModifier') }}
+      {{ t('settings.shortcutRequiresModifierOrFunctionKey') }}
     </div>
   </div>
 </template>

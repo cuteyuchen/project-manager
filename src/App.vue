@@ -21,20 +21,24 @@ import { useUsageStore } from './stores/usage';
 import type { Project } from './types';
 import { normalizeNvmVersion, findInstalledNodeVersion } from './utils/nvm';
 import { DEFAULT_NETWORK_TIMEOUT_MS, fetchWithTimeout, isAbortError } from './utils/network';
-import { ensureNodeInstallCommand } from './utils/projectCommands';
+import { buildJavaPresetCommands, ensureNodeInstallCommand, isWindowsPlatform } from './utils/projectCommands';
+import ProjectQuickSearch from './components/ProjectQuickSearch.vue';
 import { selectReleaseAsset } from './utils/updateReleaseAsset';
 import {
   DEFAULT_QUICK_SEARCH_APP_SHORTCUT,
   DEFAULT_QUICK_SEARCH_GLOBAL_SHORTCUT,
+  DEFAULT_SIDEBAR_MENU_SHORTCUTS,
   isShortcutEvent,
   normalizeShortcut,
 } from './utils/shortcut';
+import { useAppShortcuts } from './composables/useAppShortcuts.ts';
 
 const target = import.meta.env.VITE_TARGET;
 const isPlugin = target === 'utools' || target === 'ztools';
 
 const { t } = useI18n();
-const currentView = ref<'dashboard' | 'settings' | 'nodes' | 'ports' | 'commitCalendar'>('dashboard');
+type AppView = 'dashboard' | 'settings' | 'nodes' | 'ports' | 'commitCalendar';
+const currentView = ref<AppView>('dashboard');
 const loaded = ref(false);
 const isDragging = ref(false);
 let unlistenDragEnter: UnlistenFn | null = null;
@@ -48,6 +52,7 @@ const showUpdateProgress = ref(false);
 const downloadProgress = ref(0);
 const processedImportInstallVersions = new Set<string>();
 const closeBehaviorDialogVisible = ref(false);
+const pluginQuickSearchVisible = ref(false);
 const rememberCloseAction = ref(false);
 let trayIcon: { close?: () => Promise<void> } | null = null;
 let pendingCloseResolver: ((action: 'tray' | 'exit' | 'cancel') => void) | null = null;
@@ -121,13 +126,23 @@ async function handleImportProject(path: string) {
       id: crypto.randomUUID(),
       name: info.name || path.split(/[\\/]/).pop() || 'Untitled',
       path: path,
-      type: info.projectType === 'node' ? 'node' : 'other',
+      type: info.projectType === 'node' ? 'node' : (info.projectType === 'java' ? 'java' : 'other'),
     };
 
     if (info.projectType === 'node') {
       project.nodeVersion = nodeVersion;
       project.packageManager = info.packageManager || 'npm';
       project.scripts = info.scripts;
+    }
+    if (info.projectType === 'java' && info.buildTool) {
+      project.buildTool = info.buildTool;
+      project.hasWrapper = !!info.hasWrapper;
+      project.customCommands = buildJavaPresetCommands(
+        info.buildTool,
+        !!info.hasWrapper,
+        isWindowsPlatform(),
+        () => crypto.randomUUID(),
+      );
     }
 
     store.addProject(ensureNodeInstallCommand(project, t('project.installDependencies')));
@@ -142,7 +157,10 @@ async function handleImportProject(path: string) {
 /***********************快速搜索快捷键*********************/
 
 async function openQuickSearch() {
-  if (isPlugin) return;
+  if (isPlugin) {
+    pluginQuickSearchVisible.value = true;
+    return;
+  }
 
   try {
     await flushPendingSave();
@@ -214,7 +232,7 @@ async function syncQuickSearchGlobalShortcut() {
 
 /** 应用内键盘事件处理：按设置项打开快速搜索 */
 function handleGlobalKeydown(event: KeyboardEvent) {
-  if (isPlugin) return;
+  if (quickSearchShortcutRecording) return;
   const shortcut = settingsStore.settings.quickSearchAppShortcut || DEFAULT_QUICK_SEARCH_APP_SHORTCUT;
   if (isShortcutEvent(event, shortcut)) {
     event.preventDefault();
@@ -532,18 +550,18 @@ onMounted(async () => {
   await loadData();
   loaded.value = true;
 
-  if (!isPlugin) {
-    const handleShortcutRecording = (event: Event) => {
-      quickSearchShortcutRecording = (event as CustomEvent<boolean>).detail === true;
+  const handleShortcutRecording = (event: Event) => {
+    quickSearchShortcutRecording = (event as CustomEvent<boolean>).detail === true;
+    if (!isPlugin) {
       if (quickSearchShortcutRecording) {
         void unregisterQuickSearchGlobalShortcut();
       } else {
         void syncQuickSearchGlobalShortcut();
       }
-    };
-    quickSearchShortcutRecordingListener = handleShortcutRecording;
-    window.addEventListener('quick-search-shortcut-recording', handleShortcutRecording);
-  }
+    }
+  };
+  quickSearchShortcutRecordingListener = handleShortcutRecording;
+  window.addEventListener('quick-search-shortcut-recording', handleShortcutRecording);
 
   // Handle Startup Args / uTools/ZTools Plugin Enter
   if (isPlugin) {
@@ -675,9 +693,7 @@ onMounted(async () => {
   manualUpdateCheckListener = () => window.removeEventListener('manual-check-update', handleManualUpdateCheck);
   window.addEventListener('manual-check-update', handleManualUpdateCheck);
 
-  if (!isPlugin) {
-    document.addEventListener('keydown', handleGlobalKeydown);
-  }
+  document.addEventListener('keydown', handleGlobalKeydown);
 });
 
 onUnmounted(() => {
@@ -708,6 +724,19 @@ const appBackgroundStyle = computed(() => ({
 }));
 const nodeStore = useNodeStore();
 const usageStore = useUsageStore();
+
+/***********************左侧菜单快捷键*********************/
+/** 与 Sidebar.vue 的视觉顺序保持一致：项目、Node、端口、提交日历、设置。 */
+const SIDEBAR_MENU_VIEWS: AppView[] = ['dashboard', 'nodes', 'ports', 'commitCalendar', 'settings'];
+
+useAppShortcuts(SIDEBAR_MENU_VIEWS.map((view, index) => ({
+  keys: () => settingsStore.settings.sidebarMenuShortcuts?.[index]
+    || DEFAULT_SIDEBAR_MENU_SHORTCUTS[index],
+  enabled: () => loaded.value && !quickSearchShortcutRecording,
+  handler: () => {
+    currentView.value = view;
+  },
+})));
 
 const triggerSave = () => {
   scheduleSaveData();
@@ -785,6 +814,19 @@ watch(
       :percentage="downloadProgress"
       @cancel="handleCancelUpdate"
       @background="handleBackgroundUpdate"
+    />
+
+    <ProjectQuickSearch
+      v-if="isPlugin && pluginQuickSearchVisible"
+      @close="pluginQuickSearchVisible = false"
+      @select="projectId => {
+        pluginQuickSearchVisible = false;
+        void activateQuickSearchSelection(projectId);
+      }"
+      @select-script="projectId => {
+        pluginQuickSearchVisible = false;
+        void activateQuickSearchSelection(projectId);
+      }"
     />
 
     <el-dialog

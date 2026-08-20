@@ -131,7 +131,7 @@ function fileDir(path: string): string {
 
 async function viewDiff(file: GitFileStatus) {
   try {
-    await gitStore.getDiff(props.project.path, file.path, file.staged);
+    await gitStore.getDiff(props.project.id, props.project.path, file.path, file.staged);
   } catch (e) {
     showPersistentGitError(t('git.diffLoadFailed', { error: String(e) }));
   }

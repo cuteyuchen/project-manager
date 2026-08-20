@@ -43,7 +43,8 @@ assert(isShortcutEvent(keyboardEvent({ key: 'k', metaKey: true, shiftKey: true }
 assert(!isShortcutEvent(keyboardEvent({ key: 'k', ctrlKey: true, shiftKey: true }), 'Ctrl+K'), 'extra modifiers should not match');
 assert(!isShortcutEvent(keyboardEvent({ key: 'k', metaKey: true }), 'Ctrl+K'), 'different modifiers should not match');
 assert(shortcutFromKeyboardEvent(keyboardEvent({ key: 'k', ctrlKey: true, shiftKey: true })) === 'Ctrl+Shift+K', 'keyboard event should be recorded as a normalized shortcut');
-assert(shortcutFromKeyboardEvent(keyboardEvent({ key: 'k' })) === '', 'single keys should not be recorded without a modifier');
+assert(shortcutFromKeyboardEvent(keyboardEvent({ key: 'k' })) === '', '普通单键不应被录制');
+assert(shortcutFromKeyboardEvent(keyboardEvent({ key: 'F5' })) === 'F5', 'F5 should be recordable without a modifier');
 assert(shortcutFromKeyboardEvent(keyboardEvent({ key: 'ArrowUp', altKey: true })) === 'Alt+ArrowUp', 'named keys should be recordable');
 assert(shortcutFromKeyboardEvent(keyboardEvent({ key: ' ', ctrlKey: true })) === 'Ctrl+Space', 'space should be recordable');
 

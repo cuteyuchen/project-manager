@@ -6,7 +6,7 @@ import { api } from '../api';
 import type { Project, CustomCommand } from '../types';
 import type { ProjectInfo, ImportNode } from '../api/types';
 import { normalizeNvmVersion, findInstalledNodeVersion } from '../utils/nvm';
-import { ensureNodeInstallCommand, getInstallDependenciesCommand } from '../utils/projectCommands';
+import { ensureNodeInstallCommand, getInstallDependenciesCommand, buildJavaPresetCommands, isWindowsPlatform } from '../utils/projectCommands';
 import { useSettingsStore } from '../stores/settings';
 import { useProjectStore } from '../stores/project';
 import type { PackageManagerResolveResult } from '../api/types';
@@ -29,7 +29,11 @@ type ProjectForm = {
   id: string;
   name: string;
   path: string;
-  type: 'node' | 'other';
+  type: 'node' | 'java' | 'other';
+  /** Java 构建工具，仅 type === 'java' 时有值 */
+  buildTool?: 'maven' | 'gradle';
+  /** 是否存在 mvnw / gradlew，有则命令优先走 wrapper */
+  hasWrapper?: boolean;
   gitConfigured: boolean;
   gitRemoteUrl: string;
   gitBranch: string;
@@ -250,7 +254,28 @@ async function applyScanResult(info: ProjectInfo, options: { preferDetectedName?
     return;
   }
 
+  if (info.projectType === 'java' && info.buildTool) {
+    form.value.type = 'java';
+    form.value.buildTool = info.buildTool;
+    form.value.hasWrapper = !!info.hasWrapper;
+    // Java 没有 package.json 那样的脚本清单，用预设自定义命令代替，
+    // 这样「命令」页签才会渲染出来（它的条件是有脚本或有自定义命令）
+    form.value.scripts = [];
+    form.value.visibleScripts = [];
+    if (form.value.customCommands.length === 0) {
+      form.value.customCommands = buildJavaPresetCommands(
+        info.buildTool,
+        !!info.hasWrapper,
+        isWindowsPlatform(),
+        () => crypto.randomUUID(),
+      );
+    }
+    return;
+  }
+
   form.value.type = 'other';
+  form.value.buildTool = undefined;
+  form.value.hasWrapper = undefined;
   form.value.scripts = [];
   form.value.visibleScripts = [];
 }
@@ -261,6 +286,8 @@ function hydrateFormFromProject(project: Project) {
     name: project.name,
     path: project.path,
     type: project.type,
+    buildTool: project.buildTool,
+    hasWrapper: project.hasWrapper,
     gitConfigured: !!project.gitConfigured,
     gitRemoteUrl: project.gitRemoteUrl || '',
     gitBranch: project.gitBranch || '',
@@ -554,6 +581,11 @@ function buildProjectPayload(): Project {
     project.visibleScripts = form.value.visibleScripts;
   }
 
+  if (form.value.type === 'java') {
+    project.buildTool = form.value.buildTool;
+    project.hasWrapper = form.value.hasWrapper;
+  }
+
   project.customCommands = form.value.customCommands.filter((command) => command.name && command.command);
 
   if (form.value.editorId) {
@@ -798,6 +830,7 @@ async function cancelClone() {
       <el-form-item :label="t('project.type')">
         <el-select v-model="form.type" class="w-full">
           <el-option label="Node" value="node" />
+          <el-option label="Java" value="java" />
           <el-option :label="t('project.typeOther')" value="other" />
         </el-select>
       </el-form-item>

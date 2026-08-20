@@ -28,9 +28,22 @@ assert(
   'ProjectListItem 应把操作按钮收敛到可重排的 actions 容器',
 );
 
+// 左栏拆成了「外壳 + 被过渡的内容」两层：外壳占住宽度与边框，
+// 内容才是随层级切换重建的部分。这样 mode="out-in" 的空档帧不会让左栏宽度归零，
+// 也让右栏连同 KeepAlive 缓存留在过渡范围之外活着。
 assert(
-  /class="w-80 shrink-0 flex flex-col/.test(projectWorkspace),
-  '子项目列表应加宽到 w-80，减少名称和路径截断',
+  /class="w-80 shrink-0 app-surface-sidebar border-r overflow-hidden"/.test(projectWorkspace),
+  '子项目列表外壳应保持 w-80 宽度，减少名称和路径截断',
+);
+
+assert(
+  /<div v-if="currentNode" :key="currentNode\.id" class="h-full flex flex-col overflow-hidden">/.test(projectWorkspace),
+  '被过渡的左栏内容应只负责纵向布局，宽度与边框留在外壳上',
+);
+
+assert(
+  /<KeepAlive :max="KEEP_ALIVE_MAX">/.test(projectWorkspace),
+  'KeepAlive 必须设上限，否则缓存实例会随访问过的子项目数线性增长',
 );
 
 assert(

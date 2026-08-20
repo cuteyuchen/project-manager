@@ -29,6 +29,10 @@ export interface ProjectInfo {
     packageManager?: 'npm' | 'yarn' | 'pnpm' | 'cnpm';
     nvmVersion?: string;
     projectType: string;
+    /** Java 构建工具；非 Java 项目为空 */
+    buildTool?: 'maven' | 'gradle';
+    /** 是否存在 mvnw / gradlew，有则优先用 wrapper */
+    hasWrapper?: boolean;
 }
 
 /** 导入候选（批量导入列表项的展示形状） */
@@ -55,6 +59,10 @@ export interface ImportNode {
     hasPackageJson: boolean;
     /** 该目录下的 npm scripts（仅 node/前端项目有值） */
     scripts: string[];
+    /** Java 构建工具；非 Java 模块无此值 */
+    buildTool?: 'maven' | 'gradle';
+    /** 是否存在 mvnw / gradlew */
+    hasWrapper?: boolean;
     /** 子节点（仅容器目录会继续下沉；已识别模块节点为空数组） */
     children: ImportNode[];
 }

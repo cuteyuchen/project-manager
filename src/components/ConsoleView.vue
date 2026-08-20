@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, nextTick } from 'vue';
 import { useProjectStore } from '../stores/project';
+import type { CustomCommand, Project } from '../types';
 import { useI18n } from 'vue-i18n';
 import { AnsiUp } from 'ansi_up';
 import { api } from '../api';
@@ -9,6 +10,16 @@ import { getCustomCommandDisplayName } from '../utils/projectCommands';
 const { t } = useI18n();
 const projectStore = useProjectStore();
 const ansiUp = new AnsiUp();
+
+/**
+ * 由父组件显式传入当前项目。
+ *
+ * 之前是读全局 projectStore.activeProjectId —— 但本组件被 KeepAlive 缓存，
+ * 缓存里每个实例都会跟着全局值一起变成**新**项目，于是被停用的实例也会
+ * 跑一遍「切项目」副作用，把新项目的状态清掉。改成 props 后，
+ * 外层的 `:key` 把实例与项目绑定，props 在实例生命周期内恒定。
+ */
+const props = defineProps<{ project: Project }>();
 
 function parseAnsi(text: string) {
     const urlPlaceholders: { [key: string]: string } = {};
@@ -66,9 +77,7 @@ function handleLogClick(event: MouseEvent) {
     }
 }
 
-const activeProject = computed(() =>
-    projectStore.projects.find(p => p.id === projectStore.activeProjectId)
-);
+const activeProject = computed(() => props.project);
 
 const activeScript = ref<string | null>(null);
 const logContainer = ref<HTMLElement | null>(null);
@@ -131,40 +140,50 @@ watch(activeRunningTabs, (runningTabs) => {
     }
 }, { immediate: true });
 
-// Also populate openTabs from existing logs/running on mount/project change
-watch(activeProject, (newP) => {
+/**
+ * 从已有日志/运行状态初始化输出 tab。
+ *
+ * 这是**一次性**初始化，不是 watch：props.project 被外层的 `:key` 冻结，
+ * 一个实例只服务一个项目，切项目会换实例而不是改 props。
+ * 原先写成 watch(activeProject, …, { immediate: true }) 只有 immediate 那次
+ * 真正跑过，非 immediate 分支在缓存实例上反倒会清掉别人的状态。
+ */
+function initOpenTabsFromProject() {
+    const project = activeProject.value;
     openTabs.value.clear();
     activeScript.value = null;
 
-    if (newP) {
-        // Check node scripts
-        if (newP.scripts) {
-            newP.scripts.forEach(s => {
-                const key = `${newP.id}:${s}`;
-                if (projectStore.runningStatus[key] || (projectStore.logs[key] && projectStore.logs[key].length > 0)) {
-                    openTabs.value.add(s);
-                }
-            });
-        }
-
-        // Check custom commands
-        if (newP.customCommands) {
-            newP.customCommands.forEach(c => {
-                const key = `${newP.id}:${c.id}`;
-                if (projectStore.runningStatus[key] || (projectStore.logs[key] && projectStore.logs[key].length > 0)) {
-                    openTabs.value.add(c.id);
-                }
-            });
-        }
-
-        // Auto select first available
-        if (openTabs.value.size > 0) {
-            // Prefer running ones
-            const running = Array.from(openTabs.value).find(s => projectStore.runningStatus[`${newP.id}:${s}`]);
-            activeScript.value = running || Array.from(openTabs.value)[0];
-        }
+    // Check node scripts
+    if (project.scripts) {
+        project.scripts.forEach(s => {
+            const key = `${project.id}:${s}`;
+            if (projectStore.runningStatus[key] || (projectStore.logs[key] && projectStore.logs[key].length > 0)) {
+                openTabs.value.add(s);
+            }
+        });
     }
-}, { immediate: true });
+
+    // Check custom commands
+    if (project.customCommands) {
+        project.customCommands.forEach(c => {
+            const key = `${project.id}:${c.id}`;
+            if (projectStore.runningStatus[key] || (projectStore.logs[key] && projectStore.logs[key].length > 0)) {
+                openTabs.value.add(c.id);
+            }
+        });
+    }
+
+    // Auto select first available
+    if (openTabs.value.size > 0) {
+        // Prefer running ones
+        const running = Array.from(openTabs.value).find(s => projectStore.runningStatus[`${project.id}:${s}`]);
+        activeScript.value = running || Array.from(openTabs.value)[0];
+    }
+}
+
+// 必须在 watch(activeRunningTabs, { immediate: true }) 之后执行：
+// 那个 watcher 也会设 activeScript，这里的初始化以「已有日志」为准覆盖它
+initOpenTabsFromProject();
 
 const availableTabs = computed(() => {
     return Array.from(openTabs.value);
@@ -195,7 +214,7 @@ function isCommandRunning(id: string): boolean {
     return !!projectStore.runningStatus[`${activeProject.value.id}:${id}`];
 }
 
-function getCustomCmdLabel(cmd: { name: string; builtinId?: 'install_dependencies' }): string {
+function getCustomCmdLabel(cmd: Pick<CustomCommand, 'name' | 'builtinId'>): string {
     return getCustomCommandDisplayName(cmd, t);
 }
 
@@ -287,10 +306,9 @@ watch(activeScript, () => {
     void resumeLogFollow();
 });
 
-watch(activeProject, () => {
-    parsedLogCache.clear();
-    shouldFollowLogs.value = true;
-});
+// 注：原先这里有一个 watch(activeProject) 负责清 parsedLogCache 并重置日志跟随。
+// props 化后 project 在实例生命周期内恒定，它永远不会触发；而 parsedLogCache
+// 是每实例私有的，也不存在跨项目残留，故整段删除。
 
 function handleStop() {
     if (activeProject.value && activeScript.value) {

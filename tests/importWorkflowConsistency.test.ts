@@ -132,7 +132,7 @@ assert(
 );
 
 assert(
-  /selectedLeafId\.value = currentNode\.value\.id/.test(workspace),
+  /const levelId = currentNode\.value\.id;[\s\S]{0,300}?selectedLeafId\.value = levelId;/.test(workspace),
   '选择父项目入口后应将父项目作为活动项目',
 );
 

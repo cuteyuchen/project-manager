@@ -183,7 +183,7 @@ async function selectCommit(commit: GitCommit) {
   }
 
   gitStore.selectedCommitHash[props.project.id] = commit.hash;
-  gitStore.clearDiff();
+  gitStore.clearDiff(props.project.id);
 
   const tasks: Promise<unknown>[] = [];
   if (gitStore.getCommitFiles(props.project.id, commit.hash).length === 0) {
@@ -389,13 +389,10 @@ const minRowWidth = computed(() => {
   return colWidths.value[0] + colWidths.value[1] + colWidths.value[2] + colWidths.value[3] + colWidths.value[4];
 });
 
-// Clear selection on project change
-watch(() => props.project.id, () => {
-  gitStore.selectedCommitHash[props.project.id] = '';
-  gitStore.clearDiff();
-  hasMore.value = true;
-  requestedCount.value = 100;
-});
+// 注：原先这里有一个 watch(() => props.project.id) 在切项目时清提交选中态与 diff。
+// GitView 已改为 props 驱动、且外层 `:key` 含项目 id，所以 props.project.id
+// 在实例生命周期内恒定，该 watcher 永不触发。更重要的是它**有害**：
+// 缓存实例跟着全局值一起变时，它清掉的是新项目的 selectedCommitHash。故整段删除。
 
 watch(allCommits, (newCommits, oldCommits) => {
   if (newCommits.length < 100) {
