@@ -149,15 +149,6 @@ export class TauriAdapter implements PlatformAPI {
         return invoke('read_dir', { path });
     }
 
-    // Updater
-    async installUpdate(url: string): Promise<void> {
-        return invoke('install_update', { url });
-    }
-
-    async cancelUpdate(): Promise<void> {
-        return invoke('cancel_update');
-    }
-
     async getAppVersion(): Promise<string> {
         return getVersion();
     }
@@ -180,12 +171,6 @@ export class TauriAdapter implements PlatformAPI {
 
     async onProjectExit(callback: (payload: { id: string }) => void): Promise<() => void> {
         return listen<any>('project-exit', (event) => {
-            callback(event.payload);
-        });
-    }
-
-    async onDownloadProgress(callback: (percentage: number) => void): Promise<() => void> {
-        return listen<number>('download-progress', (event) => {
             callback(event.payload);
         });
     }

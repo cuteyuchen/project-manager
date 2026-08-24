@@ -2,7 +2,6 @@ mod git;
 mod nvm;
 mod project;
 mod runner;
-mod updater;
 mod system;
 
 use std::{
@@ -163,6 +162,8 @@ pub fn run() {
         .plugin(webview_shortcut_plugin())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
@@ -184,7 +185,6 @@ pub fn run() {
         }))
         .manage(runner::ProcessState::new())
         .manage(git::GitOperationState::new())
-        .manage(updater::UpdateState::new())
         .invoke_handler(tauri::generate_handler![
             nvm::get_nvm_list,
             nvm::get_node_version,
@@ -208,8 +208,6 @@ pub fn run() {
             runner::resolve_pm,
             runner::open_folder,
             runner::open_url,
-            updater::install_update,
-            updater::cancel_update,
             system::set_context_menu,
             system::check_context_menu,
             system::is_context_menu_supported,

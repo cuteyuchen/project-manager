@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.cuteyuchen.project-manager</id>
+  <name>Project Manager</name>
+  <summary>Manage projects, Git repositories, and Node.js versions</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="com.cuteyuchen">
+    <name>cuteyuchen</name>
+  </developer>
+  <url type="homepage">https://github.com/cuteyuchen/project-manager</url>
+  <url type="bugtracker">https://github.com/cuteyuchen/project-manager/issues</url>
+  <launchable type="desktop-id">Project Manager.desktop</launchable>
+  <icon type="stock">project-manager</icon>
+  <categories>
+    <category>Development</category>
+    <category>IDE</category>
+  </categories>
+  <description>
+    <p>Project Manager is a cross-platform desktop app for organizing development projects and the tools around them.</p>
+    <ul>
+      <li>Manage projects, workspaces, and launch commands.</li>
+      <li>Inspect Git repositories, branches, history, and changes.</li>
+      <li>Manage Node.js versions and package managers.</li>
+    </ul>
+  </description>
+  <content_rating type="oars-1.1" />
+</component>

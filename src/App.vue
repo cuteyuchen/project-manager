@@ -3,6 +3,8 @@ import { computed, ref, onMounted, onUnmounted, watch, h } from 'vue';
 import { api } from './api';
 import { ElMessageBox, ElMessage, ElLoading } from 'element-plus';
 import type { UnlistenFn } from '@tauri-apps/api/event';
+import { check, type Update } from '@tauri-apps/plugin-updater';
+import { relaunch } from '@tauri-apps/plugin-process';
 import { useI18n } from 'vue-i18n';
 import Sidebar from './components/Sidebar.vue';
 import Dashboard from './views/Dashboard.vue';
@@ -26,10 +28,13 @@ import { useGitStore } from './stores/git';
 import { useUsageStore } from './stores/usage';
 import type { Project } from './types';
 import { normalizeNvmVersion, findInstalledNodeVersion } from './utils/nvm';
-import { DEFAULT_NETWORK_TIMEOUT_MS, fetchWithTimeout, isAbortError } from './utils/network';
 import { buildJavaPresetCommands, ensureNodeInstallCommand, isWindowsPlatform } from './utils/projectCommands';
 import ProjectQuickSearch from './components/ProjectQuickSearch.vue';
-import { selectReleaseAsset } from './utils/updateReleaseAsset';
+import {
+  INITIAL_UPDATE_PROGRESS,
+  reduceUpdateProgress,
+  type UpdateProgressPhase,
+} from './utils/updateProgress';
 import {
   DEFAULT_QUICK_SEARCH_APP_SHORTCUT,
   DEFAULT_QUICK_SEARCH_GLOBAL_SHORTCUT,
@@ -56,6 +61,8 @@ let manualUpdateCheckListener: (() => void) | null = null;
 
 const showUpdateProgress = ref(false);
 const downloadProgress = ref(0);
+const updateProgressIndeterminate = ref(false);
+const updateProgressPhase = ref<UpdateProgressPhase>('downloading');
 const processedImportInstallVersions = new Set<string>();
 const closeBehaviorDialogVisible = ref(false);
 const pluginQuickSearchVisible = ref(false);
@@ -259,18 +266,6 @@ async function activateQuickSearchSelection(projectId: string) {
   }
 }
 
-function compareVersions(v1: string, v2: string) {
-  const p1 = v1.split('.').map(Number);
-  const p2 = v2.split('.').map(Number);
-  for (let i = 0; i < Math.max(p1.length, p2.length); i++) {
-    const n1 = p1[i] ?? 0;
-    const n2 = p2[i] ?? 0;
-    if (n1 > n2) return 1;
-    if (n1 < n2) return -1;
-  }
-  return 0;
-}
-
 type ManualUpdateResult = {
   status: 'available' | 'latest' | 'error';
   version?: string;
@@ -281,119 +276,153 @@ function dispatchManualUpdateResult(detail: ManualUpdateResult) {
   window.dispatchEvent(new CustomEvent<ManualUpdateResult>('manual-check-update-result', { detail }));
 }
 
-async function checkUpdate(manual = false) {
-  try {
-    // Use /releases list instead of /releases/latest to avoid missing pre-release tagged versions
-    const response = await fetchWithTimeout(
-      'https://api.github.com/repos/cuteyuchen/project-manager/releases?per_page=10',
-      {},
-      { timeoutMs: DEFAULT_NETWORK_TIMEOUT_MS },
-    );
-    if (!response.ok) {
-      if (manual) {
-        dispatchManualUpdateResult({
-          status: 'error',
-          error: `HTTP ${response.status}`
-        });
-      }
-      return;
-    }
-    const releases = await response.json();
-    // Find the highest-version non-draft release (regardless of pre-release flag)
-    const validReleases = (releases as any[]).filter((r) => !r.draft && r.tag_name);
-    if (validReleases.length === 0) {
-      if (manual) {
-        dispatchManualUpdateResult({ status: 'latest' });
-      }
-      return;
-    }
-    const latestRelease = validReleases.reduce((best: any, cur: any) =>
-      compareVersions(cur.tag_name.replace(/^v/, ''), best.tag_name.replace(/^v/, '')) > 0 ? cur : best
-    );
-    const latestTag: string = latestRelease.tag_name;
-    const remoteVersion = latestTag.replace(/^v/, '');
-    const localVersion = await api.getAppVersion();
+function displayUpdateVersion(version: string) {
+  return version.startsWith('v') ? version : `v${version}`;
+}
 
-    if (compareVersions(remoteVersion, localVersion) > 0) {
-      if (manual) {
-        dispatchManualUpdateResult({ status: 'available', version: latestTag });
+function resetUpdateProgress() {
+  downloadProgress.value = INITIAL_UPDATE_PROGRESS.percentage;
+  updateProgressIndeterminate.value = INITIAL_UPDATE_PROGRESS.indeterminate;
+  updateProgressPhase.value = INITIAL_UPDATE_PROGRESS.phase;
+}
+
+async function waitForUpdateSave() {
+  while (true) {
+    try {
+      await flushPendingSave();
+      return true;
+    } catch (error) {
+      try {
+        await ElMessageBox.confirm(
+          t('update.saveFailedMessage', { error: String(error) }),
+          t('update.saveFailedTitle'),
+          {
+            type: 'error',
+            confirmButtonText: t('update.retrySave'),
+            cancelButtonText: t('update.cancel'),
+            closeOnClickModal: false,
+          },
+        );
+      } catch {
+        return false;
       }
-      ElMessageBox.confirm(
+    }
+  }
+}
+
+async function resolveUpdateFailure(error: unknown): Promise<'retry' | 'download' | 'close'> {
+  try {
+    await ElMessageBox.confirm(
+      h('div', null, [
+        h('p', null, t('update.error', { error: String(error) })),
+        h('p', { class: 'mt-2' }, t('update.failureHint')),
+      ]),
+      t('update.failureTitle'),
+      {
+        type: 'error',
+        confirmButtonText: t('update.retry'),
+        cancelButtonText: t('update.openDownloadPage'),
+        distinguishCancelAndClose: true,
+        closeOnClickModal: false,
+      },
+    );
+    return 'retry';
+  } catch (action) {
+    return action === 'cancel' ? 'download' : 'close';
+  }
+}
+
+async function installDesktopUpdate(update: Update) {
+  while (true) {
+    resetUpdateProgress();
+    showUpdateProgress.value = true;
+    let progressState = INITIAL_UPDATE_PROGRESS;
+
+    try {
+      await update.download((event) => {
+        progressState = reduceUpdateProgress(progressState, event);
+        downloadProgress.value = progressState.percentage;
+        updateProgressIndeterminate.value = progressState.indeterminate;
+        updateProgressPhase.value = progressState.phase;
+      });
+
+      if (!await waitForUpdateSave()) {
+        showUpdateProgress.value = false;
+        await update.close();
+        return;
+      }
+
+      updateProgressPhase.value = 'installing';
+      await update.install();
+      await relaunch();
+      return;
+    } catch (error) {
+      showUpdateProgress.value = false;
+      const action = await resolveUpdateFailure(error);
+      if (action === 'retry') continue;
+      if (action === 'download') {
+        await api.openUrl('https://github.com/cuteyuchen/project-manager/releases');
+      }
+      await update.close();
+      return;
+    }
+  }
+}
+
+async function checkUpdate(manual = false) {
+  if (isPlugin) return;
+
+  let update: Update | null = null;
+  try {
+    update = await check({ timeout: 15_000 });
+    if (!update) {
+      if (manual) dispatchManualUpdateResult({ status: 'latest' });
+      return;
+    }
+
+    const version = displayUpdateVersion(update.version);
+    if (manual) dispatchManualUpdateResult({ status: 'available', version });
+
+    try {
+      await ElMessageBox.confirm(
         h('div', null, [
-          h('p', null, t('update.message', { version: latestTag })),
+          h('p', null, t('update.message', { version })),
           h('div', { class: 'mt-2' }, [
             h('a', {
               class: 'text-blue-500 hover:text-blue-600 cursor-pointer underline',
-              onClick: (e: Event) => {
-                e.preventDefault();
-                api.openUrl('https://github.com/cuteyuchen/project-manager/releases');
-              }
-            }, t('update.openDownloadPage'))
-          ])
+              onClick: (event: Event) => {
+                event.preventDefault();
+                void api.openUrl('https://github.com/cuteyuchen/project-manager/releases');
+              },
+            }, t('update.openDownloadPage')),
+          ]),
         ]),
         t('update.title'),
         {
           confirmButtonText: t('update.confirm'),
           cancelButtonText: t('update.cancel'),
           type: 'info',
-        }
-      ).then(async () => {
-        showUpdateProgress.value = true;
-        downloadProgress.value = 0;
-
-        let unlisten: (() => void) | undefined;
-
-        try {
-          unlisten = await api.onDownloadProgress((percentage) => {
-             downloadProgress.value = percentage;
-          });
-
-          const { os, arch } = await api.getPlatformInfo();
-          /***********************更新安装包选择*********************/
-          const matchedAsset = selectReleaseAsset(
-            { os, arch },
-            Array.isArray(latestRelease.assets) ? latestRelease.assets : [],
-          );
-
-          if (!matchedAsset?.browser_download_url) {
-            throw new Error(`No release asset found for ${os}/${arch}`);
-          }
-
-          await api.installUpdate(matchedAsset.browser_download_url);
-        } catch (error: any) {
-          if (error && error.toString().includes('cancelled')) {
-             ElMessage.info(t('update.cancelled') || 'Update cancelled');
-          } else {
-             ElMessage.error(t('update.error', { error }));
-          }
-          showUpdateProgress.value = false;
-        } finally {
-          if (unlisten) unlisten();
-          // Don't hide progress immediately on success, let the app restart
-          // But if it failed/cancelled, we hide it (handled in catch or here)
-          // If successful, the app will close.
-        }
-      }).catch(() => { });
+        },
+      );
+    } catch {
+      await update.close();
+      update = null;
       return;
     }
 
-    if (manual) {
-      dispatchManualUpdateResult({ status: 'latest', version: latestTag });
-    }
-  } catch (e) {
-    console.error('Failed to check for updates:', e);
+    await installDesktopUpdate(update);
+    update = null;
+  } catch (error) {
+    console.error('Failed to check for updates:', error);
     if (manual) {
       dispatchManualUpdateResult({
         status: 'error',
-        error: isAbortError(e) ? t('common.requestTimeout') : String(e),
+        error: String(error),
       });
     }
+  } finally {
+    if (update) await update.close().catch(() => undefined);
   }
-}
-
-function handleCancelUpdate() {
-  api.cancelUpdate();
-  showUpdateProgress.value = false;
 }
 
 function handleBackgroundUpdate() {
@@ -872,7 +901,8 @@ watch(
     <UpdateProgress
       v-if="showUpdateProgress"
       :percentage="downloadProgress"
-      @cancel="handleCancelUpdate"
+      :indeterminate="updateProgressIndeterminate"
+      :phase="updateProgressPhase"
       @background="handleBackgroundUpdate"
     />
 

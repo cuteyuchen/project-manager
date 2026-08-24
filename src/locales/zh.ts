@@ -619,9 +619,17 @@
     confirm: '立即更新',
     cancel: '稍后',
     downloading: '正在下载更新...',
+    verifying: '正在验证更新...',
+    installing: '正在安装更新...',
     background: '后台下载',
     cancelled: '更新已取消',
     error: '更新失败：{error}',
+    failureTitle: '更新未完成',
+    failureHint: '应用将保持运行，你可以重试或前往下载页面手动安装。',
+    retry: '重试',
+    saveFailedTitle: '无法保存当前数据',
+    saveFailedMessage: '为保护项目数据，更新安装已暂停。保存失败原因：{error}',
+    retrySave: '重试保存',
     openDownloadPage: '打开下载页面'
   },
   git: {

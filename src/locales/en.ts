@@ -619,9 +619,17 @@ export default {
     confirm: 'Update Now',
     cancel: 'Later',
     downloading: 'Downloading update...',
+    verifying: 'Verifying update...',
+    installing: 'Installing update...',
     background: 'Background',
     cancelled: 'Update cancelled',
     error: 'Update failed: {error}',
+    failureTitle: 'Update Not Completed',
+    failureHint: 'The app is still running. You can retry or open the download page to install manually.',
+    retry: 'Retry',
+    saveFailedTitle: 'Unable to Save Current Data',
+    saveFailedMessage: 'Update installation was paused to protect project data. Save failed: {error}',
+    retrySave: 'Retry Save',
     openDownloadPage: 'Open Download Page'
   },
   git: {

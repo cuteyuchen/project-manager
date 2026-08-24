@@ -1,5 +1,18 @@
 # 更新日志
 
+## v1.6.2
+
+### 新功能与优化
+
+- 桌面端更新迁移到 Tauri 官方 updater：发布资产使用 minisign 签名，客户端会先验证签名再安装。
+- Windows、macOS、Ubuntu deb 与 AppImage 自动匹配各自的安装器；Ubuntu deb 通过系统认证执行覆盖升级，AppImage 原位更新并重启。
+- 更新下载过程支持后台运行，增加下载、验证、安装状态；安装前强制完成待保存数据，保存失败时可重试或取消更新。
+- Ubuntu deb 补齐作者、MIT 许可证、主页、项目简介、软件分类、关键词和 AppStream 元数据，软件中心可显示项目图标及完整详情。
+
+### 升级说明
+
+- `v1.6.1` 的 Ubuntu deb 用户首次迁移到新更新器时，请执行 `sudo apt install ./Project.Manager_1.6.2_amd64.deb`；之后可直接使用应用内更新。
+
 ## v1.6.1
 
 ### 优化

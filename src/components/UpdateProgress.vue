@@ -8,18 +8,13 @@
               <span class="update-progress-icon" aria-hidden="true">
                 <span class="i-mdi-download" />
               </span>
-              <span>{{ t('update.downloading') }}</span>
+              <span>{{ phaseLabel }}</span>
             </div>
 
             <div class="update-progress-actions">
               <el-tooltip :content="t('update.background')" placement="top">
                 <el-button text circle :aria-label="t('update.background')" @click="$emit('background')">
                   <span class="i-mdi-minus" />
-                </el-button>
-              </el-tooltip>
-              <el-tooltip :content="t('update.cancel')" placement="top">
-                <el-button text circle type="danger" :aria-label="t('update.cancel')" @click="$emit('cancel')">
-                  <span class="i-mdi-close" />
                 </el-button>
               </el-tooltip>
             </div>
@@ -29,11 +24,12 @@
             :percentage="normalizedPercentage"
             :stroke-width="8"
             :show-text="false"
+            :indeterminate="indeterminate"
             color="var(--app-primary)"
           />
 
           <footer class="update-progress-footer">
-            <el-tag size="small" type="primary" effect="light">{{ normalizedPercentage }}%</el-tag>
+            <el-tag v-if="!indeterminate" size="small" type="primary" effect="light">{{ normalizedPercentage }}%</el-tag>
           </footer>
         </el-card>
       </section>
@@ -47,15 +43,17 @@ import { useI18n } from 'vue-i18n';
 
 const props = defineProps<{
   percentage: number;
+  indeterminate?: boolean;
+  phase?: 'downloading' | 'verifying' | 'installing';
 }>();
 
 defineEmits<{
-  (e: 'cancel'): void;
   (e: 'background'): void;
 }>();
 
 const { t } = useI18n();
 const normalizedPercentage = computed(() => Math.max(0, Math.min(100, Math.round(props.percentage))));
+const phaseLabel = computed(() => t(`update.${props.phase || 'downloading'}`));
 </script>
 
 <style scoped>

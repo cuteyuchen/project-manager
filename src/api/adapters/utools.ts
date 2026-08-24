@@ -96,8 +96,6 @@ export class UToolsAdapter implements PlatformAPI {
   writeTextFile(path: string, content: string): Promise<void> { return this.service.writeTextFile(path, content); }
   readDir(path: string): Promise<{ name: string; isDirectory: boolean }[]> { return this.service.readDir(path); }
 
-  installUpdate(url: string): Promise<void> { return this.service.installUpdate(url); }
-  cancelUpdate(): Promise<void> { return this.service.cancelUpdate ? this.service.cancelUpdate() : Promise.resolve(); }
   getAppVersion(): Promise<string> { return this.service.getAppVersion(); }
 
   openDialog(options: any): Promise<string | string[] | null> { return this.service.openDialog(options); }
@@ -108,10 +106,6 @@ export class UToolsAdapter implements PlatformAPI {
   }
  async onProjectExit(callback: (payload: { id: string }) => void): Promise<() => void> {
     return this.service.onProjectExit(callback);
-  }
-
-  async onDownloadProgress(callback: (percentage: number) => void): Promise<() => void> {
-      return this.service.onDownloadProgress(callback);
   }
 
   // Window

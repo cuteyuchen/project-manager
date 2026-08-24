@@ -139,9 +139,6 @@ export interface PlatformAPI {
     writeTextFile(path: string, content: string): Promise<void>;
     readDir(path: string): Promise<{ name: string; isDirectory: boolean }[]>;
 
-    // Updater
-    installUpdate(url: string): Promise<void>;
-    cancelUpdate(): Promise<void>;
     getAppVersion(): Promise<string>;
 
     // Dialogs
@@ -160,7 +157,6 @@ export interface PlatformAPI {
     // Events
     onProjectOutput(callback: (payload: { id: string; data: string }) => void): Promise<() => void>;
     onProjectExit(callback: (payload: { id: string }) => void): Promise<() => void>;
-    onDownloadProgress(callback: (percentage: number) => void): Promise<() => void>;
 
     // Window
     windowMinimize(): Promise<void>;
