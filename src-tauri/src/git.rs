@@ -426,6 +426,10 @@ pub async fn git_list_remote_branches(url: String) -> Result<Vec<String>, String
     .await
 }
 
+fn clone_branch_args<'a>(url: &'a str, branch: &'a str, destination: &'a str) -> [&'a str; 6] {
+    ["clone", "--branch", branch, "--", url, destination]
+}
+
 #[tauri::command]
 pub async fn git_clone_branch(
     state: tauri::State<'_, GitOperationState>,
@@ -449,15 +453,7 @@ pub async fn git_clone_branch(
             }
         }
 
-        let args = [
-            "clone",
-            "--branch",
-            branch.as_str(),
-            "--single-branch",
-            "--",
-            url.as_str(),
-            destination.as_str(),
-        ];
+        let args = clone_branch_args(&url, &branch, &destination);
 
         if let Some(operation_id) = operation_id.as_deref() {
             run_git_cancellable(&git_state, operation_id, None, &args, true)
@@ -1806,6 +1802,7 @@ pub async fn git_revert_hunk(path: String, patch: String, staged: Option<bool>) 
 
 #[cfg(test)]
 mod tests {
+    use super::clone_branch_args;
     use super::git_diff_sync;
     use super::git_own_commits_sync;
     use super::git_diff_for_ai_sync;
@@ -1839,6 +1836,25 @@ mod tests {
         run_git(&repo_path, &["init"]).expect("git init should succeed");
         run_git(&repo_path, &["config", "user.name", "Project Manager Test"]).expect("git config user.name should succeed");
         run_git(&repo_path, &["config", "user.email", "test@example.com"]).expect("git config user.email should succeed");
+    }
+
+    #[test]
+    fn clone_branch_keeps_all_remote_branch_refs() {
+        let args = clone_branch_args(
+            "https://github.com/example/project.git",
+            "main",
+            "C:/projects/example",
+        );
+
+        assert_eq!(args, [
+            "clone",
+            "--branch",
+            "main",
+            "--",
+            "https://github.com/example/project.git",
+            "C:/projects/example",
+        ]);
+        assert!(!args.contains(&"--single-branch"));
     }
 
     /***********************AI diff 只包含暂存改动*********************/
