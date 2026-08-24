@@ -82,7 +82,7 @@
         "priority": "optional",
         "desktopTemplate": "deb/project-manager.desktop.hbs",
         "files": {
-          "deb/com.cuteyuchen.project-manager.metainfo.xml": "usr/share/metainfo/com.cuteyuchen.project-manager.metainfo.xml"
+          "usr/share/metainfo/com.cuteyuchen.project-manager.metainfo.xml": "deb/com.cuteyuchen.project-manager.metainfo.xml"
         }
       }
     }

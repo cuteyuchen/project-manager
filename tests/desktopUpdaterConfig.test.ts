@@ -18,6 +18,11 @@ assert(
 );
 assert(capability.permissions.includes('updater:default'), 'updater capability must be granted');
 assert(capability.permissions.includes('process:allow-restart'), 'restart capability must be granted');
+assert(
+  config.bundle?.linux?.deb?.files?.['usr/share/metainfo/com.cuteyuchen.project-manager.metainfo.xml']
+    === 'deb/com.cuteyuchen.project-manager.metainfo.xml',
+  'AppStream metadata must be copied into the deb package',
+);
 assert(metadata.includes('<icon type="stock">project-manager</icon>'), 'AppStream metadata must reference the package icon');
 assert(metadata.includes('<developer id="com.cuteyuchen">'), 'AppStream metadata must include the publisher');
 assert(metadata.includes('<project_license>MIT</project_license>'), 'AppStream metadata must include the license');
