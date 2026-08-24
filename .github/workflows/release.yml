@@ -64,6 +64,7 @@ jobs:
 
             - Desktop updates now use Tauri's signed native updater for Windows, macOS, Ubuntu deb, and AppImage.
             - Ubuntu deb updates request system authentication; AppImage updates replace the original file in place.
+            - New remote projects now retain every remote branch; fetching an older single-branch clone repairs its remote branch references.
             - Ubuntu package metadata now includes the application icon, author, MIT license, homepage, description, categories, and AppStream details.
 
             ### Ubuntu deb migration

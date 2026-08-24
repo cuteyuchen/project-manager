@@ -430,6 +430,53 @@ fn clone_branch_args<'a>(url: &'a str, branch: &'a str, destination: &'a str) ->
     ["clone", "--branch", branch, "--", url, destination]
 }
 
+fn all_branch_fetch_refspec(remote: &str) -> String {
+    format!("+refs/heads/*:refs/remotes/{remote}/*")
+}
+
+fn is_legacy_single_branch_fetch_refspec(refspec: &str, remote: &str) -> bool {
+    let Some((source, destination)) = refspec.split_once(':') else {
+        return false;
+    };
+
+    source.starts_with("+refs/heads/")
+        && !source.contains('*')
+        && destination.starts_with(&format!("refs/remotes/{remote}/"))
+        && !destination.contains('*')
+}
+
+fn restore_all_remote_branch_fetches(path: &str, remote: Option<&str>) -> Result<(), String> {
+    let remotes = match remote {
+        Some(remote) => vec![remote.to_string()],
+        None => run_git(path, &["remote"])?
+            .lines()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(ToOwned::to_owned)
+            .collect(),
+    };
+
+    for remote in remotes {
+        let key = format!("remote.{remote}.fetch");
+        let refspecs = match run_git(path, &["config", "--get-all", &key]) {
+            Ok(output) => output
+                .lines()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>(),
+            Err(_) => continue,
+        };
+
+        if refspecs.len() == 1 && is_legacy_single_branch_fetch_refspec(&refspecs[0], &remote) {
+            let all_branches = all_branch_fetch_refspec(&remote);
+            run_git(path, &["config", "--replace-all", &key, &all_branches])?;
+        }
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn git_clone_branch(
     state: tauri::State<'_, GitOperationState>,
@@ -698,6 +745,8 @@ pub async fn git_fetch(
     };
 
     run_git_task(move || {
+        restore_all_remote_branch_fetches(&path, remote.as_deref())?;
+
         let mut args = vec!["fetch"];
         if let Some(ref r) = remote {
             args.push(r.as_str());
@@ -1802,10 +1851,12 @@ pub async fn git_revert_hunk(path: String, patch: String, staged: Option<bool>) 
 
 #[cfg(test)]
 mod tests {
+    use super::all_branch_fetch_refspec;
     use super::clone_branch_args;
     use super::git_diff_sync;
     use super::git_own_commits_sync;
     use super::git_diff_for_ai_sync;
+    use super::is_legacy_single_branch_fetch_refspec;
     use super::run_git;
     use std::fs;
     use std::path::PathBuf;
@@ -1855,6 +1906,22 @@ mod tests {
             "C:/projects/example",
         ]);
         assert!(!args.contains(&"--single-branch"));
+    }
+
+    #[test]
+    fn legacy_single_branch_fetch_refspec_is_upgraded_to_all_branches() {
+        assert!(is_legacy_single_branch_fetch_refspec(
+            "+refs/heads/main:refs/remotes/origin/main",
+            "origin",
+        ));
+        assert!(!is_legacy_single_branch_fetch_refspec(
+            "+refs/heads/*:refs/remotes/origin/*",
+            "origin",
+        ));
+        assert_eq!(
+            all_branch_fetch_refspec("origin"),
+            "+refs/heads/*:refs/remotes/origin/*",
+        );
     }
 
     /***********************AI diff 只包含暂存改动*********************/
