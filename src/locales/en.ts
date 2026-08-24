@@ -20,6 +20,14 @@ export default {
     deleteConfirm: 'Are you sure you want to delete?',
     alreadyExists: 'Project already exists'
   },
+  persistence: {
+    loadFailed: 'Failed to load project data. Saving is disabled: {error}',
+    saveFailed: 'Failed to save project data: {error}',
+    exitSaveFailedTitle: 'Project data is not saved',
+    exitSaveFailedMessage: 'The final save failed. Retry saving or exit anyway.\n{error}',
+    retrySave: 'Retry Save',
+    exitAnyway: 'Exit Anyway',
+  },
   sidebar: {
     dashboard: 'Dashboard',
     nodes: 'Node Manager',

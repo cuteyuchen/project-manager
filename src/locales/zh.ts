@@ -19,6 +19,14 @@
     inputPlaceholder: '请输入内容',
     deleteConfirm: '确定要删除吗？'
   },
+  persistence: {
+    loadFailed: '项目数据读取失败，已进入只读保护：{error}',
+    saveFailed: '项目数据保存失败：{error}',
+    exitSaveFailedTitle: '项目数据尚未保存',
+    exitSaveFailedMessage: '最后一次保存失败。你可以重试保存，或仍然退出。\n{error}',
+    retrySave: '重试保存',
+    exitAnyway: '仍然退出',
+  },
   sidebar: {
     dashboard: '仪表盘',
     nodes: 'Node 管理',

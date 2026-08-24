@@ -12,7 +12,13 @@ import PortManager from './views/PortManager.vue';
 import CommitCalendar from './views/CommitCalendar.vue';
 import TitleBar from './components/TitleBar.vue';
 import UpdateProgress from './components/UpdateProgress.vue';
-import { loadData, scheduleSaveData, flushPendingSave } from './utils/persistence';
+import {
+  flushPendingSave,
+  loadData,
+  scheduleSaveData,
+  subscribePersistenceEvents,
+  type PersistenceEvent,
+} from './utils/persistence';
 import { useProjectStore } from './stores/project';
 import { useSettingsStore } from './stores/settings';
 import { useNodeStore } from './stores/node';
@@ -57,6 +63,8 @@ const rememberCloseAction = ref(false);
 let trayIcon: { close?: () => Promise<void> } | null = null;
 let pendingCloseResolver: ((action: 'tray' | 'exit' | 'cancel') => void) | null = null;
 let unlistenCloseRequested: UnlistenFn | null = null;
+let unlistenPersistenceEvents: (() => void) | null = null;
+let persistenceErrorMessage: ReturnType<typeof ElMessage> | null = null;
 let registeredQuickSearchGlobalShortcut = '';
 let quickSearchShortcutRecording = false;
 let quickSearchShortcutRecordingListener: ((event: Event) => void) | null = null;
@@ -419,11 +427,60 @@ async function destroyTray() {
   trayIcon = null;
 }
 
+function handlePersistenceEvent(event: PersistenceEvent) {
+  if (event.type === 'recovered') {
+    persistenceErrorMessage?.close();
+    persistenceErrorMessage = null;
+    return;
+  }
+
+  persistenceErrorMessage?.close();
+  persistenceErrorMessage = ElMessage({
+    type: 'error',
+    duration: 0,
+    showClose: true,
+    message: event.operation === 'load'
+      ? t('persistence.loadFailed', { error: event.error.message })
+      : t('persistence.saveFailed', { error: event.error.message }),
+  });
+}
+
+async function resolveExitSaveFailure(error: unknown): Promise<'retry' | 'exit' | 'cancel'> {
+  try {
+    await ElMessageBox.confirm(
+      t('persistence.exitSaveFailedMessage', { error: String(error) }),
+      t('persistence.exitSaveFailedTitle'),
+      {
+        type: 'error',
+        confirmButtonText: t('persistence.retrySave'),
+        cancelButtonText: t('persistence.exitAnyway'),
+        distinguishCancelAndClose: true,
+        closeOnClickModal: false,
+      },
+    );
+    return 'retry';
+  } catch (action) {
+    return action === 'cancel' ? 'exit' : 'cancel';
+  }
+}
+
 async function exitApp() {
   if (exiting) return;
   exiting = true;
 
   try {
+    while (true) {
+      try {
+        await flushPendingSave();
+        break;
+      } catch (error) {
+        const action = await resolveExitSaveFailure(error);
+        if (action === 'retry') continue;
+        if (action === 'cancel') return;
+        break;
+      }
+    }
+
     useGitStore().setColdStorage(true);
     await destroyTray();
     await api.exitApp();
@@ -547,6 +604,7 @@ async function setupCloseRequestedHandler() {
 }
 
 onMounted(async () => {
+  unlistenPersistenceEvents = subscribePersistenceEvents(handlePersistenceEvent);
   await loadData();
   loaded.value = true;
 
@@ -707,10 +765,12 @@ onUnmounted(() => {
     window.removeEventListener('quick-search-shortcut-recording', quickSearchShortcutRecordingListener);
   }
   if (unlistenCloseRequested) unlistenCloseRequested();
+  if (unlistenPersistenceEvents) unlistenPersistenceEvents();
+  persistenceErrorMessage?.close();
   document.removeEventListener('keydown', handleGlobalKeydown);
   void unregisterQuickSearchGlobalShortcut();
   void destroyTray();
-  void flushPendingSave();
+  void flushPendingSave().catch(() => undefined);
 });
 
 // Watch stores and save

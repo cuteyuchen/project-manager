@@ -5,6 +5,7 @@ import { useNodeStore } from '../stores/node';
 import { useUsageStore } from '../stores/usage';
 import type { NodeVersion, Project, ProjectGroup, Settings, UsageData } from '../types';
 import { ensureNodeInstallCommand } from './projectCommands';
+import { createPersistenceSaveQueue } from './persistenceQueue';
 
 const FILE_NAME = 'data.json';
 const SAVE_DEBOUNCE_MS = 800;
@@ -21,11 +22,22 @@ type PersistedData = {
 type IdleCallbackHandle = number;
 type IdleCallbackDeadline = { didTimeout: boolean; timeRemaining: () => number };
 
+export type PersistenceState = 'loading' | 'ready' | 'read-only';
+export type PersistenceOperation = 'load' | 'save';
+export type PersistenceEvent =
+  | { type: 'error'; operation: PersistenceOperation; error: Error }
+  | { type: 'recovered'; operation: PersistenceOperation };
+export type PersistenceLoadResult =
+  | { state: 'ready' }
+  | { state: 'read-only'; error: Error };
+
 let saveTimer: number | null = null;
 let saveIdleHandle: IdleCallbackHandle | null = null;
-let saveInFlight = false;
-let saveQueued = false;
-let lastSerializedData = '';
+let persistenceState: PersistenceState = 'loading';
+let readOnlyError: Error | null = null;
+let lastFailure: PersistenceOperation | null = null;
+const listeners = new Set<(event: PersistenceEvent) => void>();
+const saveQueue = createPersistenceSaveQueue((serialized) => api.writeConfigFile(FILE_NAME, serialized));
 
 function buildPersistedData(): PersistedData {
   const projectStore = useProjectStore();
@@ -44,6 +56,34 @@ function buildPersistedData(): PersistedData {
 
 function serializePersistedData(): string {
   return JSON.stringify(buildPersistedData(), null, 2);
+}
+
+function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+function emit(event: PersistenceEvent) {
+  listeners.forEach((listener) => listener(event));
+}
+
+function reportFailure(operation: PersistenceOperation, error: unknown) {
+  const normalized = toError(error);
+  lastFailure = operation;
+  emit({ type: 'error', operation, error: normalized });
+  return normalized;
+}
+
+function reportRecovery(operation: PersistenceOperation) {
+  if (!lastFailure) return;
+  lastFailure = null;
+  emit({ type: 'recovered', operation });
+}
+
+function enterReadOnly(operation: PersistenceOperation, error: unknown): Error {
+  const normalized = reportFailure(operation, error);
+  persistenceState = 'read-only';
+  readOnlyError = normalized;
+  return normalized;
 }
 
 function clearScheduledSave() {
@@ -67,34 +107,30 @@ function clearScheduledSave() {
   }
 }
 
-export async function saveData(force = false) {
+async function saveData(force = false) {
+  if (persistenceState !== 'ready') {
+    throw readOnlyError || new Error('Persistence is not ready');
+  }
+
   try {
-    const serialized = serializePersistedData();
-    if (!force && serialized === lastSerializedData) {
-      return;
-    }
-
-    if (saveInFlight) {
-      saveQueued = true;
-      return;
-    }
-
-    saveInFlight = true;
-    await api.writeConfigFile(FILE_NAME, serialized);
-    lastSerializedData = serialized;
-    console.log('Data saved to', FILE_NAME);
-  } catch (e) {
-    console.error('Failed to save data:', e);
-  } finally {
-    saveInFlight = false;
-    if (saveQueued) {
-      saveQueued = false;
-      void saveData();
-    }
+    await saveQueue.enqueue(serializePersistedData(), force);
+    reportRecovery('save');
+  } catch (error) {
+    throw reportFailure('save', error);
   }
 }
 
+export function subscribePersistenceEvents(listener: (event: PersistenceEvent) => void) {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+export function getPersistenceState(): PersistenceState {
+  return persistenceState;
+}
+
 export function scheduleSaveData() {
+  if (persistenceState !== 'ready') return;
   clearScheduledSave();
 
   saveTimer = window.setTimeout(() => {
@@ -104,46 +140,52 @@ export function scheduleSaveData() {
       requestIdleCallback?: (callback: (deadline: IdleCallbackDeadline) => void, options?: { timeout?: number }) => IdleCallbackHandle;
     };
 
+    const runSave = () => {
+      saveIdleHandle = null;
+      void saveData().catch(() => undefined);
+    };
+
     if (idleWindow.requestIdleCallback) {
-      saveIdleHandle = idleWindow.requestIdleCallback(() => {
-        saveIdleHandle = null;
-        void saveData();
-      }, { timeout: SAVE_IDLE_TIMEOUT_MS });
+      saveIdleHandle = idleWindow.requestIdleCallback(runSave, { timeout: SAVE_IDLE_TIMEOUT_MS });
       return;
     }
 
-    saveIdleHandle = window.setTimeout(() => {
-      saveIdleHandle = null;
-      void saveData();
-    }, 200);
+    saveIdleHandle = window.setTimeout(runSave, 200);
   }, SAVE_DEBOUNCE_MS);
 }
 
 export async function flushPendingSave() {
   clearScheduledSave();
-  await saveData(true);
+  if (persistenceState === 'loading') return;
+  await saveData();
 }
 
-export async function loadData() {
+export async function loadData(): Promise<PersistenceLoadResult> {
+  persistenceState = 'loading';
+  readOnlyError = null;
+
   try {
     const content = await api.readConfigFile(FILE_NAME);
-    if (!content) return;
-    let normalizedDataChanged = false;
+    if (!content) {
+      saveQueue.markPersisted(serializePersistedData());
+      persistenceState = 'ready';
+      reportRecovery('load');
+      return { state: 'ready' };
+    }
 
     let data: any;
     try {
       data = JSON.parse(content);
-    } catch (e) {
-      console.error('Failed to parse config file:', e);
-      return;
+    } catch (error) {
+      throw new Error(`Failed to parse config file: ${toError(error).message}`);
     }
 
+    let normalizedDataChanged = false;
     if (data.projects) {
       const projectStore = useProjectStore();
       const settingsStore = useSettingsStore();
       const installCommandName = settingsStore.settings.locale === 'en' ? 'Install Dependencies' : '安装依赖';
 
-      // Migrate old project data: ensure new optional fields have defaults
       projectStore.projects = data.projects.map((p: any) => ensureNodeInstallCommand({
         ...p,
         type: p.type || 'node',
@@ -177,19 +219,17 @@ export async function loadData() {
     if (data.settings) {
       const settingsStore = useSettingsStore();
       const merged = { ...settingsStore.settings, ...data.settings };
-      // 确保新增的总控能力字段兜底
       if (!Array.isArray(merged.projectViewPresets)) merged.projectViewPresets = [];
       if (!Array.isArray(merged.workspaceProfiles)) merged.workspaceProfiles = [];
       settingsStore.settings = merged;
     }
     if (data.customNodes) {
       const nodeStore = useNodeStore();
-      // Merge custom nodes
       const existing = new Set(nodeStore.versions.map(v => v.path));
       data.customNodes.forEach((n: any) => {
-          if (!existing.has(n.path)) {
-              nodeStore.versions.push(n);
-          }
+        if (!existing.has(n.path)) {
+          nodeStore.versions.push(n);
+        }
       });
     }
     if (data.usageData) {
@@ -205,13 +245,23 @@ export async function loadData() {
         collapsed: g.collapsed ?? false,
       }));
     }
-    console.log('Data loaded');
-    lastSerializedData = serializePersistedData();
 
+    persistenceState = 'ready';
+    const serialized = serializePersistedData();
     if (normalizedDataChanged) {
-      await api.writeConfigFile(FILE_NAME, lastSerializedData);
+      try {
+        await saveQueue.enqueue(serialized, true);
+      } catch (error) {
+        return { state: 'read-only', error: enterReadOnly('save', error) };
+      }
+    } else {
+      saveQueue.markPersisted(serialized);
     }
-  } catch (e) {
-    console.error('Failed to load data:', e);
+
+    console.log('Data loaded');
+    reportRecovery('load');
+    return { state: 'ready' };
+  } catch (error) {
+    return { state: 'read-only', error: enterReadOnly('load', error) };
   }
 }

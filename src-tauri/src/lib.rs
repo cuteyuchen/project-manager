@@ -5,7 +5,13 @@ mod runner;
 mod updater;
 mod system;
 
+use std::{
+    fs,
+    io::Write,
+    path::{Path, PathBuf},
+};
 use tauri::{Manager, Emitter};
+use tempfile::NamedTempFile;
 
 #[cfg(windows)]
 fn disable_browser_accelerator_keys<R: tauri::Runtime>(webview: tauri::Webview<R>) {
@@ -38,26 +44,99 @@ fn webview_shortcut_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R>
         .build()
 }
 
-#[tauri::command]
-fn read_config_file(filename: String) -> Result<String, String> {
+fn validate_config_filename(filename: &str) -> Result<(), String> {
+    let path = Path::new(filename);
+    if filename.is_empty() || path.file_name().and_then(|name| name.to_str()) != Some(filename) {
+        return Err(format!("Invalid config filename: {filename}"));
+    }
+    Ok(())
+}
+
+fn app_config_file_path(app: &tauri::AppHandle, filename: &str) -> Result<PathBuf, String> {
+    validate_config_filename(filename)?;
+    let mut path = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    path.push(filename);
+    Ok(path)
+}
+
+fn legacy_config_file_path(filename: &str) -> Result<PathBuf, String> {
+    validate_config_filename(filename)?;
     let mut path = std::env::current_exe().map_err(|e| e.to_string())?;
     path.pop();
     path.push(filename);
+    Ok(path)
+}
 
-    if !path.exists() {
-        return Ok("".to_string());
+fn atomic_write_config(path: &Path, content: &str) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("Config path has no parent: {}", path.display()))?;
+    fs::create_dir_all(parent).map_err(|e| {
+        format!(
+            "Failed to create config directory {}: {e}",
+            parent.display()
+        )
+    })?;
+
+    let mut temp_file = NamedTempFile::new_in(parent)
+        .map_err(|e| format!("Failed to create temporary config file: {e}"))?;
+    temp_file
+        .write_all(content.as_bytes())
+        .map_err(|e| format!("Failed to write temporary config file: {e}"))?;
+    temp_file
+        .as_file()
+        .sync_all()
+        .map_err(|e| format!("Failed to sync temporary config file: {e}"))?;
+    temp_file.persist(path).map_err(|e| {
+        format!(
+            "Failed to replace config file {}: {}",
+            path.display(),
+            e.error
+        )
+    })?;
+    Ok(())
+}
+
+fn read_config_from_paths(data_path: &Path, legacy_path: &Path) -> Result<String, String> {
+    if data_path.exists() {
+        return fs::read_to_string(data_path)
+            .map_err(|e| format!("Failed to read config file {}: {e}", data_path.display()));
     }
 
-    std::fs::read_to_string(path).map_err(|e| e.to_string())
+    if !legacy_path.exists() {
+        return Ok(String::new());
+    }
+
+    let content = fs::read_to_string(legacy_path).map_err(|e| {
+        format!(
+            "Failed to read legacy config file {}: {e}",
+            legacy_path.display()
+        )
+    })?;
+    atomic_write_config(data_path, &content)?;
+    Ok(content)
 }
 
 #[tauri::command]
-fn write_config_file(filename: String, content: String) -> Result<(), String> {
-    let mut path = std::env::current_exe().map_err(|e| e.to_string())?;
-    path.pop();
-    path.push(filename);
+fn read_config_file(app: tauri::AppHandle, filename: String) -> Result<String, String> {
+    let data_path = app_config_file_path(&app, &filename)?;
+    if data_path.exists() {
+        return fs::read_to_string(&data_path)
+            .map_err(|e| format!("Failed to read config file {}: {e}", data_path.display()));
+    }
 
-    std::fs::write(path, content).map_err(|e| e.to_string())
+    let legacy_path = legacy_config_file_path(&filename)?;
+    read_config_from_paths(&data_path, &legacy_path)
+}
+
+#[tauri::command]
+fn write_config_file(
+    app: tauri::AppHandle,
+    filename: String,
+    content: String,
+) -> Result<(), String> {
+    let path = app_config_file_path(&app, &filename)?;
+    atomic_write_config(&path, &content)
 }
 
 #[tauri::command]
@@ -207,4 +286,79 @@ pub fn run() {
              git::cleanup_git_processes(&git_state);
         }
     });
+}
+
+#[cfg(test)]
+mod config_file_tests {
+    use super::{atomic_write_config, read_config_from_paths, validate_config_filename};
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn writes_and_replaces_config_atomically() {
+        let temp = tempdir().expect("temp directory");
+        let path = temp.path().join("nested").join("data.json");
+
+        atomic_write_config(&path, "first").expect("initial write");
+        atomic_write_config(&path, "second").expect("replacement write");
+
+        assert_eq!(fs::read_to_string(path).expect("read config"), "second");
+    }
+
+    #[test]
+    fn migrates_legacy_config_without_deleting_it() {
+        let temp = tempdir().expect("temp directory");
+        let data_path = temp.path().join("data").join("data.json");
+        let legacy_path = temp.path().join("legacy-data.json");
+        fs::write(&legacy_path, "legacy").expect("write legacy config");
+
+        let content = read_config_from_paths(&data_path, &legacy_path).expect("migrate config");
+
+        assert_eq!(content, "legacy");
+        assert_eq!(
+            fs::read_to_string(&data_path).expect("read migrated config"),
+            "legacy"
+        );
+        assert_eq!(
+            fs::read_to_string(&legacy_path).expect("read legacy config"),
+            "legacy"
+        );
+    }
+
+    #[test]
+    fn prefers_existing_app_data_config() {
+        let temp = tempdir().expect("temp directory");
+        let data_path = temp.path().join("data.json");
+        let legacy_path = temp.path().join("legacy-data.json");
+        fs::write(&data_path, "current").expect("write current config");
+        fs::write(&legacy_path, "legacy").expect("write legacy config");
+
+        let content = read_config_from_paths(&data_path, &legacy_path).expect("read config");
+
+        assert_eq!(content, "current");
+        assert_eq!(
+            fs::read_to_string(legacy_path).expect("read legacy config"),
+            "legacy"
+        );
+    }
+
+    #[test]
+    fn failed_replace_does_not_remove_existing_target() {
+        let temp = tempdir().expect("temp directory");
+        let target = temp.path().join("data.json");
+        fs::create_dir(&target).expect("create target directory");
+        let sentinel = target.join("keep.txt");
+        fs::write(&sentinel, "keep").expect("write sentinel");
+
+        assert!(atomic_write_config(&target, "replacement").is_err());
+        assert_eq!(fs::read_to_string(sentinel).expect("read sentinel"), "keep");
+    }
+
+    #[test]
+    fn rejects_nested_config_paths() {
+        assert!(validate_config_filename("../data.json").is_err());
+        assert!(validate_config_filename("nested/data.json").is_err());
+        assert!(validate_config_filename("").is_err());
+        assert!(validate_config_filename("data.json").is_ok());
+    }
 }

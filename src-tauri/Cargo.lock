@@ -3056,7 +3056,7 @@ dependencies = [
 
 [[package]]
 name = "project-manager"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "base64 0.22.1",
  "encoding_rs",
@@ -3071,6 +3071,7 @@ dependencies = [
  "tauri-plugin-global-shortcut",
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
+ "tempfile",
  "webview2-com",
  "windows-core 0.61.2",
  "windows-sys 0.61.2",
