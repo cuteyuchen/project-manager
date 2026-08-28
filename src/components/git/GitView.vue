@@ -33,6 +33,7 @@ const settingsStore = useSettingsStore();
 const props = defineProps<{ project: Project }>();
 
 const activeTab = ref<'changes' | 'history'>('changes');
+const fileHistoryPath = ref('');
 const showBranchDialog = ref(false);
 const showSettingsDialog = ref(false);
 const showRepoCenter = ref(false);
@@ -423,6 +424,21 @@ async function handleRefresh() {
   });
 }
 
+async function handleOpenFileHistory(file: string) {
+  fileHistoryPath.value = file;
+  activeTab.value = 'history';
+  try {
+    await gitStore.ensureFileHistory(activeProject.value.id, activeProject.value.path, file, { force: true });
+  } catch (e) {
+    showPersistentGitError(t('git.operationFailed', { error: String(e) }));
+  }
+}
+
+function clearFileHistoryFilter() {
+  fileHistoryPath.value = '';
+  gitStore.clearDiff(props.project.id);
+}
+
 const tabs = computed(() => [
   { value: 'changes' as const, label: t('git.fileStatus') },
   { value: 'history' as const, label: t('git.commitHistory') },
@@ -532,6 +548,7 @@ async function copyText(value: string, successMessage: string) {
                 :project="activeProject"
                 :staged-ratio="stagedRatio"
                 @staged-split-mousedown="onStagedSplitMouseDown"
+                @open-file-history="handleOpenFileHistory"
               />
             </div>
           </div>
@@ -570,7 +587,11 @@ async function copyText(value: string, successMessage: string) {
           :class="selectedHistoryHash ? '' : 'flex-1'"
           :style="selectedHistoryHash ? { height: historyTopPane.size.value + 'px' } : undefined"
         >
-          <GitHistory :project="activeProject" />
+          <GitHistory
+            :project="activeProject"
+            :file-path="fileHistoryPath || undefined"
+            @clear-file-filter="clearFileHistoryFilter"
+          />
         </div>
 
         <!-- Drag handle: history list ↕ detail workspace -->

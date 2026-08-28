@@ -9,14 +9,22 @@ import { showPersistentGitError } from './message';
 
 const props = defineProps<{
   project: Project;
+  filePath?: string;
+}>();
+
+const emit = defineEmits<{
+  'clear-file-filter': [];
 }>();
 
 const { t } = useI18n();
 const gitStore = useGitStore();
 const settingsStore = useSettingsStore();
+const filePath = computed(() => props.filePath || '');
 
 const selectedHash = computed(() => gitStore.selectedCommitHash[props.project.id] || '');
-const allCommits = computed(() => gitStore.history[props.project.id] || []);
+const allCommits = computed(() => props.filePath
+  ? gitStore.getFileHistory(props.project.id, props.filePath)
+  : (gitStore.history[props.project.id] || []));
 const headerRef = ref<HTMLElement | null>(null);
 const listRef = ref<HTMLElement | null>(null);
 const loadingMore = ref(false);
@@ -206,7 +214,11 @@ async function loadMore() {
   const current = allCommits.value.length;
   const next = current + 100;
   requestedCount.value = next;
-  await gitStore.refreshHistory(props.project.id, props.project.path, next);
+  if (props.filePath) {
+    await gitStore.refreshFileHistory(props.project.id, props.project.path, props.filePath, next);
+  } else {
+    await gitStore.refreshHistory(props.project.id, props.project.path, next);
+  }
   const latest = (gitStore.history[props.project.id] || []).length;
   if (latest <= current || latest < next) {
     hasMore.value = false;
@@ -403,6 +415,12 @@ watch(allCommits, (newCommits, oldCommits) => {
     hasMore.value = true;
   }
 });
+
+watch(() => props.filePath, () => {
+  hasMore.value = true;
+  requestedCount.value = 100;
+  searchQuery.value = '';
+});
 </script>
 
 <template>
@@ -418,6 +436,17 @@ watch(allCommits, (newCommits, oldCommits) => {
       <span v-if="searchQuery.trim()" class="text-[10px] opacity-60 shrink-0">
         {{ commits.length }}/{{ allCommits.length }}
       </span>
+      <button
+        v-if="filePath"
+        type="button"
+        class="git-history-file-filter"
+        :title="t('git.clearFileHistoryFilter')"
+        @click="emit('clear-file-filter')"
+      >
+        <span class="i-mdi-file-search-outline" />
+        <span class="truncate max-w-[180px]">{{ filePath }}</span>
+        <span class="i-mdi-close text-xs" />
+      </button>
     </div>
 
     <!-- No commits -->

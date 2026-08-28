@@ -22,6 +22,213 @@ function runCmd(cmd) {
     });
 }
 
+const GIT_IMAGE_SIDE_MAX_SIZE = 10 * 1024 * 1024;
+const GIT_IMAGE_TOTAL_MAX_SIZE = 20 * 1024 * 1024;
+
+function normalizeRepoRelativePath(raw) {
+    const replaced = String(raw || '').replace(/\\/g, '/');
+    if (!replaced || replaced.startsWith('/') || /^[A-Za-z]:/.test(replaced) || replaced.includes('\0')) {
+        throw new Error(`Invalid repository-relative path: ${raw}`);
+    }
+    const parts = [];
+    for (const part of replaced.split('/')) {
+        if (!part || part === '.') continue;
+        if (part === '..') throw new Error(`Path escapes repository root: ${raw}`);
+        parts.push(part);
+    }
+    if (!parts.length) throw new Error(`Invalid repository-relative path: ${raw}`);
+    return parts.join('/');
+}
+
+function gitRepoRoot(projectPath) {
+    return execFileSync('git', ['rev-parse', '--show-toplevel'], {
+        cwd: projectPath, windowsHide: true,
+    }).toString().trim();
+}
+
+function escapeGitignoreComponent(value) {
+    const chars = Array.from(value);
+    return chars.map((char, index) => {
+        const needsEscape = (index === 0 && (char === '#' || char === '!'))
+            || ['\\', '*', '?', '[', ']'].includes(char)
+            || (index === chars.length - 1 && (char === ' ' || char === '\t'));
+        return needsEscape ? `\\${char}` : char;
+    }).join('');
+}
+
+function escapeGitignorePath(relative) {
+    return relative.split('/').map(escapeGitignoreComponent).join('/');
+}
+
+function buildGitIgnorePattern(root, rawPath, kind) {
+    const relative = normalizeRepoRelativePath(rawPath);
+    const fullPath = path.join(root, ...relative.split('/'));
+    if (kind === 'file') return `/${escapeGitignorePath(relative)}`;
+    const name = relative.split('/').pop();
+    if (kind === 'filename') return escapeGitignoreComponent(name);
+    if (kind === 'extension') {
+        const dot = name.lastIndexOf('.');
+        if (dot <= 0 || dot === name.length - 1) throw new Error(`File has no extension: ${relative}`);
+        return `*.${escapeGitignoreComponent(name.slice(dot + 1))}`;
+    }
+    if (kind === 'directory') {
+        const directory = fs.existsSync(fullPath) && fs.statSync(fullPath).isDirectory()
+            ? relative
+            : relative.includes('/') ? relative.slice(0, relative.lastIndexOf('/')) : '';
+        if (!directory) throw new Error(`File is in repository root: ${relative}`);
+        return `/${escapeGitignorePath(directory)}/`;
+    }
+    throw new Error(`Unsupported ignore kind: ${kind}`);
+}
+
+function atomicWriteUtf8(target, content) {
+    const parent = path.dirname(target);
+    fs.mkdirSync(parent, { recursive: true });
+    const temp = path.join(parent, `.${path.basename(target)}.${process.pid}.${Date.now()}.tmp`);
+    fs.writeFileSync(temp, content, 'utf8');
+    try {
+        fs.renameSync(temp, target);
+    } catch (error) {
+        // Windows cannot always replace an existing file with renameSync. Move the
+        // original aside first so a failed replacement never deletes it.
+        if (!fs.existsSync(target) || !fs.statSync(target).isFile()) {
+            try { fs.rmSync(temp, { force: true }); } catch (_) {}
+            throw error;
+        }
+        const backup = path.join(parent, `.${path.basename(target)}.${process.pid}.${Date.now()}.bak`);
+        try {
+            fs.renameSync(target, backup);
+            try {
+                fs.renameSync(temp, target);
+                try { fs.rmSync(backup, { force: true }); } catch (_) {}
+            } catch (replaceError) {
+                try {
+                    fs.renameSync(backup, target);
+                } catch (restoreError) {
+                    throw new Error(`${replaceError.message}; failed to restore original: ${restoreError.message}`);
+                }
+                throw replaceError;
+            }
+        } catch (replaceError) {
+            try { fs.rmSync(temp, { force: true }); } catch (_) {}
+            throw replaceError;
+        }
+    }
+}
+
+function appendGitIgnorePatterns(target, patterns) {
+    const original = fs.existsSync(target) ? fs.readFileSync(target, 'utf8') : '';
+    const eol = original.includes('\r\n') ? '\r\n' : '\n';
+    let content = original;
+    const added = [];
+    for (const pattern of patterns) {
+        if (!pattern || added.includes(pattern)) continue;
+        const exists = original.split(/\r?\n/).some((line) => line === pattern);
+        if (exists) continue;
+        if (content && !content.endsWith('\n')) content += eol;
+        content += pattern + eol;
+        added.push(pattern);
+    }
+    if (added.length) atomicWriteUtf8(target, content);
+    return added;
+}
+
+function gitIgnoreTarget(projectPath, root, local) {
+    if (!local) return path.join(root, '.gitignore');
+    const gitPath = execFileSync('git', ['rev-parse', '--git-path', 'info/exclude'], {
+        cwd: projectPath, windowsHide: true,
+    }).toString().trim();
+    return path.isAbsolute(gitPath) ? gitPath : path.join(root, gitPath);
+}
+
+function gitImageMime(file) {
+    switch (path.extname(file).toLowerCase()) {
+        case '.png': return 'image/png';
+        case '.jpg':
+        case '.jpeg': return 'image/jpeg';
+        case '.webp': return 'image/webp';
+        case '.gif': return 'image/gif';
+        case '.bmp': return 'image/bmp';
+        case '.svg': return 'image/svg+xml';
+        default: return null;
+    }
+}
+
+function validateGitCommitHash(hash) {
+    if (!/^[0-9a-f]{4,64}$/i.test(String(hash || ''))) throw new Error('Invalid Git commit hash');
+}
+
+function gitDiffSources(projectPath, file, staged, commit, oldPath) {
+    const relative = normalizeRepoRelativePath(file);
+    const previous = oldPath ? normalizeRepoRelativePath(oldPath) : null;
+    if (commit) {
+        validateGitCommitHash(commit);
+        execFileSync('git', ['rev-parse', '--verify', `${commit}^{commit}`], { cwd: projectPath, windowsHide: true });
+        const parents = execFileSync('git', ['rev-list', '--parents', '-n', '1', commit], {
+            cwd: projectPath, windowsHide: true,
+        }).toString().trim().split(/\s+/);
+        return {
+            before: parents[1] ? { source: 'commit', ref: parents[1], path: previous || relative } : null,
+            after: { source: 'commit', ref: commit, path: relative },
+        };
+    }
+
+    let tracked = true;
+    try {
+        execFileSync('git', ['ls-files', '--error-unmatch', '--', relative], { cwd: projectPath, windowsHide: true });
+    } catch (_) {
+        tracked = false;
+    }
+    if (!staged && !tracked) {
+        return { before: null, after: { source: 'worktree', path: relative } };
+    }
+    if (staged) {
+        return {
+            before: { source: 'head', path: previous || relative },
+            after: { source: 'index', path: relative },
+        };
+    }
+    return {
+        before: { source: 'index', path: previous || relative },
+        after: { source: 'worktree', path: relative },
+    };
+}
+
+function readGitBlob(projectPath, source) {
+    if (!source) return null;
+    if (source.source === 'worktree') {
+        const fullPath = path.join(gitRepoRoot(projectPath), ...source.path.split('/'));
+        if (!fs.existsSync(fullPath)) return null;
+        if (fs.statSync(fullPath).isDirectory()) throw new Error(`Cannot read directory as a file: ${source.path}`);
+        return fs.readFileSync(fullPath);
+    }
+    const spec = source.source === 'index' ? `:${source.path}`
+        : source.source === 'head' ? `HEAD:${source.path}`
+            : `${source.ref}:${source.path}`;
+    try {
+        return execFileSync('git', ['show', spec], { cwd: projectPath, windowsHide: true, encoding: null });
+    } catch (error) {
+        return null;
+    }
+}
+
+function readGitBlobSize(projectPath, source) {
+    if (!source) return null;
+    if (source.source === 'worktree') {
+        const fullPath = path.join(gitRepoRoot(projectPath), ...source.path.split('/'));
+        if (!fs.existsSync(fullPath)) return null;
+        return fs.statSync(fullPath).size;
+    }
+    const spec = source.source === 'index' ? `:${source.path}`
+        : source.source === 'head' ? `HEAD:${source.path}`
+            : `${source.ref}:${source.path}`;
+    try {
+        return Number(execFileSync('git', ['cat-file', '-s', spec], { cwd: projectPath, windowsHide: true }).toString().trim());
+    } catch (_) {
+        return null;
+    }
+}
+
 const PROJECT_SCAN_IGNORED_DIRS = new Set([
     'node_modules', '.git', '.svn', '.hg', 'dist', 'build', 'out',
     '.idea', '.vscode', '__pycache__', '.next', '.nuxt', 'target',
@@ -1403,6 +1610,19 @@ window.services = {
         platform.shellOpenPath(path);
     },
 
+    revealInFolder: async (filePath) => {
+        if (process.platform === 'win32') {
+            const normalized = filePath.replace(/\//g, '\\');
+            spawn('explorer.exe', ['/select,', normalized], { windowsHide: true });
+            return;
+        }
+        if (process.platform === 'darwin') {
+            spawn('open', ['-R', filePath]);
+            return;
+        }
+        platform.shellOpenPath(path.dirname(filePath));
+    },
+
     openInEditor: async (path, editor = 'code') => {
         // Validate editor: must be a simple command name or an absolute file path
         const isAbsolutePath = require('path').isAbsolute(editor);
@@ -2355,8 +2575,6 @@ $result | ConvertTo-Json -Compress`;
                 '--no-pager',
                 'log',
                 '--all',
-                `--since=${since}`,
-                `--before=${until}`,
                 '--format=%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s'
             ], {
                 cwd: projectPath, windowsHide: true, maxBuffer: 10 * 1024 * 1024
@@ -2372,6 +2590,8 @@ $result | ConvertTo-Json -Compress`;
 
             const author = parts[2];
             const email = parts[3];
+            const date = parts[4];
+            if (date < since || date >= until) continue;
             const matched = identity.email
                 ? email.toLowerCase() === identity.email.toLowerCase()
                 : author === identity.name;
@@ -2382,7 +2602,7 @@ $result | ConvertTo-Json -Compress`;
                 shortHash: parts[1],
                 author,
                 email,
-                date: parts[4],
+                date,
                 message: parts[5],
             });
         }
@@ -2482,6 +2702,120 @@ $result | ConvertTo-Json -Compress`;
             input: patch,
             stdio: ['pipe', 'pipe', 'pipe'],
         }).toString();
+    },
+
+    gitAddIgnorePattern: async (projectPath, files, kind, local) => {
+        const root = gitRepoRoot(projectPath);
+        const patterns = files.map((file) => buildGitIgnorePattern(root, file, kind));
+        return appendGitIgnorePatterns(gitIgnoreTarget(projectPath, root, Boolean(local)), patterns);
+    },
+
+    gitStopTracking: async (projectPath, files, kind, local) => {
+        const root = gitRepoRoot(projectPath);
+        const normalized = files.map(normalizeRepoRelativePath);
+        for (const file of normalized) {
+            execFileSync('git', ['ls-files', '--error-unmatch', '--', file], {
+                cwd: projectPath, windowsHide: true, stdio: 'pipe',
+            });
+        }
+        const patterns = normalized.map((file) => buildGitIgnorePattern(root, file, kind));
+        const ignoreFile = gitIgnoreTarget(projectPath, root, Boolean(local));
+        execFileSync('git', ['rm', '--cached', '--dry-run', '--'].concat(normalized), {
+            cwd: projectPath, windowsHide: true, stdio: 'pipe',
+        });
+        const added = appendGitIgnorePatterns(ignoreFile, patterns);
+        try {
+            return execFileSync('git', ['rm', '--cached', '--'].concat(normalized), {
+                cwd: projectPath, windowsHide: true,
+            }).toString();
+        } catch (error) {
+            const message = error.stderr ? error.stderr.toString() : error.message;
+            if (added.length) throw new Error(`Ignore rule was written, but stopping tracking failed: ${message}`);
+            throw error;
+        }
+    },
+
+    gitApplyHunk: async (projectPath, patch, mode) => {
+        if (Buffer.byteLength(String(patch), 'utf8') > GIT_IMAGE_TOTAL_MAX_SIZE
+            || !String(patch).includes('diff --git')
+            || !String(patch).split(/\r?\n/).some((line) => line.startsWith('index '))
+            || !String(patch).includes('@@')
+            || !String(patch).includes('--- ')
+            || !String(patch).includes('+++ ')) {
+            throw new Error('Patch does not contain a safe file diff header');
+        }
+        const args = ['apply', '--whitespace=nowarn'];
+        if (mode === 'stage') args.push('--cached');
+        else if (mode === 'unstage') args.push('--cached', '--reverse');
+        else if (mode === 'discard') args.push('--reverse');
+        else throw new Error(`Unsupported hunk mode: ${mode}`);
+        args.push('-');
+        return execFileSync('git', args, {
+            cwd: projectPath, windowsHide: true, input: patch,
+            stdio: ['pipe', 'pipe', 'pipe'],
+        }).toString();
+    },
+
+    gitGetImageDiff: async (projectPath, file, staged, commit, oldPath) => {
+        const relative = normalizeRepoRelativePath(file);
+        const root = gitRepoRoot(projectPath);
+        const sources = gitDiffSources(projectPath, relative, Boolean(staged), commit, oldPath);
+        const readSide = (side) => {
+            if (!side) return null;
+            const size = readGitBlobSize(projectPath, side);
+            if (size === null) return null;
+            if (size > GIT_IMAGE_SIDE_MAX_SIZE) throw new Error('too_large: image side exceeds 10 MB');
+            const bytes = readGitBlob(projectPath, side);
+            if (!bytes) return null;
+            if (bytes.length > GIT_IMAGE_SIDE_MAX_SIZE) throw new Error('too_large: image side exceeds 10 MB');
+            const mime = gitImageMime(side.path);
+            if (!mime) throw new Error(`Unsupported image format: ${side.path}`);
+            return { mime, base64: bytes.toString('base64'), size: bytes.length };
+        };
+        const before = readSide(sources.before);
+        const after = readSide(sources.after);
+        if ((before?.size || 0) + (after?.size || 0) > GIT_IMAGE_TOTAL_MAX_SIZE) {
+            throw new Error('too_large: image payload exceeds 20 MB');
+        }
+        void root;
+        return { kind: 'image', before, after };
+    },
+
+    gitGetBinaryDiffMeta: async (projectPath, file, staged, commit, oldPath) => {
+        const sources = gitDiffSources(projectPath, file, Boolean(staged), commit, oldPath);
+        const beforeSize = readGitBlobSize(projectPath, sources.before);
+        const afterSize = readGitBlobSize(projectPath, sources.after);
+        return {
+            kind: 'binary',
+            beforeSize,
+            afterSize,
+            beforeExists: beforeSize !== null,
+            afterExists: afterSize !== null,
+        };
+    },
+
+    gitFileHistory: async (projectPath, file, maxCount) => {
+        const relative = normalizeRepoRelativePath(file);
+        const count = Math.max(1, Number(maxCount) || 100);
+        let output = '';
+        try {
+            output = execFileSync('git', [
+                'log', '--follow', `--max-count=${count}`,
+                '--format=%H%x1f%h%x1f%an%x1f%ae%x1f%cn%x1f%aI%x1f%s%x1f%P%x1f%D',
+                '--', relative,
+            ], { cwd: projectPath, windowsHide: true }).toString();
+        } catch (error) {
+            output = error.stdout ? error.stdout.toString() : '';
+        }
+        return output.split('\n').filter(Boolean).map((line) => {
+            const parts = line.split('\x1f');
+            return {
+                hash: parts[0] || '', short_hash: parts[1] || '', author: parts[2] || '',
+                email: parts[3] || '', committer: parts[4] || '', date: parts[5] || '',
+                message: parts[6] || '', parents: parts[7] ? parts[7].split(' ') : [],
+                refs: parts[8] ? parts[8].split(', ').map((s) => s.trim()).filter(Boolean) : [],
+            };
+        });
     },
 
     gitMerge: async (projectPath, branch) => {

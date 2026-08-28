@@ -11,6 +11,10 @@ import type {
   GitTag,
   GitResetMode,
   GitPullStrategy,
+  GitIgnoreKind,
+  GitHunkMode,
+  GitImageDiffPayload,
+  GitBinaryDiffMeta,
 } from '../../types';
 
 // Declare global interface for uTools services
@@ -85,8 +89,15 @@ export class UToolsAdapter implements PlatformAPI {
             return (this.service as any).openInTerminal(path, terminal, nodePath, packageManager);
         }
         return this.service.openFolder(path);
-    }
+  }
   openFolder(path: string): Promise<void> { return this.service.openFolder(path); }
+  revealInFolder(path: string): Promise<void> {
+    const service = this.service as PlatformAPI & { revealInFolder?: (path: string) => Promise<void> };
+    if (typeof service.revealInFolder === 'function') return service.revealInFolder(path);
+    const separatorIndex = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+    const parent = separatorIndex > 0 ? path.slice(0, separatorIndex) : path;
+    return this.service.openFolder(parent);
+  }
   openUrl(url: string): Promise<void> { return this.service.openUrl(url); }
 
   readConfigFile(filename: string): Promise<string> { return this.service.readConfigFile(filename); }
@@ -299,7 +310,37 @@ export class UToolsAdapter implements PlatformAPI {
   }
   async gitCommitFiles(path: string, hash: string): Promise<GitCommitFile[]> { return this.service.gitCommitFiles(path, hash); }
   async gitDiffCommitFile(path: string, hash: string, file: string): Promise<string> { return this.service.gitDiffCommitFile(path, hash, file); }
-    async gitRevertHunk(path: string, patch: string, staged?: boolean): Promise<string> { return this.service.gitRevertHunk(path, patch, staged); }
+  async gitGetImageDiff(path: string, file: string, staged?: boolean, commit?: string, oldPath?: string): Promise<GitImageDiffPayload> {
+    const method = (this.service as any).gitGetImageDiff;
+    if (typeof method !== 'function') throw new Error('Image diff is not supported by this plugin runtime');
+    return method.call(this.service, path, file, staged, commit, oldPath);
+  }
+  async gitGetBinaryDiffMeta(path: string, file: string, staged?: boolean, commit?: string, oldPath?: string): Promise<GitBinaryDiffMeta> {
+    const method = (this.service as any).gitGetBinaryDiffMeta;
+    if (typeof method !== 'function') throw new Error('Binary diff metadata is not supported by this plugin runtime');
+    return method.call(this.service, path, file, staged, commit, oldPath);
+  }
+  async gitFileHistory(path: string, file: string, maxCount?: number): Promise<GitCommit[]> {
+    const method = (this.service as any).gitFileHistory;
+    if (typeof method !== 'function') throw new Error('File history is not supported by this plugin runtime');
+    return method.call(this.service, path, file, maxCount);
+  }
+  async gitAddIgnorePattern(path: string, files: string[], kind: GitIgnoreKind, local?: boolean): Promise<string[]> {
+    const method = (this.service as any).gitAddIgnorePattern;
+    if (typeof method !== 'function') throw new Error('Ignore rules are not supported by this plugin runtime');
+    return method.call(this.service, path, files, kind, local);
+  }
+  async gitStopTracking(path: string, files: string[], kind: GitIgnoreKind, local?: boolean): Promise<string> {
+    const method = (this.service as any).gitStopTracking;
+    if (typeof method !== 'function') throw new Error('Stop tracking is not supported by this plugin runtime');
+    return method.call(this.service, path, files, kind, local);
+  }
+  async gitApplyHunk(path: string, patch: string, mode: GitHunkMode): Promise<string> {
+    const method = (this.service as any).gitApplyHunk;
+    if (typeof method !== 'function') throw new Error('Hunk operations are not supported by this plugin runtime');
+    return method.call(this.service, path, patch, mode);
+  }
+  async gitRevertHunk(path: string, patch: string, staged?: boolean): Promise<string> { return this.service.gitRevertHunk(path, patch, staged); }
     async gitRemoteList(path: string): Promise<import('../../types').GitRemote[]> { return this.service.gitRemoteList(path); }
     async gitRemoteAdd(path: string, name: string, url: string): Promise<string> { return this.service.gitRemoteAdd(path, name, url); }
     async gitRemoteSetUrl(path: string, name: string, url: string): Promise<string> { return this.service.gitRemoteSetUrl(path, name, url); }

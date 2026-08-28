@@ -451,6 +451,30 @@ export interface GitTag {
 
 export type GitResetMode = 'soft' | 'mixed' | 'hard';
 export type GitPullStrategy = 'ff-only' | 'default';
+export type GitIgnoreKind = 'file' | 'filename' | 'extension' | 'directory';
+export type GitHunkMode = 'stage' | 'unstage' | 'discard';
+
+export interface GitImageSide {
+  mime: string;
+  base64: string;
+  size: number;
+  width?: number;
+  height?: number;
+}
+
+export interface GitImageDiffPayload {
+  kind: 'image';
+  before?: GitImageSide;
+  after?: GitImageSide;
+}
+
+export interface GitBinaryDiffMeta {
+  kind: 'binary';
+  beforeSize?: number;
+  afterSize?: number;
+  beforeExists: boolean;
+  afterExists: boolean;
+}
 
 export interface GitSummary {
   branch: string;

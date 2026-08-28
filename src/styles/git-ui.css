@@ -594,6 +594,114 @@ html.dark .git-module {
   cursor: not-allowed;
 }
 
+.git-module .git-diff-hunk-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.git-module .git-diff-hunk-action {
+  border: none;
+  border-radius: 5px;
+  padding: 2px 7px;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.git-module .git-diff-hunk-action:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.git-module .git-diff-hunk-action.is-stage {
+  color: var(--git-success);
+  background: color-mix(in srgb, var(--git-success) 10%, transparent);
+}
+
+.git-module .git-diff-hunk-action.is-stage:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--git-success) 18%, transparent);
+}
+
+.git-module .git-diff-hunk-action.is-unstage {
+  color: var(--git-accent);
+  background: color-mix(in srgb, var(--git-accent) 10%, transparent);
+}
+
+.git-module .git-diff-hunk-action.is-unstage:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--git-accent) 18%, transparent);
+}
+
+.git-module .git-diff-hunk-action.is-discard {
+  color: var(--git-danger);
+  background: color-mix(in srgb, var(--git-danger) 10%, transparent);
+}
+
+.git-module .git-diff-hunk-action.is-discard:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--git-danger) 18%, transparent);
+}
+
+.git-module .git-binary-fallback {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 24px;
+  color: var(--git-text-secondary);
+}
+
+.git-module .git-binary-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.git-module .git-binary-status {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--git-accent) 10%, transparent);
+  color: var(--git-accent);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.git-module .git-binary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(120px, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--git-border);
+  border-radius: var(--git-radius-md);
+  background: var(--git-border);
+}
+
+.git-module .git-binary-grid > div {
+  display: flex;
+  min-width: 120px;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 14px;
+  background: var(--git-panel);
+  font-size: 10px;
+}
+
+.git-module .git-binary-grid span {
+  color: var(--git-muted);
+}
+
+.git-module .git-binary-grid strong {
+  color: var(--git-text);
+  font-family: var(--git-mono);
+  font-size: 11px;
+}
+
 .git-module .git-diff-table {
   width: 100%;
   border-collapse: collapse;
@@ -664,6 +772,25 @@ html.dark .git-module {
 
 .git-module .git-history-search input::placeholder {
   color: var(--git-muted);
+}
+
+.git-module .git-history-file-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 250px;
+  min-height: 24px;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--git-accent) 35%, var(--git-border));
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--git-accent) 8%, transparent);
+  color: var(--git-accent);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.git-module .git-history-file-filter:hover {
+  background: color-mix(in srgb, var(--git-accent) 14%, transparent);
 }
 
 .git-module .git-history-header {

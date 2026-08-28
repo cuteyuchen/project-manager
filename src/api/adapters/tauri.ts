@@ -16,6 +16,10 @@ import type {
     GitTag,
     GitResetMode,
     GitPullStrategy,
+    GitIgnoreKind,
+    GitHunkMode,
+    GitImageDiffPayload,
+    GitBinaryDiffMeta,
 } from '../../types';
 
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -109,6 +113,10 @@ export class TauriAdapter implements PlatformAPI {
         } catch {
             return invoke('open_folder', { path });
         }
+    }
+
+    async revealInFolder(path: string): Promise<void> {
+        return invoke('reveal_in_folder', { path });
     }
 
     async openUrl(url: string): Promise<void> {
@@ -442,6 +450,30 @@ export class TauriAdapter implements PlatformAPI {
 
     async gitDiffCommitFile(path: string, hash: string, file: string): Promise<string> {
         return invoke('git_diff_commit_file', { path, hash, file });
+    }
+
+    async gitGetImageDiff(path: string, file: string, staged?: boolean, commit?: string, oldPath?: string): Promise<GitImageDiffPayload> {
+        return invoke('git_get_image_diff', { path, file, staged, commit, oldPath });
+    }
+
+    async gitGetBinaryDiffMeta(path: string, file: string, staged?: boolean, commit?: string, oldPath?: string): Promise<GitBinaryDiffMeta> {
+        return invoke('git_get_binary_diff_meta', { path, file, staged, commit, oldPath });
+    }
+
+    async gitFileHistory(path: string, file: string, maxCount?: number): Promise<GitCommit[]> {
+        return invoke('git_file_history', { path, file, maxCount });
+    }
+
+    async gitAddIgnorePattern(path: string, files: string[], kind: GitIgnoreKind, local?: boolean): Promise<string[]> {
+        return invoke('git_add_ignore_pattern', { path, files, kind, local });
+    }
+
+    async gitStopTracking(path: string, files: string[], kind: GitIgnoreKind, local?: boolean): Promise<string> {
+        return invoke('git_stop_tracking', { path, files, kind, local });
+    }
+
+    async gitApplyHunk(path: string, patch: string, mode: GitHunkMode): Promise<string> {
+        return invoke('git_apply_hunk', { path, patch, mode });
     }
 
     async gitRevertHunk(path: string, patch: string, staged?: boolean): Promise<string> {

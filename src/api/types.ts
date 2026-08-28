@@ -10,6 +10,10 @@ import type {
     GitTag,
     GitResetMode,
     GitPullStrategy,
+    GitIgnoreKind,
+    GitHunkMode,
+    GitImageDiffPayload,
+    GitBinaryDiffMeta,
 } from '../types';
 
 /** 包管理器解析结果 */
@@ -129,6 +133,7 @@ export interface PlatformAPI {
     openInEditor(path: string, editor?: string): Promise<void>;
     openInTerminal(path: string, terminal?: string, nodePath?: string, packageManager?: string): Promise<void>;
     openFolder(path: string): Promise<void>;
+    revealInFolder(path: string): Promise<void>;
     openUrl(url: string): Promise<void>;
 
     // Config / FS
@@ -238,6 +243,12 @@ export interface PlatformAPI {
     gitCommitDetail(path: string, hash: string): Promise<GitCommit>;
     gitCommitFiles(path: string, hash: string): Promise<GitCommitFile[]>;
     gitDiffCommitFile(path: string, hash: string, file: string): Promise<string>;
+    gitGetImageDiff(path: string, file: string, staged?: boolean, commit?: string, oldPath?: string): Promise<GitImageDiffPayload>;
+    gitGetBinaryDiffMeta(path: string, file: string, staged?: boolean, commit?: string, oldPath?: string): Promise<GitBinaryDiffMeta>;
+    gitFileHistory(path: string, file: string, maxCount?: number): Promise<GitCommit[]>;
+    gitAddIgnorePattern(path: string, files: string[], kind: GitIgnoreKind, local?: boolean): Promise<string[]>;
+    gitStopTracking(path: string, files: string[], kind: GitIgnoreKind, local?: boolean): Promise<string>;
+    gitApplyHunk(path: string, patch: string, mode: GitHunkMode): Promise<string>;
     gitRevertHunk(path: string, patch: string, staged?: boolean): Promise<string>;
     gitRemoteList(path: string): Promise<import('../types').GitRemote[]>;
     gitRemoteAdd(path: string, name: string, url: string): Promise<string>;

@@ -9,7 +9,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
 };
-use tauri::{Manager, Emitter};
+use tauri::{Emitter, Manager};
 use tempfile::NamedTempFile;
 
 #[cfg(windows)]
@@ -27,7 +27,9 @@ fn disable_browser_accelerator_keys<R: tauri::Runtime>(webview: tauri::Webview<R
             .and_then(|settings| settings.cast::<ICoreWebView2Settings3>())
             .and_then(|settings| settings.SetAreBrowserAcceleratorKeysEnabled(false));
         if let Err(error) = result {
-            eprintln!("Failed to disable WebView2 browser accelerator keys for {callback_label}: {error}");
+            eprintln!(
+                "Failed to disable WebView2 browser accelerator keys for {callback_label}: {error}"
+            );
         }
     }) {
         eprintln!("Failed to access WebView2 for {label}: {error}");
@@ -168,7 +170,7 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            None
+            None,
         ))
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             if args.len() > 1 {
@@ -207,6 +209,7 @@ pub fn run() {
             runner::install_pm,
             runner::resolve_pm,
             runner::open_folder,
+            runner::reveal_in_folder,
             runner::open_url,
             system::set_context_menu,
             system::check_context_menu,
@@ -264,6 +267,12 @@ pub fn run() {
             git::git_commit_detail,
             git::git_commit_files,
             git::git_diff_commit_file,
+            git::git_get_image_diff,
+            git::git_get_binary_diff_meta,
+            git::git_file_history,
+            git::git_add_ignore_pattern,
+            git::git_stop_tracking,
+            git::git_apply_hunk,
             git::git_revert_hunk,
             git::git_remote_list,
             git::git_remote_add,
@@ -278,10 +287,10 @@ pub fn run() {
 
     app.run(|app_handle, event| {
         if let tauri::RunEvent::ExitRequested { .. } = event {
-             let state = app_handle.state::<runner::ProcessState>();
-             let git_state = app_handle.state::<git::GitOperationState>();
-             runner::cleanup_processes(&state);
-             git::cleanup_git_processes(&git_state);
+            let state = app_handle.state::<runner::ProcessState>();
+            let git_state = app_handle.state::<git::GitOperationState>();
+            runner::cleanup_processes(&state);
+            git::cleanup_git_processes(&git_state);
         }
     });
 }

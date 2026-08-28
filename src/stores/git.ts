@@ -48,6 +48,11 @@ type GitOperationKind =
   | 'revertCommit'
   | 'stash'
   | 'tag'
+  | 'stageHunk'
+  | 'unstageHunk'
+  | 'discardHunk'
+  | 'ignore'
+  | 'stopTracking'
   | 'revertHunk'
   | 'discard'
   | 'discardUntracked';
@@ -58,6 +63,7 @@ export const useGitStore = defineStore('git', () => {
   const summary = ref<Record<string, GitSummary>>({});
   const status = ref<Record<string, GitStatusResult>>({});
   const history = ref<Record<string, GitCommit[]>>({});
+  const fileHistory = ref<Record<string, Record<string, GitCommit[]>>>({});
   const branches = ref<Record<string, GitBranch[]>>({});
   const commitDetails = ref<Record<string, Record<string, GitCommit>>>({});
 
@@ -100,6 +106,7 @@ export const useGitStore = defineStore('git', () => {
   const repoCheckTasks = new Map<string, Promise<boolean>>();
   const summaryStatusTasks = new Map<string, Promise<void>>();
   const historyTasks = new Map<string, Promise<void>>();
+  const fileHistoryTasks = new Map<string, Promise<void>>();
   let loadingCount = 0;
 
   // ─── Getters ─────────────────────────────────────────────────────────────
@@ -110,6 +117,10 @@ export const useGitStore = defineStore('git', () => {
 
   function getStatus(projectId: string): GitStatusResult | undefined {
     return status.value[projectId];
+  }
+
+  function getFileHistory(projectId: string, file: string): GitCommit[] {
+    return fileHistory.value[projectId]?.[file] || [];
   }
 
   /** 该项目当前正在查看的 diff；没有则返回共享空桶 */
@@ -288,6 +299,14 @@ export const useGitStore = defineStore('git', () => {
     }
   }
 
+  async function refreshAfterMutation(projectId: string, path: string): Promise<void> {
+    await Promise.all([
+      refreshSummary(projectId, path),
+      refreshStatus(projectId, path),
+    ]);
+    summaryStatusLoadedAt.value[projectId] = Date.now();
+  }
+
   async function refreshSummaryAndStatus(projectId: string, path: string): Promise<void> {
     if (!(await checkGitRepo(projectId, path, { force: true }))) {
       return;
@@ -310,6 +329,16 @@ export const useGitStore = defineStore('git', () => {
       historyLoadedAt.value[projectId] = Date.now();
     } catch (e) {
       console.error('Failed to get git history:', e);
+    }
+  }
+
+  async function refreshFileHistory(projectId: string, path: string, file: string, maxCount?: number): Promise<void> {
+    try {
+      const commits = await api.gitFileHistory(path, file, maxCount);
+      if (!fileHistory.value[projectId]) fileHistory.value[projectId] = {};
+      fileHistory.value[projectId][file] = commits;
+    } catch (e) {
+      console.error('Failed to get file history:', e);
     }
   }
 
@@ -404,6 +433,30 @@ export const useGitStore = defineStore('git', () => {
     }
   }
 
+  async function ensureFileHistory(
+    projectId: string,
+    path: string,
+    file: string,
+    options: { force?: boolean; maxCount?: number } = {},
+  ): Promise<void> {
+    if (!options.force && coldStorage.value) return;
+    if (!(await checkGitRepo(projectId, path, { force: options.force }))) return;
+
+    const key = `${projectId}:${file}`;
+    const existing = fileHistory.value[projectId]?.[file];
+    if (!options.force && existing) return;
+    const pendingTask = fileHistoryTasks.get(key);
+    if (pendingTask) return pendingTask;
+
+    const task = refreshFileHistory(projectId, path, file, options.maxCount);
+    fileHistoryTasks.set(key, task);
+    try {
+      await task;
+    } finally {
+      if (fileHistoryTasks.get(key) === task) fileHistoryTasks.delete(key);
+    }
+  }
+
   async function refreshBranches(projectId: string, path: string): Promise<void> {
     try {
       branches.value[projectId] = await api.gitListBranches(path);
@@ -437,28 +490,28 @@ export const useGitStore = defineStore('git', () => {
   async function stageFiles(projectId: string, path: string, files: string[]): Promise<void> {
     await withOperationLoading(projectId, 'stage', async () => {
       await api.gitStage(path, files);
-      await refreshStatus(projectId, path);
+      await refreshAfterMutation(projectId, path);
     });
   }
 
   async function unstageFiles(projectId: string, path: string, files: string[]): Promise<void> {
     await withOperationLoading(projectId, 'unstage', async () => {
       await api.gitUnstage(path, files);
-      await refreshStatus(projectId, path);
+      await refreshAfterMutation(projectId, path);
     });
   }
 
   async function stageAll(projectId: string, path: string): Promise<void> {
     await withOperationLoading(projectId, 'stageAll', async () => {
       await api.gitStageAll(path);
-      await refreshStatus(projectId, path);
+      await refreshAfterMutation(projectId, path);
     });
   }
 
   async function unstageAll(projectId: string, path: string): Promise<void> {
     await withOperationLoading(projectId, 'unstageAll', async () => {
       await api.gitUnstageAll(path);
-      await refreshStatus(projectId, path);
+      await refreshAfterMutation(projectId, path);
     });
   }
 
@@ -709,13 +762,20 @@ export const useGitStore = defineStore('git', () => {
     });
   }
 
-  async function getDiff(projectId: string, path: string, file?: string, staged?: boolean): Promise<string> {
+  async function getDiff(
+    projectId: string,
+    path: string,
+    file?: string,
+    staged?: boolean,
+    oldPath?: string,
+  ): Promise<string> {
     try {
       const result = await api.gitDiff(path, file, staged);
       writeDiffSelection(diffSelections.value, diffSelectionOrder, projectId, {
         content: result,
         file: file || '',
         staged: staged || false,
+        oldPath,
         source: 'worktree',
       });
       return result;
@@ -768,26 +828,100 @@ export const useGitStore = defineStore('git', () => {
     return commitDetails.value[projectId]?.[hash];
   }
 
-  async function getDiffCommitFile(projectId: string, path: string, hash: string, file: string): Promise<string> {
+  async function getDiffCommitFile(
+    projectId: string,
+    path: string,
+    hash: string,
+    file: string,
+    oldPath?: string,
+  ): Promise<string> {
     const result = await api.gitDiffCommitFile(path, hash, file);
     // 显式写 staged: false —— 原先漏写，会留下上一次工作区 diff 的 staged 值
     writeDiffSelection(diffSelections.value, diffSelectionOrder, projectId, {
       content: result,
       file,
       staged: false,
+      oldPath,
       source: { commit: hash },
     });
     return result;
   }
 
+  async function getImageDiff(
+    projectId: string,
+    path: string,
+    file: string,
+    staged?: boolean,
+    commit?: string,
+    oldPath?: string,
+  ) {
+    void projectId;
+    return api.gitGetImageDiff(path, file, staged, commit, oldPath);
+  }
+
+  async function getBinaryDiffMeta(
+    path: string,
+    file: string,
+    staged?: boolean,
+    commit?: string,
+    oldPath?: string,
+  ) {
+    return api.gitGetBinaryDiffMeta(path, file, staged, commit, oldPath);
+  }
+
   async function revertHunk(projectId: string, path: string, patch: string, staged?: boolean): Promise<string> {
     return withOperationLoading(projectId, 'revertHunk', async () => {
       const result = await api.gitRevertHunk(path, patch, staged);
-      await refreshStatus(projectId, path);
+      await refreshAfterMutation(projectId, path);
       const selection = getDiffSelection(projectId);
       if (selection.file && selection.source === 'worktree') {
-        await getDiff(projectId, path, selection.file, selection.staged);
+        await getDiff(projectId, path, selection.file, selection.staged, selection.oldPath);
       }
+      return result;
+    });
+  }
+
+  async function applyHunk(
+    projectId: string,
+    path: string,
+    patch: string,
+    mode: 'stage' | 'unstage' | 'discard',
+  ): Promise<string> {
+    return withOperationLoading(projectId, `${mode}Hunk`, async () => {
+      const result = await api.gitApplyHunk(path, patch, mode);
+      await refreshAfterMutation(projectId, path);
+      const selection = getDiffSelection(projectId);
+      if (selection.file && selection.source === 'worktree') {
+        await getDiff(projectId, path, selection.file, selection.staged, selection.oldPath);
+      }
+      return result;
+    });
+  }
+
+  async function addIgnorePattern(
+    projectId: string,
+    path: string,
+    files: string[],
+    kind: 'file' | 'filename' | 'extension' | 'directory',
+    local?: boolean,
+  ): Promise<string[]> {
+    return withOperationLoading(projectId, 'ignore', async () => {
+      const patterns = await api.gitAddIgnorePattern(path, files, kind, local);
+      await refreshAfterMutation(projectId, path);
+      return patterns;
+    });
+  }
+
+  async function stopTracking(
+    projectId: string,
+    path: string,
+    files: string[],
+    kind: 'file' | 'filename' | 'extension' | 'directory',
+    local?: boolean,
+  ): Promise<string> {
+    return withOperationLoading(projectId, 'stopTracking', async () => {
+      const result = await api.gitStopTracking(path, files, kind, local);
+      await refreshAfterMutation(projectId, path);
       return result;
     });
   }
@@ -795,7 +929,7 @@ export const useGitStore = defineStore('git', () => {
   async function discardFiles(projectId: string, path: string, files: string[]): Promise<void> {
     await withOperationLoading(projectId, 'discard', async () => {
       await api.gitDiscard(path, files);
-      await refreshStatus(projectId, path);
+      await refreshAfterMutation(projectId, path);
     });
   }
 
@@ -846,7 +980,7 @@ export const useGitStore = defineStore('git', () => {
   async function discardUntracked(projectId: string, path: string, files: string[]): Promise<void> {
     await withOperationLoading(projectId, 'discardUntracked', async () => {
       await api.gitDiscardUntracked(path, files);
-      await refreshStatus(projectId, path);
+      await refreshAfterMutation(projectId, path);
     });
   }
 
@@ -873,6 +1007,7 @@ export const useGitStore = defineStore('git', () => {
     prune(summary.value);
     prune(status.value);
     prune(history.value);
+    prune(fileHistory.value);
     prune(branches.value);
     prune(commitDetails.value);
     prune(commitFiles.value);
@@ -890,6 +1025,7 @@ export const useGitStore = defineStore('git', () => {
     summary,
     status,
     history,
+    fileHistory,
     branches,
     commitDetails,
     diffSelections,
@@ -907,6 +1043,7 @@ export const useGitStore = defineStore('git', () => {
     // Getters
     getSummary,
     getStatus,
+    getFileHistory,
     getBranches,
     getLocalBranches,
     getRemoteBranches,
@@ -921,9 +1058,11 @@ export const useGitStore = defineStore('git', () => {
     refreshStatus,
     refreshSummaryAndStatus,
     refreshHistory,
+    refreshFileHistory,
     refreshRepositoryState,
     ensureSummaryAndStatus,
     ensureHistory,
+    ensureFileHistory,
     refreshBranches,
     refreshCommitFiles,
     refreshCommitDetail,
@@ -962,6 +1101,11 @@ export const useGitStore = defineStore('git', () => {
     getDiff,
     getDiffCommit,
     getDiffCommitFile,
+    getImageDiff,
+    getBinaryDiffMeta,
+    applyHunk,
+    addIgnorePattern,
+    stopTracking,
     revertHunk,
     discardFiles,
     discardUntracked,

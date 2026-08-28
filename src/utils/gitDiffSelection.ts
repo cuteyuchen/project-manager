@@ -11,6 +11,8 @@ export interface GitDiffSelection {
   file: string;
   /** 是否在看已暂存的差异 */
   staged: boolean;
+  /** 重命名提交或状态的旧路径，用于读取正确的 before blob */
+  oldPath?: string;
   /**
    * 来源。changes 与 history 两个页签共用同一个桶，
    * 靠这个字段区分「工作区 diff」与「某次提交里的 diff」——
