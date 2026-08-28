@@ -1,21 +1,29 @@
 <script setup lang="ts">
 /***********************快速管理弹窗*********************/
-import { computed, nextTick, useTemplateRef, watch } from 'vue';
+import { computed, nextTick, ref, useTemplateRef, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Project, WorkspaceTab } from '../../types';
+import type { ProjectGitOverview } from '../../utils/projectGitOverview';
 import ProjectManagementPanel from './ProjectManagementPanel.vue';
+import ProjectSwitcherPopover from './ProjectSwitcherPopover.vue';
 import { useProjectExternalActions } from '../../composables/useProjectExternalActions';
 
 const props = withDefaults(defineProps<{
   modelValue: boolean;
   project: Project | null;
+  projects: readonly Project[];
+  gitOverviewById?: Readonly<Record<string, ProjectGitOverview | undefined>>;
+  runningCountByProjectId?: Readonly<Record<string, number>>;
   initialTab?: WorkspaceTab | null;
 }>(), {
   initialTab: null,
+  gitOverviewById: undefined,
+  runningCountByProjectId: undefined,
 });
 
 const emit = defineEmits<{
   (event: 'update:modelValue', value: boolean): void;
+  (event: 'select-project', project: Project): void;
   (event: 'open-workspace', project: Project): void;
   (event: 'edit', project: Project): void;
 }>();
@@ -27,6 +35,7 @@ const visible = computed({
 });
 const managementPanel = useTemplateRef<InstanceType<typeof ProjectManagementPanel>>('managementPanel');
 const { openEditor, openTerminal, openFolder } = useProjectExternalActions(() => props.project);
+const switcherVisible = ref(false);
 
 /***********************弹窗尺寸*********************/
 /**
@@ -49,7 +58,7 @@ watch(() => props.modelValue, (opened) => {
 });
 
 watch(() => props.project?.id, () => {
-  if (props.modelValue) activatePanel();
+  switcherVisible.value = false;
 });
 
 watch(() => props.initialTab, () => {
@@ -60,6 +69,11 @@ function openWorkspace(): void {
   if (!props.project) return;
   emit('open-workspace', props.project);
   visible.value = false;
+}
+
+function selectProject(project: Project): void {
+  switcherVisible.value = false;
+  emit('select-project', project);
 }
 
 function editProject(): void {
@@ -83,27 +97,55 @@ function editProject(): void {
     <template #header>
       <div class="project-management-dialog-header">
         <div class="project-management-dialog-heading min-w-0">
-          <div class="project-management-dialog-title truncate">{{ project?.name }}</div>
+          <el-popover
+            v-model:visible="switcherVisible"
+            placement="bottom-start"
+            :width="360"
+            :teleported="false"
+            :disabled="!project"
+            popper-class="project-switcher-popper"
+          >
+            <ProjectSwitcherPopover
+              :projects="projects"
+              :current-project-id="project?.id"
+              :git-overview-by-id="gitOverviewById"
+              :running-count-by-project-id="runningCountByProjectId"
+              @select="selectProject"
+            />
+            <template #reference>
+              <button
+                type="button"
+                class="project-management-dialog-title"
+                :title="project?.name"
+                :disabled="!project"
+                @click.stop
+              >
+                <span class="truncate">{{ project?.name }}</span>
+                <div class="i-mdi-chevron-down text-sm shrink-0" aria-hidden="true" />
+              </button>
+            </template>
+          </el-popover>
           <div class="project-management-dialog-path truncate">{{ project?.path }}</div>
         </div>
         <div class="project-management-dialog-actions" @click.stop>
-          <button class="project-management-dialog-action" :title="t('dashboard.openInEditor')" @click.stop="openEditor">
+          <button type="button" class="project-management-dialog-action" :title="t('dashboard.openInEditor')" @click.stop="openEditor">
             <div class="i-mdi-code-tags text-sm" />
             <span>{{ t('dashboard.openInEditor') }}</span>
           </button>
-          <button class="project-management-dialog-action" :title="t('dashboard.openInTerminal')" @click.stop="openTerminal">
+          <button type="button" class="project-management-dialog-action" :title="t('dashboard.openInTerminal')" @click.stop="openTerminal">
             <div class="i-mdi-console-line text-sm" />
             <span>{{ t('dashboard.openInTerminal') }}</span>
           </button>
-          <button class="project-management-dialog-action" :title="t('dashboard.openInExplorer')" @click.stop="openFolder">
+          <button type="button" class="project-management-dialog-action" :title="t('dashboard.openInExplorer')" @click.stop="openFolder">
             <div class="i-mdi-folder-open text-sm" />
             <span>{{ t('dashboard.openInExplorer') }}</span>
           </button>
-          <button class="project-management-dialog-action" :title="t('project.editProject')" @click.stop="editProject">
+          <button type="button" class="project-management-dialog-action" :title="t('project.editProject')" @click.stop="editProject">
             <div class="i-mdi-pencil text-sm" />
             <span>{{ t('project.editProject') }}</span>
           </button>
           <button
+            type="button"
             class="project-management-dialog-action project-management-dialog-workspace"
             :title="t('dashboard.openFullWorkspace')"
             @click.stop="openWorkspace"
@@ -150,9 +192,25 @@ function editProject(): void {
   flex-wrap: wrap;
 }
 .project-management-dialog-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 2px 6px;
+  border: none;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
   color: var(--app-text);
   font-size: 15px;
   font-weight: 700;
+  text-align: left;
+}
+.project-management-dialog-title:hover:not(:disabled) {
+  background: var(--app-primary-soft);
+  color: var(--app-primary);
+}
+.project-management-dialog-title:disabled {
+  cursor: default;
 }
 .project-management-dialog-path {
   margin-top: 2px;
@@ -173,6 +231,7 @@ function editProject(): void {
   color: var(--app-text-secondary);
   font-size: 12px;
   font-weight: 600;
+  cursor: pointer;
 }
 .project-management-dialog-action:hover {
   border-color: color-mix(in srgb, var(--app-primary) 40%, transparent);
@@ -220,7 +279,8 @@ function editProject(): void {
   display: flex;
   flex-direction: column;
   width: min(80vw, calc(100vw - 32px));
-  height: 80vh;
+  height: min(80vh, calc(100vh - 32px));
+  min-height: 0;
   max-width: calc(100vw - 32px);
   max-height: calc(100vh - 32px);
   overflow: hidden;
@@ -231,7 +291,7 @@ function editProject(): void {
   width: 100%;
   box-sizing: border-box;
   margin-right: 0;
-  padding: 16px 48px 12px 20px;
+  padding: 16px 20px 12px;
   border-bottom: 1px solid var(--app-border);
 }
 
@@ -245,5 +305,10 @@ function editProject(): void {
   box-sizing: border-box;
   padding: 0;
   overflow: hidden;
+}
+
+.project-switcher-popper {
+  max-width: calc(100vw - 48px) !important;
+  box-sizing: border-box;
 }
 </style>

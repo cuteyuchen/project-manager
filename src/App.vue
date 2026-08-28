@@ -867,7 +867,7 @@ watch(
 </script>
 
 <template>
-  <div class="app-shell">
+  <div class="app-shell" :class="{ 'app-shell-with-titlebar': !isPlugin }">
     <div class="app-background-layer" :style="appBackgroundStyle" aria-hidden="true" />
     <TitleBar v-if="!isPlugin" />
 

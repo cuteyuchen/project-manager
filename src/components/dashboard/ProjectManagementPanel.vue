@@ -39,6 +39,10 @@ const hasGitRepo = computed(() => {
   const projectId = activeProject.value?.id;
   return projectId ? gitStore.isGitRepo[projectId] === true : false;
 });
+const gitCapabilityKnown = computed(() => {
+  const projectId = activeProject.value?.id;
+  return !projectId || projectId in gitStore.isGitRepo;
+});
 const hasRunnableCommands = computed(() => {
   const project = activeProject.value;
   if (!project) return false;
@@ -59,6 +63,8 @@ const defaultTab = computed<WorkspaceTab>(() => {
   return 'files';
 });
 const activeTab = ref<WorkspaceTab>('files');
+const isResolvingTab = ref(false);
+let preserveTabForProjectId: string | null = null;
 
 function resolveInitialTab(tab?: WorkspaceTab | null): WorkspaceTab {
   const project = activeProject.value;
@@ -69,15 +75,23 @@ function resolveInitialTab(tab?: WorkspaceTab | null): WorkspaceTab {
   );
 }
 
-async function activate(tab?: WorkspaceTab | null): Promise<void> {
+async function activate(
+  tab?: WorkspaceTab | null,
+  options: { forceGitCheck?: boolean } = {},
+): Promise<void> {
   const project = activeProject.value;
-  // 首次进入时先确认仓库能力，避免 Git 项目在异步检查完成前被错误落到 Files。
-  if (project && gitStore.isGitRepo[project.id] === undefined) {
-    await gitStore.checkGitRepo(project.id, project.path);
-    if (activeProject.value?.id !== project.id) return;
+  isResolvingTab.value = true;
+  try {
+    // 先确认仓库能力，避免切项目时 Git 先被当作不可用而丢掉当前页签。
+    if (project && (options.forceGitCheck || !gitCapabilityKnown.value)) {
+      await gitStore.checkGitRepo(project.id, project.path, { force: options.forceGitCheck });
+      if (activeProject.value?.id !== project.id) return;
+    }
+    activeTab.value = resolveInitialTab(tab);
+    void nextTick(checkTabOverflow);
+  } finally {
+    isResolvingTab.value = false;
   }
-  activeTab.value = resolveInitialTab(tab);
-  void nextTick(checkTabOverflow);
 }
 
 function selectTab(tab: WorkspaceTab, remember = true): void {
@@ -88,21 +102,34 @@ function selectTab(tab: WorkspaceTab, remember = true): void {
   }
 }
 
-watch(() => activeProject.value?.id, () => {
-  activeTab.value = 'files';
-  void activate(props.initialTab);
+watch(
+  () => [activeProject.value?.id, activeProject.value?.path] as const,
+  ([projectId, projectPath], previous) => {
+  const [previousProjectId, previousProjectPath] = previous || [];
+  const firstActivation = previous === undefined;
+  const pathChanged = !firstActivation
+    && projectId === previousProjectId
+    && projectPath !== previousProjectPath;
+  const preferredTab = firstActivation ? props.initialTab : activeTab.value;
+  if (!firstActivation && projectId) preserveTabForProjectId = projectId;
+  void activate(preferredTab, { forceGitCheck: pathChanged }).finally(() => {
+    if (preserveTabForProjectId === projectId) preserveTabForProjectId = null;
+  });
 
   const project = activeProject.value;
   if (project) {
-    void gitStore.ensureSummaryAndStatus(project.id, project.path);
+    void gitStore.ensureSummaryAndStatus(project.id, project.path, { force: pathChanged });
   }
-}, { immediate: true });
+  },
+  { immediate: true },
+);
 
 watch(() => props.initialTab, (tab, previous) => {
   if (tab !== previous) void activate(tab);
 });
 
 watch([hasRunnableCommands, hasGitRepo, hasFrontendEnv, leafTabsDisabled, activeTab], () => {
+  if (isResolvingTab.value || !gitCapabilityKnown.value) return;
   const next = resolveWorkspaceTabFallback(activeTab.value, tabCapabilities.value);
   if (next !== activeTab.value) activeTab.value = next;
 });
@@ -113,7 +140,7 @@ watch(() => projectStore.requestedRightTabToken, () => {
   const requestedProjectId = projectStore.requestedRightTabProjectId;
   const requestedTab = projectStore.requestedRightTab;
   if (project && requestedProjectId === project.id && requestedTab) {
-    selectTab(requestedTab, false);
+    void activate(requestedTab);
   }
 });
 
@@ -122,6 +149,11 @@ watch(() => {
   const projectId = activeProject.value?.id;
   return projectId ? navMemory.memory.leafTab[projectId] : undefined;
 }, (tab) => {
+  if (isResolvingTab.value || !gitCapabilityKnown.value) return;
+  if (preserveTabForProjectId === activeProject.value?.id) {
+    preserveTabForProjectId = null;
+    return;
+  }
   if (tab) selectTab(tab, false);
 });
 
@@ -290,7 +322,16 @@ defineExpose({ activate });
   box-shadow: inset 0 -1px 0 var(--app-border);
 }
 .project-management-panel-titleless {
-  padding-left: 10px;
+  padding-left: 20px;
+  padding-right: 20px;
+}
+.project-management-panel {
+  flex: 1 1 0%;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  box-sizing: border-box;
 }
 .project-title-group {
   padding: 3px 6px 3px 3px;

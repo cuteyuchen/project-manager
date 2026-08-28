@@ -31,8 +31,8 @@ import {
     DEFAULT_REFRESH_PROJECTS_SHORTCUT,
 } from '../utils/shortcut.ts';
 import { collectProjectTags, projectMatchesSelectedTags } from '../utils/projectTags';
-import { pinyin } from 'pinyin-pro';
 import { summarizeGitStatus, type ProjectGitOverview } from '../utils/projectGitOverview';
+import { buildProjectSearchEntry, projectSearchEntryMatches } from '../utils/projectSearch';
 import {
     collectAutoExpandedProjectIds,
     collectVisibleProjectIds,
@@ -246,7 +246,6 @@ onBeforeUnmount(() => {
     projectListResizeObserver?.disconnect();
     projectItemResizeObserver?.disconnect();
     projectItemElements.clear();
-    projectPinyinCache.clear();
 });
 
 //************* 搜索功能 *************
@@ -283,26 +282,6 @@ function toggleHealthFilter(key: QuickFilter) {
 
 /** 聚合所有项目标签用于筛选下拉 */
 const allTags = computed(() => collectProjectTags(projectStore.projects));
-
-function buildPinyinSearchText(text: string): string {
-    if (!text) return '';
-    const syllables = pinyin(text, { toneType: 'none', type: 'array' }) as string[];
-    const full = syllables.join('');
-    const initials = syllables.map(s => s[0] || '').join('');
-    return `${full} ${initials}`.toLowerCase();
-}
-
-const projectPinyinCache = new Map<string, string>();
-
-function getCachedPinyinSearchText(text: string) {
-    if (!text) return '';
-    const cached = projectPinyinCache.get(text);
-    if (cached) return cached;
-
-    const next = buildPinyinSearchText(text);
-    projectPinyinCache.set(text, next);
-    return next;
-}
 
 const sortMode = computed(() => settingsStore.settings.sortMode ?? 'default');
 
@@ -357,37 +336,16 @@ const sortedProjects = computed(() => {
 
 const projectSearchIndex = computed(() => projectStore.projects.map(project => ({
     project,
-    normalizedName: project.name.toLowerCase(),
-    normalizedPath: project.path.toLowerCase(),
-    compactName: project.name.toLowerCase().replace(/\s+/g, ''),
-    compactPath: project.path.toLowerCase().replace(/\s+/g, ''),
-    namePinyin: getCachedPinyinSearchText(project.name),
-    pathPinyin: getCachedPinyinSearchText(project.path),
-    normalizedDescription: (project.description || '').toLowerCase(),
-    normalizedTags: (project.tags || []).join(' ').toLowerCase(),
-    normalizedScripts: (project.scripts || []).join(' ').toLowerCase(),
-    normalizedCustomCommands: (project.customCommands || []).map(c => c.name).join(' ').toLowerCase(),
+    ...buildProjectSearchEntry(project),
 })));
 const projectSearchIndexById = computed(() => new Map(
     projectSearchIndex.value.map(entry => [entry.project.id, entry]),
 ));
 
 function matchesProjectSearch(project: Project): boolean {
-    const query = searchQuery.value.trim().toLowerCase();
-    if (!query) return true;
-    const compactQuery = query.replace(/\s+/g, '');
     const entry = projectSearchIndexById.value.get(project.id);
     if (!entry) return false;
-    return entry.normalizedName.includes(query)
-        || entry.normalizedPath.includes(query)
-        || entry.compactName.includes(compactQuery)
-        || entry.compactPath.includes(compactQuery)
-        || entry.namePinyin.includes(compactQuery)
-        || entry.pathPinyin.includes(compactQuery)
-        || entry.normalizedDescription.includes(query)
-        || entry.normalizedTags.includes(query)
-        || entry.normalizedScripts.includes(compactQuery)
-        || entry.normalizedCustomCommands.includes(compactQuery);
+    return projectSearchEntryMatches(entry, searchQuery.value);
 }
 
 function matchesProjectFilter(project: Project): boolean {
@@ -953,7 +911,11 @@ useAppShortcuts([
     <ProjectManagementDialog
         v-model="showManagementDialog"
         :project="managementProject"
+        :projects="projectStore.projects"
+        :git-overview-by-id="gitOverviewById"
+        :running-count-by-project-id="projectStore.runningSubtreeCount"
         :initial-tab="managementInitialTab"
+        @select-project="managementProjectId = $event.id"
         @open-workspace="openProjectWorkspace"
         @edit="openEditModal"
     />

@@ -24,7 +24,11 @@ for (const icon of ['i-mdi-pin', 'i-mdi-code-tags', 'i-mdi-console-line', 'i-mdi
 /***********************Dialog 与共享面板*********************/
 assert(/align-center/.test(dialog), '快速管理弹窗应使用 Element Plus 居中能力');
 assert(/width="min\(80vw, calc\(100vw - 32px\)\)"/.test(dialog), '快速管理弹窗默认宽度应限制为 80vw 与安全边距的较小值');
-assert(/height: 'min\(80vh, calc\(100vh - 32px\)\)'/.test(dialog) && /height: 80vh/.test(dialog), '快速管理弹窗应固定为窗口高度的 80%');
+assert(
+  /height: 'min\(80vh, calc\(100vh - 32px\)\)'/.test(dialog)
+  && /height: min\(80vh, calc\(100vh - 32px\)\)/.test(dialog),
+  '快速管理弹窗应固定为窗口高度的 80%并受安全边距限制',
+);
 assert(/maxHeight: 'calc\(100vh - 32px\)'/.test(dialog), '快速管理弹窗小窗口时仍应受安全高度限制');
 assert(!/margin:\s*0 auto/.test(dialog) && !/margin:\s*-/.test(dialog), 'Dialog 不应覆盖 Element Plus 的居中 margin');
 assert(/\.project-management-dialog-body \{[\s\S]*flex: 1 1 auto[\s\S]*height: 100%[\s\S]*min-height: 0/.test(dialog), 'Dialog body 承载层应填满扣除 Header 后的剩余高度');

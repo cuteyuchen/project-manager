@@ -10,6 +10,7 @@
   --app-surface: #ffffff;
   --app-surface-soft: #f8fafc;
   --app-surface-raised: rgba(255, 255, 255, 0.94);
+  --app-popup-surface: #ffffff;
   --app-dialog-surface: rgba(255, 255, 255, 0.9);
   --app-dialog-overlay: rgba(15, 23, 42, 0.38);
   --app-content-max: 1440px;
@@ -39,6 +40,7 @@
   --app-z-sticky: 20;
   --app-z-overlay: 50;
   --app-z-modal: 1000;
+  --app-titlebar-height: 32px;
 
   --el-color-primary: var(--app-primary);
   --el-color-success: var(--app-success);
@@ -49,7 +51,7 @@
   --el-border-color-light: var(--app-border);
   --el-border-color-lighter: rgba(203, 213, 225, 0.6);
   --el-bg-color: var(--app-surface);
-  --el-bg-color-overlay: var(--app-surface);
+  --el-bg-color-overlay: var(--app-popup-surface);
   --el-fill-color-blank: var(--app-surface);
   --el-text-color-primary: var(--app-text);
   --el-text-color-regular: var(--app-text-secondary);
@@ -62,6 +64,7 @@ html.dark {
   --app-surface: #111827;
   --app-surface-soft: #172033;
   --app-surface-raised: rgba(17, 24, 39, 0.94);
+  --app-popup-surface: #111827;
   --app-dialog-surface: rgba(17, 24, 39, 0.92);
   --app-dialog-overlay: rgba(2, 6, 23, 0.56);
   --app-border: rgba(100, 116, 139, 0.28);
@@ -80,7 +83,7 @@ html.dark {
   --app-shadow-lg: 0 18px 46px rgba(2, 6, 23, 0.38);
 
   --el-bg-color: var(--app-surface) !important;
-  --el-bg-color-overlay: var(--app-surface) !important;
+  --el-bg-color-overlay: var(--app-popup-surface) !important;
   --el-border-color: var(--app-border) !important;
   --el-border-color-light: var(--app-border) !important;
   --el-border-color-lighter: var(--app-border) !important;
@@ -616,6 +619,40 @@ html.has-custom-background .commit-day-muted {
   background-color: var(--app-dialog-overlay) !important;
   backdrop-filter: blur(5px);
   -webkit-backdrop-filter: blur(5px);
+}
+
+/*
+ * Dialog overlay 被 append 到 body，而标题栏属于 #app 内部。
+ * 让 overlay 从标题栏底部开始铺设，避免依赖跨容器 z-index 竞争。
+ */
+body:has(.app-shell-with-titlebar) .el-overlay {
+  top: var(--app-titlebar-height);
+  height: calc(100% - var(--app-titlebar-height));
+  box-sizing: border-box;
+}
+
+/* align-center 在剩余窗口区域内计算，而不是以整个 viewport 为基准。 */
+body:has(.app-shell-with-titlebar) .el-overlay-dialog {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  box-sizing: border-box;
+  padding-top: 0;
+}
+
+/* 下拉/Popover 必须是不透明的，避免自定义背景透过选项文字造成串色。 */
+.el-popper.is-light {
+  background-color: var(--app-popup-surface) !important;
+  background-image: none !important;
+  opacity: 1 !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.el-popper.is-light .el-popper__arrow::before {
+  background-color: var(--app-popup-surface) !important;
 }
 
 .el-dialog__header,

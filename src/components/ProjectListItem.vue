@@ -237,45 +237,6 @@ function handleDelete() {
                         :title="runningTitle"
                     />
                 </div>
-                <div v-if="treeMode && (treeQuickCommands.length > 0 || gitOverview?.isGitRepo || isRunning)" class="project-tree-highlights" @click.stop>
-                    <button
-                        v-for="command in treeQuickCommands"
-                        :key="`${command.type}:${command.id}`"
-                        class="project-quick-command"
-                        :class="{ 'project-quick-command-running': isQuickCommandRunning(command) }"
-                        :title="isQuickCommandRunning(command) ? t('dashboard.stop') : t('dashboard.start')"
-                        @click.stop="toggleQuickCommand(command)"
-                    >
-                        <div :class="isQuickCommandRunning(command) ? 'i-mdi-stop' : 'i-mdi-play'" class="text-[10px]" />
-                        <span class="truncate">{{ getQuickCommandLabel(command) }}</span>
-                    </button>
-                    <button
-                        v-if="gitOverview?.isGitRepo"
-                        class="project-git-summary"
-                        :class="{ 'project-git-summary-dirty': !gitOverview.clean }"
-                        :title="t('dashboard.openGitOverview')"
-                        @click.stop="emit('open-git', project)"
-                    >
-                        <span>{{ t('git.title') }}</span>
-                        <template v-if="gitOverview.isGitRepo && !gitOverview.clean">
-                            <span v-if="gitOverview.modified > 0">M{{ gitOverview.modified }}</span>
-                            <span v-if="gitOverview.added > 0">A{{ gitOverview.added }}</span>
-                            <span v-if="gitOverview.deleted > 0">D{{ gitOverview.deleted }}</span>
-                            <span v-if="gitOverview.conflicted > 0" class="project-git-conflict">!{{ gitOverview.conflicted }}</span>
-                        </template>
-                        <span v-else-if="gitOverview.isGitRepo">{{ t('dashboard.gitClean') }}</span>
-                    </button>
-                    <button
-                        v-if="isRunning"
-                        class="project-running-summary"
-                        :class="{ 'project-running-summary-descendant': isDescendantOnlyRunning }"
-                        :title="runningTitle"
-                        @click.stop="emit('open-running', project)"
-                    >
-                        <span class="project-running-summary-dot" />
-                        <span>{{ subtreeRunningCount }}</span>
-                    </button>
-                </div>
                 <div v-if="project.description || displayTags.length > 0 || groupName" class="project-row-meta">
                     <span v-if="project.description" class="text-[10px] text-slate-400 dark:text-slate-500 truncate max-w-40" :title="project.description">
                         {{ project.description }}
@@ -293,6 +254,50 @@ function handleDelete() {
                         {{ groupName }}
                     </span>
                 </div>
+            </div>
+
+            <!-- ─── 树行中右侧：快捷命令 / Git / 运行状态 ──────────── -->
+            <div v-if="treeMode && (treeQuickCommands.length > 0 || gitOverview?.isGitRepo || isRunning)" class="project-tree-highlights" @click.stop>
+                <button
+                    v-for="command in treeQuickCommands"
+                    :key="`${command.type}:${command.id}`"
+                    type="button"
+                    class="project-quick-command"
+                    :class="{ 'project-quick-command-running': isQuickCommandRunning(command) }"
+                    :title="isQuickCommandRunning(command) ? t('dashboard.stop') : t('dashboard.start')"
+                    @click.stop="toggleQuickCommand(command)"
+                >
+                    <div :class="isQuickCommandRunning(command) ? 'i-mdi-stop' : 'i-mdi-play'" class="text-[10px]" />
+                    <span class="truncate">{{ getQuickCommandLabel(command) }}</span>
+                </button>
+                <button
+                    v-if="gitOverview?.isGitRepo"
+                    type="button"
+                    class="project-git-summary"
+                    :class="{ 'project-git-summary-dirty': !gitOverview.clean }"
+                    :title="t('dashboard.openGitOverview')"
+                    @click.stop="emit('open-git', project)"
+                >
+                    <span>{{ t('git.title') }}</span>
+                    <template v-if="gitOverview.isGitRepo && !gitOverview.clean">
+                        <span v-if="gitOverview.modified > 0">M{{ gitOverview.modified }}</span>
+                        <span v-if="gitOverview.added > 0">A{{ gitOverview.added }}</span>
+                        <span v-if="gitOverview.deleted > 0">D{{ gitOverview.deleted }}</span>
+                        <span v-if="gitOverview.conflicted > 0" class="project-git-conflict">!{{ gitOverview.conflicted }}</span>
+                    </template>
+                    <span v-else-if="gitOverview.isGitRepo">{{ t('dashboard.gitClean') }}</span>
+                </button>
+                <button
+                    v-if="isRunning"
+                    type="button"
+                    class="project-running-summary"
+                    :class="{ 'project-running-summary-descendant': isDescendantOnlyRunning }"
+                    :title="runningTitle"
+                    @click.stop="emit('open-running', project)"
+                >
+                    <span class="project-running-summary-dot" />
+                    <span>{{ subtreeRunningCount }}</span>
+                </button>
             </div>
 
             <!-- ─── 子项目数量 + 下钻箭头 ─────────────── -->
@@ -362,6 +367,7 @@ function handleDelete() {
 .project-row {
   display: flex;
   align-items: center;
+  container-type: inline-size;
   gap: 10px;
   padding: 10px 12px;
   border-radius: var(--app-radius-lg);
@@ -431,6 +437,7 @@ function handleDelete() {
   flex-wrap: nowrap;
   gap: 4px;
   min-width: 0;
+  overflow: hidden;
 }
 
 .project-quick-command,
@@ -449,6 +456,7 @@ function handleDelete() {
   font-size: 10px;
   font-weight: 600;
   white-space: nowrap;
+  flex: 0 1 auto;
   transition: background-color var(--app-duration-fast) var(--app-ease), color var(--app-duration-fast) var(--app-ease), border-color var(--app-duration-fast) var(--app-ease);
 }
 .project-quick-command:hover,
@@ -564,10 +572,28 @@ function handleDelete() {
   row-gap: 4px;
 }
 
-@media (max-width: 1180px) {
+@container (max-width: 1180px) {
   .project-row-tree .project-tree-highlights {
     flex-wrap: wrap;
     align-content: center;
+    overflow: visible;
+  }
+}
+
+@container (max-width: 760px) {
+  .project-row-tree {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .project-row-tree .project-row-content {
+    flex: 1 1 100%;
+  }
+  .project-row-tree .project-tree-highlights {
+    flex: 1 1 100%;
+    max-width: 100%;
+  }
+  .project-row-tree .project-row-actions {
+    margin-left: auto;
   }
 }
 

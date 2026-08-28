@@ -8,7 +8,7 @@ export interface ProjectTreeRelation {
 
 /** 返回节点到根的祖先链，不包含节点自身，最多回溯项目树允许的层级。 */
 export function collectProjectAncestorIds(
-  projects: ProjectTreeRelation[],
+  projects: readonly ProjectTreeRelation[],
   projectId: string,
 ): string[] {
   const byId = new Map(projects.map(project => [project.id, project]));
@@ -27,7 +27,7 @@ export function collectProjectAncestorIds(
 
 /** 匹配任意层级时保留匹配节点及其所有祖先，为树提供完整路径上下文。 */
 export function collectVisibleProjectIds(
-  projects: ProjectTreeRelation[],
+  projects: readonly ProjectTreeRelation[],
   matchingIds: Iterable<string>,
 ): Set<string> {
   const visible = new Set<string>();
@@ -42,7 +42,7 @@ export function collectVisibleProjectIds(
 
 /** 搜索/筛选时自动展开匹配节点的祖先链；用户手动展开集合由调用方另行保存。 */
 export function collectAutoExpandedProjectIds(
-  projects: ProjectTreeRelation[],
+  projects: readonly ProjectTreeRelation[],
   matchingIds: Iterable<string>,
 ): Set<string> {
   const expanded = new Set<string>();

@@ -55,7 +55,10 @@ const {
   onDragMouseDown: onChildDragMouseDown,
 } = useListDragSort<Project>({
   items: allChildren,
-  onCommit: (ordered) => projectStore.applyManualOrder(ordered),
+  onCommit: (ordered) => {
+    const siblings = ordered.filter(child => child.parentId === props.project.id);
+    if (siblings.length === ordered.length) projectStore.applyManualOrder(siblings);
+  },
 });
 const renderedChildren = computed(() => {
   const children = props.draggable ? sortableChildren.value : visibleChildren.value;
@@ -71,6 +74,7 @@ function handleCurrentDragStart(event: MouseEvent): void {
 }
 
 function handleChildDragStart(event: MouseEvent, project: Project): void {
+  if (!props.draggable || project.parentId !== props.project.id) return;
   onChildDragMouseDown(event, project.id);
 }
 
