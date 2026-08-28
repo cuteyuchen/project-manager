@@ -340,7 +340,7 @@ function resetForRoot(id: string) {
     <!-- 静态骨架：**不带 :key**，永不重建。
          层级切换只重建左栏子项目列表；右栏连同 KeepAlive 缓存留在这里活着，
          这样下钻/回退/切一级项目都不会把 GitView、ConsoleView 的实例销毁。 -->
-    <div class="flex-1 flex overflow-hidden">
+    <div class="flex-1 min-w-0 flex overflow-hidden">
       <!-- ─── 左栏外壳：负责占住 320px ───────────────────────
            必须由外壳吃掉宽度/背景/右边框：mode="out-in" 在 leave 结束到 enter
            开始之间有一帧没有子节点，若把 w-80 留在被过渡的元素上，

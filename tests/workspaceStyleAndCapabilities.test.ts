@@ -24,11 +24,11 @@ assert(
   '页签按钮应调用 selectTab 记录用户意图，不要直接给 rightTab 赋值',
 );
 
-/***********************无可运行命令时默认落在 Git*********************/
+/***********************默认页签遵循项目能力*********************/
 
 assert(
-  /const defaultTab = computed<WorkspaceTab>\(\(\) => \(hasRunnableCommands\.value \? 'console' : 'git'\)\)/.test(managementPanel),
-  '没有可运行脚本时默认页签应为 Git 而非文件——命令入口带 v-if 会整个消失，Git 则无条件渲染',
+  /const defaultTab = computed<WorkspaceTab>\(\(\) => \{[\s\S]*hasRunnableCommands\.value[\s\S]*hasGitRepo\.value[\s\S]*return 'files';[\s\S]*\}\)/.test(managementPanel),
+  '默认页签应按命令、Git、文件能力依次选择',
 );
 
 // 页签类型只留一份定义（types.ts 的 WorkspaceTab），组件与 store 都引用它
@@ -53,13 +53,14 @@ assert(
 
 assert(
   /if \(tab === 'console'\) return capabilities\.hasRunnableCommands/.test(tabFallback)
+  && /if \(tab === 'git'\) return capabilities\.hasGitRepo/.test(tabFallback)
   && /if \(tab === 'env'\) return capabilities\.hasFrontendEnv/.test(tabFallback),
-  '命令/环境入口带 v-if 会整个消失，对应页签必须判为不可用',
+  '命令/Git/环境入口带 v-if 会整个消失，对应页签必须判为不可用',
 );
 
 assert(
-  /if \(capabilities\.leafTabsDisabled\) return 'files';[\s\S]{0,40}?return 'git';/.test(tabFallback),
-  '页签不可用时应回退到 Git（仅无活动叶子时退到文件）；一律回退到文件会把默认页签的判断又冲掉',
+  /if \(capabilities\.leafTabsDisabled\) return 'files';[\s\S]*if \(capabilities\.hasRunnableCommands\) return 'console';[\s\S]*if \(capabilities\.hasGitRepo\) return 'git';[\s\S]*return 'files';/.test(tabFallback),
+  '页签不可用时应按 Console → Git → Files 回退',
 );
 
 assert(
@@ -76,6 +77,9 @@ assert(
   /<ProjectManagementPanel :project="workspaceProject"\s*\/>/.test(workspace),
   '完整工作区应把当前项目交给共享管理面板',
 );
+
+assert(/hasGitRepo: hasGitRepo\.value/.test(managementPanel), '共享管理面板应把 Git 能力纳入统一 capability');
+assert(!/v-if="activeTab === 'git' && activeProject"/.test(managementPanel), 'Git 内容不能绕过 Git capability 渲染');
 
 // defaultTab 在 setup 期由 immediate watcher 同步求值，
 // 其依赖的 hasRunnableCommands 必须先声明，否则无子项目的工作区会直接抛 TDZ 错误

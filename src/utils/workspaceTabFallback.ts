@@ -14,6 +14,8 @@ export interface WorkspaceTabCapabilities {
   leafTabsDisabled: boolean;
   /** 有可运行的脚本或自定义命令 */
   hasRunnableCommands: boolean;
+  /** 当前项目已确认是 Git 仓库 */
+  hasGitRepo: boolean;
   /** 有前端环境配置组 */
   hasFrontendEnv: boolean;
 }
@@ -21,9 +23,10 @@ export interface WorkspaceTabCapabilities {
 /**
  * 该页签在当前能力下能否渲染。
  *
- * 「命令」入口带 `v-if="hasRunnableCommands"`、「环境」入口带 `v-if="hasFrontendEnv"`，
+ * 「命令」入口带 `v-if="hasRunnableCommands"`、「Git」入口带 `v-if="hasGitRepo"`、
+ * 「环境」入口带 `v-if="hasFrontendEnv"`，
  * 条件不满足时整个按钮不存在，停在上面等于停在一个看不见的页签上。
- * 「Git」「文件」「备忘录」无条件渲染，只在没有活动叶子时才受限。
+ * 「文件」「备忘录」始终可用；没有活动项目时绑定项目的页签受限。
  */
 export function isWorkspaceTabAvailable(
   tab: WorkspaceTab,
@@ -34,6 +37,7 @@ export function isWorkspaceTabAvailable(
     return false;
   }
   if (tab === 'console') return capabilities.hasRunnableCommands;
+  if (tab === 'git') return capabilities.hasGitRepo;
   if (tab === 'env') return capabilities.hasFrontendEnv;
   return true;
 }
@@ -44,8 +48,8 @@ export function isWorkspaceTabAvailable(
  * 这是「当前页签失效该退到哪」的**唯一**判据：切换子项目时用它保住用户已选的页签，
  * 能力变化时也用它做兜底纠正，避免两处各写一份规则而漂移。
  *
- * 回退目标：没有活动叶子只能退到「文件」；否则退到「Git」——它无条件渲染，
- * 且比「文件」更常用；退到「文件」会把默认页签的判断又冲掉。
+ * 回退目标：优先保留命令页，其次是 Git，最后是始终可用的文件页。
+ * 没有活动项目时直接回到文件页，避免停留在不可见的绑定页签。
  */
 export function resolveWorkspaceTabFallback(
   tab: WorkspaceTab,
@@ -53,5 +57,7 @@ export function resolveWorkspaceTabFallback(
 ): WorkspaceTab {
   if (isWorkspaceTabAvailable(tab, capabilities)) return tab;
   if (capabilities.leafTabsDisabled) return 'files';
-  return 'git';
+  if (capabilities.hasRunnableCommands) return 'console';
+  if (capabilities.hasGitRepo) return 'git';
+  return 'files';
 }

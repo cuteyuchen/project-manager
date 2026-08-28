@@ -1,20 +1,15 @@
 <script setup lang="ts">
 import type { Project, ProjectQuickCommand } from '../types';
 import { useProjectStore } from '../stores/project';
-import { useNodeStore } from '../stores/node';
-import { useSettingsStore } from '../stores/settings';
 import HealthBadge from './dashboard/HealthBadge.vue';
 import type { ProjectHealthSnapshot } from '../types';
 import { computed } from 'vue';
-import { api } from '../api';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { useI18n } from 'vue-i18n';
-import { resolveNodePathFromVersion, resolveProjectNodePath, isExplicitNodeVersion } from '../utils/nodeRuntime';
-import { normalizeNvmVersion } from '../utils/nvm';
 import { getCustomCommandDisplayName, getProjectCommandRunId } from '../utils/projectCommands';
-import { resolveTerminalCommand } from '../utils/terminalConfig';
 import type { ProjectGitOverview } from '../utils/projectGitOverview';
 import { resolveProjectQuickCommands } from '../utils/projectQuickCommands';
+import { useProjectExternalActions } from '../composables/useProjectExternalActions';
 
 const { t } = useI18n();
 const props = defineProps<{
@@ -31,7 +26,7 @@ const props = defineProps<{
     layout?: 'inline' | 'stacked';
     /** 仅覆盖界面显示名称，不修改项目数据 */
     displayName?: string;
-    /** 一级项目树模式：显示快捷命令、Git 汇总和低频操作菜单。 */
+    /** 一级项目树模式：显示快捷命令、Git 汇总和常驻操作按钮。 */
     treeMode?: boolean;
     /** 一级树行的 Git 状态汇总；未加载时不显示。 */
     gitOverview?: ProjectGitOverview;
@@ -48,8 +43,7 @@ const emit = defineEmits<{
     (event: 'open-running', project: Project): void;
 }>();
 const store = useProjectStore();
-const nodeStore = useNodeStore();
-const settingsStore = useSettingsStore();
+const { openEditor, openTerminal, openFolder } = useProjectExternalActions(() => props.project);
 
 const isActive = computed(() =>
     props.active !== undefined ? props.active : store.activeProjectId === props.project.id
@@ -138,29 +132,6 @@ function toggleQuickCommand(command: ProjectQuickCommand): void {
     }
 }
 
-function handleMoreCommand(command: 'pin' | 'editor' | 'terminal' | 'folder' | 'edit' | 'delete'): void {
-    switch (command) {
-        case 'pin':
-            handleTogglePin();
-            break;
-        case 'editor':
-            void openEditor();
-            break;
-        case 'terminal':
-            void openTerminal();
-            break;
-        case 'folder':
-            void openFolder();
-            break;
-        case 'edit':
-            emit('edit', props.project);
-            break;
-        case 'delete':
-            void handleDelete();
-            break;
-    }
-}
-
 /***********************交互*********************/
 
 function handleClick() {
@@ -205,84 +176,6 @@ function handleDelete() {
         .catch(() => { });
 }
 
-async function openEditor() {
-    try {
-        let editorPath = settingsStore.settings.editorPath;
-        if (props.project.editorId && settingsStore.settings.editors?.length) {
-            const found = settingsStore.settings.editors.find(e => e.id === props.project.editorId);
-            if (found) editorPath = found.path;
-        } else if (settingsStore.settings.editors?.length) {
-            const defaultEditor = settingsStore.settings.defaultEditorId
-                ? settingsStore.settings.editors.find(e => e.id === settingsStore.settings.defaultEditorId)
-                : undefined;
-            editorPath = (defaultEditor || settingsStore.settings.editors[0]).path;
-        }
-        await api.openInEditor(props.project.path, editorPath);
-    } catch (e) {
-        console.error(e);
-        ElMessage.error(`${t('common.error')}: ${e}`);
-    }
-}
-
-async function openTerminal() {
-    try {
-        if (props.project.type === 'node') {
-            await nodeStore.loadNvmNodes();
-        }
-
-        let nodePath = '';
-        if (props.project.type === 'node') {
-            nodePath = resolveProjectNodePath(props.project, nodeStore.versions);
-
-            if (!nodePath && isExplicitNodeVersion(props.project.nodeVersion)) {
-                const version = normalizeNvmVersion(props.project.nodeVersion!)!;
-                try {
-                    ElMessage.info(t('project.autoInstallStart', { version }));
-                    await nodeStore.installNode(version);
-                    ElMessage.success(t('project.autoInstallSuccess', { version }));
-                    nodePath = resolveProjectNodePath(props.project, nodeStore.versions);
-                } catch (installError) {
-                    ElMessage.error(`${t('project.autoInstallFailed', { version })}: ${String(installError)}`);
-                    console.error('Failed to auto-install node version for terminal', installError);
-                }
-            }
-
-            if (!nodePath) {
-                try {
-                    const info = await api.scanProject(props.project.path);
-                    nodePath = resolveNodePathFromVersion(info.nvmVersion, nodeStore.versions);
-                } catch (scanError) {
-                    console.warn('Failed to scan project for terminal node version', scanError);
-                }
-            }
-        }
-
-        const terminalCommand = resolveTerminalCommand(
-            settingsStore.settings.defaultTerminal,
-            settingsStore.settings.customTerminals,
-        );
-
-        // 非 node 项目不注入 Node/包管理器版本：nodePath 与 packageManager 均传空，
-        // 终端只做 cd。对 Go/Rust/Python 等项目输出 `node -v` 毫无意义，
-        // 在未安装 Node 的机器上还会直接报错刷屏。
-        const packageManager = props.project.type === 'node'
-            ? (props.project.packageManager || 'npm')
-            : '';
-        await api.openInTerminal(props.project.path, terminalCommand, nodePath, packageManager);
-    } catch (e) {
-        console.error(e);
-        ElMessage.error(`${t('common.error')}: ${e}`);
-    }
-}
-
-async function openFolder() {
-    try {
-        await api.openFolder(props.project.path);
-    } catch (e) {
-        console.error(e);
-        ElMessage.error(`${t('common.error')}: ${e}`);
-    }
-}
 </script>
 
 <template>
@@ -344,7 +237,7 @@ async function openFolder() {
                         :title="runningTitle"
                     />
                 </div>
-                <div v-if="treeMode && (treeQuickCommands.length > 0 || gitOverview || isRunning)" class="project-tree-highlights" @click.stop>
+                <div v-if="treeMode && (treeQuickCommands.length > 0 || gitOverview?.isGitRepo || isRunning)" class="project-tree-highlights" @click.stop>
                     <button
                         v-for="command in treeQuickCommands"
                         :key="`${command.type}:${command.id}`"
@@ -357,7 +250,7 @@ async function openFolder() {
                         <span class="truncate">{{ getQuickCommandLabel(command) }}</span>
                     </button>
                     <button
-                        v-if="gitOverview"
+                        v-if="gitOverview?.isGitRepo"
                         class="project-git-summary"
                         :class="{ 'project-git-summary-dirty': !gitOverview.clean }"
                         :title="t('dashboard.openGitOverview')"
@@ -371,7 +264,6 @@ async function openFolder() {
                             <span v-if="gitOverview.conflicted > 0" class="project-git-conflict">!{{ gitOverview.conflicted }}</span>
                         </template>
                         <span v-else-if="gitOverview.isGitRepo">{{ t('dashboard.gitClean') }}</span>
-                        <span v-else>{{ t('dashboard.noGit') }}</span>
                     </button>
                     <button
                         v-if="isRunning"
@@ -413,43 +305,33 @@ async function openFolder() {
             </div>
         </div>
 
-        <!-- ─── 行尾：树模式保留高频入口，其余操作收进更多菜单 ─────── -->
+        <!-- ─── 行尾：树模式保留原有常驻操作与高频入口 ─────────────── -->
         <div class="project-row-actions" @click.stop>
             <template v-if="treeMode">
+                <button class="row-action-btn hover:text-amber-500" :class="{ 'text-amber-500': project.pinned }" :title="project.pinned ? t('dashboard.unpin') : t('dashboard.pin')" @click.stop="handleTogglePin">
+                    <div :class="project.pinned ? 'i-mdi-pin' : 'i-mdi-pin-outline'" class="text-sm" />
+                </button>
+                <button class="row-action-btn hover:text-blue-500" :title="t('dashboard.openInEditor')" @click.stop="openEditor">
+                    <div class="i-mdi-code-tags text-sm" />
+                </button>
+                <button class="row-action-btn hover:text-purple-500" :title="t('dashboard.openInTerminal')" @click.stop="openTerminal">
+                    <div class="i-mdi-console-line text-sm" />
+                </button>
+                <button class="row-action-btn hover:text-amber-500" :title="t('dashboard.openInExplorer')" @click.stop="openFolder">
+                    <div class="i-mdi-folder-open text-sm" />
+                </button>
+                <button class="row-action-btn hover:text-emerald-500" :title="t('project.editProject')" @click.stop="emit('edit', project)">
+                    <div class="i-mdi-pencil text-sm" />
+                </button>
                 <button class="row-action-btn hover:text-blue-500" :title="t('dashboard.quickManage')" @click.stop="emit('open-management', project)">
                     <div class="i-mdi-tune-variant text-sm" />
                 </button>
                 <button class="row-action-btn hover:text-emerald-500" :title="t('dashboard.openFullWorkspace')" @click.stop="emit('open-workspace', project)">
                     <div class="i-mdi-open-in-new text-sm" />
                 </button>
-                <el-dropdown trigger="click" @command="handleMoreCommand">
-                    <button class="row-action-btn hover:text-slate-700 dark:hover:text-slate-200" :title="t('dashboard.moreActions')">
-                        <div class="i-mdi-dots-horizontal text-sm" />
-                    </button>
-                    <template #dropdown>
-                        <el-dropdown-menu>
-                            <el-dropdown-item command="pin">
-                                <div :class="project.pinned ? 'i-mdi-pin-off-outline' : 'i-mdi-pin-outline'" class="mr-2" />
-                                {{ project.pinned ? t('dashboard.unpin') : t('dashboard.pin') }}
-                            </el-dropdown-item>
-                            <el-dropdown-item command="editor">
-                                <div class="i-mdi-code-tags mr-2" />{{ t('dashboard.openInEditor') }}
-                            </el-dropdown-item>
-                            <el-dropdown-item command="terminal">
-                                <div class="i-mdi-console-line mr-2" />{{ t('dashboard.openInTerminal') }}
-                            </el-dropdown-item>
-                            <el-dropdown-item command="folder">
-                                <div class="i-mdi-folder-open mr-2" />{{ t('dashboard.openInExplorer') }}
-                            </el-dropdown-item>
-                            <el-dropdown-item command="edit">
-                                <div class="i-mdi-pencil mr-2" />{{ t('project.editProject') }}
-                            </el-dropdown-item>
-                            <el-dropdown-item command="delete" divided>
-                                <div class="i-mdi-delete mr-2" />{{ t('dashboard.deleteProject') }}
-                            </el-dropdown-item>
-                        </el-dropdown-menu>
-                    </template>
-                </el-dropdown>
+                <button class="row-action-btn hover:text-red-500" :title="t('dashboard.deleteProject')" @click.stop="handleDelete">
+                    <div class="i-mdi-delete text-sm" />
+                </button>
             </template>
             <template v-else>
             <button class="row-action-btn hover:text-amber-500" :class="{ 'text-amber-500': project.pinned }" :title="project.pinned ? t('dashboard.unpin') : t('dashboard.pin')" @click.stop="handleTogglePin">
@@ -533,15 +415,21 @@ async function openFolder() {
 }
 
 .project-row-tree {
+  gap: 6px;
+  padding: 7px 10px;
+}
+
+.project-row-tree {
   border-radius: var(--app-radius-md);
 }
 
 .project-tree-highlights {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex: 0 1 auto;
+  max-width: 52%;
+  flex-wrap: nowrap;
   gap: 4px;
-  margin-top: 5px;
   min-width: 0;
 }
 
@@ -552,7 +440,7 @@ async function openFolder() {
   align-items: center;
   gap: 4px;
   min-height: 22px;
-  max-width: 180px;
+  max-width: 132px;
   padding: 0 7px;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-sm);
@@ -600,6 +488,25 @@ async function openFolder() {
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+.project-row-tree .project-row-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-row-tree .project-row-title-line {
+  flex: 1 1 auto;
+}
+
+.project-row-tree .project-row-meta {
+  display: none;
+}
+
+.project-row-tree .row-action-btn {
+  width: 26px;
+  height: 26px;
 }
 
 .project-row-title {
@@ -655,6 +562,13 @@ async function openFolder() {
 .project-row-stacked .project-row-title-line {
   flex-wrap: wrap;
   row-gap: 4px;
+}
+
+@media (max-width: 1180px) {
+  .project-row-tree .project-tree-highlights {
+    flex-wrap: wrap;
+    align-content: center;
+  }
 }
 
 .project-row-stacked .project-row-title {

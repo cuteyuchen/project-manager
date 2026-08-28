@@ -32,3 +32,6 @@ promo-video
 .tmp-git-ui-pro/
 .tmp-git-ui-pro-src/
 
+# Playwright CLI runtime artifacts
+.playwright-cli/
+

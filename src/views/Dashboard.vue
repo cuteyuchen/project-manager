@@ -532,7 +532,8 @@ const gitOverviewById = computed<Record<string, ProjectGitOverview | undefined>>
     const result: Record<string, ProjectGitOverview | undefined> = {};
     for (const project of projectStore.projects) {
         const overview = summarizeGitStatus(gitStore.getStatus(project.id), gitStore.isGitRepo[project.id]);
-        if (overview) result[project.id] = overview;
+        // 非 Git 项目不向一级行传递 overview，避免渲染成「No Git」伪入口。
+        if (overview?.isGitRepo) result[project.id] = overview;
     }
     return result;
 });
@@ -954,6 +955,7 @@ useAppShortcuts([
         :project="managementProject"
         :initial-tab="managementInitialTab"
         @open-workspace="openProjectWorkspace"
+        @edit="openEditModal"
     />
 
     <!-- 批量设置分组 -->

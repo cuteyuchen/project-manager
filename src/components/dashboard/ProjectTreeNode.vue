@@ -5,7 +5,10 @@ import type { Project, ProjectHealthSnapshot } from '../../types';
 import { useProjectStore } from '../../stores/project';
 import { MAX_PROJECT_DEPTH } from '../../utils/projectTree';
 import type { ProjectGitOverview } from '../../utils/projectGitOverview';
+import { useListDragSort } from '../../composables/useListDragSort';
 import ProjectListItem from '../ProjectListItem.vue';
+
+type DragStartHandler = (mouseEvent: MouseEvent, project: Project) => void;
 
 const props = defineProps<{
   project: Project;
@@ -18,6 +21,8 @@ const props = defineProps<{
   selectedIds?: ReadonlySet<string>;
   isRoot?: boolean;
   draggable?: boolean;
+  /** 当前节点作为兄弟项被拖动时，由父节点提供对应层级的排序处理器。 */
+  dragHandler?: DragStartHandler;
 }>();
 
 const emit = defineEmits<{
@@ -38,6 +43,36 @@ const allChildren = computed(() => projectStore.getChildren(props.project.id));
 const hasChildren = computed(() => props.depth < MAX_PROJECT_DEPTH && allChildren.value.length > 0);
 const visibleChildren = computed(() => allChildren.value.filter(child => props.visibleIds.has(child.id)));
 const isExpanded = computed(() => hasChildren.value && props.expandedIds.has(props.project.id));
+
+/***********************同父级子项目拖拽排序*********************/
+/**
+ * 每个节点各自维护一份直接子节点排序器。
+ * 拖拽手柄通过最近的 `.draggable-list` 找到当前父级，因此不会跨 parentId 或层级移动。
+ */
+const {
+  draggableList: sortableChildren,
+  dragState: childDragState,
+  onDragMouseDown: onChildDragMouseDown,
+} = useListDragSort<Project>({
+  items: allChildren,
+  onCommit: (ordered) => projectStore.applyManualOrder(ordered),
+});
+const renderedChildren = computed(() => {
+  const children = props.draggable ? sortableChildren.value : visibleChildren.value;
+  return children.filter(child => props.visibleIds.has(child.id));
+});
+
+function handleCurrentDragStart(event: MouseEvent): void {
+  if (props.dragHandler) {
+    props.dragHandler(event, props.project);
+    return;
+  }
+  emit('drag-start', event, props.project);
+}
+
+function handleChildDragStart(event: MouseEvent, project: Project): void {
+  onChildDragMouseDown(event, project.id);
+}
 
 function handleRowOpen(): void {
   if (hasChildren.value) {
@@ -72,7 +107,7 @@ function toggleExpanded(): void {
       @toggle-select="emit('toggle-select', $event)"
     >
       <template #leading>
-        <div v-if="draggable" class="drag-handle" @mousedown.prevent="emit('drag-start', $event, project)" @click.stop>
+        <div v-if="draggable" class="drag-handle" @mousedown.prevent="handleCurrentDragStart" @click.stop>
           <div class="i-mdi-drag text-xl text-slate-300 dark:text-slate-600 hover:text-slate-400 dark:hover:text-slate-500 transition-colors" />
         </div>
         <button
@@ -88,26 +123,41 @@ function toggleExpanded(): void {
       </template>
     </ProjectListItem>
 
-    <div v-if="isExpanded && visibleChildren.length > 0" class="project-tree-children">
-      <ProjectTreeNode
-        v-for="child in visibleChildren"
+    <div
+      v-if="isExpanded && renderedChildren.length > 0"
+      class="project-tree-children"
+      :class="{ 'draggable-list': draggable }"
+    >
+      <div
+        v-for="child in renderedChildren"
         :key="child.id"
-        :project="child"
-        :depth="depth + 1"
-        :visible-ids="visibleIds"
-        :expanded-ids="expandedIds"
-        :git-overview-by-id="gitOverviewById"
-        :health-by-id="healthById"
-        :health-level-by-id="healthLevelById"
-        :selected-ids="selectedIds"
-        @toggle-expand="emit('toggle-expand', $event)"
-        @open-management="emit('open-management', $event)"
-        @open-workspace="emit('open-workspace', $event)"
-        @open-git="emit('open-git', $event)"
-        @open-running="emit('open-running', $event)"
-        @edit="emit('edit', $event)"
-        @toggle-select="emit('toggle-select', $event)"
-      />
+        class="draggable-item"
+        :data-project-id="child.id"
+        :class="{ 'draggable-item-active': childDragState.dragging && childDragState.projectId === child.id }"
+        :style="childDragState.dragging && childDragState.projectId === child.id
+          ? `transform: translateY(${childDragState.dragDelta}px); z-index: 50; transition: none;`
+          : ''"
+      >
+        <ProjectTreeNode
+          :project="child"
+          :depth="depth + 1"
+          :visible-ids="visibleIds"
+          :expanded-ids="expandedIds"
+          :git-overview-by-id="gitOverviewById"
+          :health-by-id="healthById"
+          :health-level-by-id="healthLevelById"
+          :selected-ids="selectedIds"
+          :draggable="draggable"
+          :drag-handler="draggable ? handleChildDragStart : undefined"
+          @toggle-expand="emit('toggle-expand', $event)"
+          @open-management="emit('open-management', $event)"
+          @open-workspace="emit('open-workspace', $event)"
+          @open-git="emit('open-git', $event)"
+          @open-running="emit('open-running', $event)"
+          @edit="emit('edit', $event)"
+          @toggle-select="emit('toggle-select', $event)"
+        />
+      </div>
     </div>
   </div>
 </template>

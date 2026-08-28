@@ -1,7 +1,7 @@
 /**
  * 打开终端时的 Node/包管理器注入行为。
  *
- * 三处实现必须保持一致：ProjectListItem.vue（决定传什么）、
+ * 三处实现必须保持一致：useProjectExternalActions.ts（决定传什么）、
  * src-tauri/src/runner.rs（Tauri 端拼命令）、utools|ztools/preload.js（插件端镜像）。
  * Rust 侧的分支逻辑另有 cargo 单测覆盖，这里守住前端契约与插件镜像不跑偏。
  */
@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 
 const root = process.cwd();
 const projectListItem = readFileSync(resolve(root, 'src/components/ProjectListItem.vue'), 'utf8');
+const externalActions = readFileSync(resolve(root, 'src/composables/useProjectExternalActions.ts'), 'utf8');
 const runner = readFileSync(resolve(root, 'src-tauri/src/runner.rs'), 'utf8');
 const utoolsPreload = readFileSync(resolve(root, 'utools/preload.js'), 'utf8');
 const ztoolsPreload = readFileSync(resolve(root, 'ztools/preload.js'), 'utf8');
@@ -18,19 +19,21 @@ const ztoolsPreload = readFileSync(resolve(root, 'ztools/preload.js'), 'utf8');
 /***********************前端：非 node 项目传空包管理器*********************/
 
 assert(
-  /props\.project\.type === 'node'\s*\?\s*\(props\.project\.packageManager \|\| 'npm'\)\s*:\s*''/.test(projectListItem),
+  /packageManager: project\.type === 'node'\s*\?\s*\(project\.packageManager \|\| 'npm'\)\s*:\s*''/.test(externalActions),
   '非 node 项目打开终端时应传空包管理器，不注入 node/npm 版本',
 );
 
 // nodePath 的解析本就包在 type === 'node' 分支里，非 node 项目自然拿到空串
-const openTerminalBody = projectListItem.slice(
-  projectListItem.indexOf('async function openTerminal()'),
-  projectListItem.indexOf('async function openFolder()'),
+const openTerminalBody = externalActions.slice(
+  externalActions.indexOf('async function resolveTerminalOptions'),
+  externalActions.indexOf('async function openTerminal'),
 );
 assert(
-  /if \(props\.project\.type === 'node'\) \{[\s\S]*nodePath = resolveProjectNodePath/.test(openTerminalBody),
+  /if \(project\.type === 'node'\) \{[\s\S]*nodePath = resolveProjectNodePath/.test(openTerminalBody),
   '非 node 项目不应解析 nodePath，否则仍会往 PATH 里注入 Node 目录',
 );
+
+assert(projectListItem.includes('useProjectExternalActions'), '项目行应复用共享外部打开能力');
 
 /***********************Rust：空包管理器不产出启动脚本*********************/
 

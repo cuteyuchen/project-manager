@@ -12,6 +12,7 @@ function caps(overrides: Partial<WorkspaceTabCapabilities> = {}): WorkspaceTabCa
   return {
     leafTabsDisabled: false,
     hasRunnableCommands: true,
+    hasGitRepo: true,
     hasFrontendEnv: true,
     ...overrides,
   };
@@ -26,9 +27,10 @@ for (const tab of ALL_TABS) {
   assert(isWorkspaceTabAvailable(tab, caps()), `能力齐全时 ${tab} 应可用`);
 }
 
-// 命令入口带 v-if，无可运行命令时 console 不可用，其余不受影响
+// 命令入口带 v-if，无可运行命令时 console 不可用，其余能力不受影响
 assert(!isWorkspaceTabAvailable('console', caps({ hasRunnableCommands: false })), '无可运行命令时 console 不可用');
-assert(isWorkspaceTabAvailable('git', caps({ hasRunnableCommands: false })), 'git 无条件渲染，不受命令影响');
+assert(isWorkspaceTabAvailable('git', caps({ hasRunnableCommands: false })), 'Git 仓库的 git 页签不受命令影响');
+assert(!isWorkspaceTabAvailable('git', caps({ hasGitRepo: false })), '非 Git 项目不可用 git 页签');
 assert(isWorkspaceTabAvailable('env', caps({ hasRunnableCommands: false })), 'env 只看 hasFrontendEnv');
 
 // 环境入口带 v-if，无环境组时 env 不可用
@@ -52,14 +54,19 @@ assert.equal(resolveWorkspaceTabFallback('git', caps({ hasRunnableCommands: fals
 assert.equal(resolveWorkspaceTabFallback('files', caps({ hasRunnableCommands: false, hasFrontendEnv: false })), 'files');
 assert.equal(resolveWorkspaceTabFallback('memo', caps()), 'memo');
 
-// 不可用时退到 Git（它无条件渲染，且比文件更常用）
+// 不可用时优先退到仍可用的命令，其次 Git，最后文件
 assert.equal(resolveWorkspaceTabFallback('console', caps({ hasRunnableCommands: false })), 'git');
-assert.equal(resolveWorkspaceTabFallback('env', caps({ hasFrontendEnv: false })), 'git');
+assert.equal(resolveWorkspaceTabFallback('env', caps({ hasFrontendEnv: false })), 'console');
 
-// 没有活动叶子时 Git 自己也渲染不出来，只能退到文件
+// 没有活动叶子时绑定项目的页签都渲染不出来，只能退到文件
 assert.equal(resolveWorkspaceTabFallback('git', caps({ leafTabsDisabled: true })), 'files');
 assert.equal(resolveWorkspaceTabFallback('console', caps({ leafTabsDisabled: true })), 'files');
 assert.equal(resolveWorkspaceTabFallback('env', caps({ leafTabsDisabled: true })), 'files');
+
+// Git 失效时优先命令，其次文件；有 Git 时才回到 Git
+assert.equal(resolveWorkspaceTabFallback('git', caps({ hasGitRepo: false })), 'console');
+assert.equal(resolveWorkspaceTabFallback('git', caps({ hasRunnableCommands: false, hasGitRepo: false })), 'files');
+assert.equal(resolveWorkspaceTabFallback('git', caps({ hasRunnableCommands: false, hasGitRepo: true })), 'git');
 
 // 回退结果必须是稳定的：再算一次不应继续变化，否则兜底 watcher 会自激
 for (const tab of ALL_TABS) {

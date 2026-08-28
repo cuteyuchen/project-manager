@@ -35,6 +35,10 @@ const navMemory = useNavMemoryStore();
 
 /***********************项目能力与页签回退*********************/
 const activeProject = computed(() => props.project);
+const hasGitRepo = computed(() => {
+  const projectId = activeProject.value?.id;
+  return projectId ? gitStore.isGitRepo[projectId] === true : false;
+});
 const hasRunnableCommands = computed(() => {
   const project = activeProject.value;
   if (!project) return false;
@@ -46,10 +50,15 @@ const leafTabsDisabled = computed(() => !activeProject.value);
 const tabCapabilities = computed(() => ({
   leafTabsDisabled: leafTabsDisabled.value,
   hasRunnableCommands: hasRunnableCommands.value,
+  hasGitRepo: hasGitRepo.value,
   hasFrontendEnv: hasFrontendEnv.value,
 }));
-const defaultTab = computed<WorkspaceTab>(() => (hasRunnableCommands.value ? 'console' : 'git'));
-const activeTab = ref<WorkspaceTab>('git');
+const defaultTab = computed<WorkspaceTab>(() => {
+  if (hasRunnableCommands.value) return 'console';
+  if (hasGitRepo.value) return 'git';
+  return 'files';
+});
+const activeTab = ref<WorkspaceTab>('files');
 
 function resolveInitialTab(tab?: WorkspaceTab | null): WorkspaceTab {
   const project = activeProject.value;
@@ -60,7 +69,13 @@ function resolveInitialTab(tab?: WorkspaceTab | null): WorkspaceTab {
   );
 }
 
-function activate(tab?: WorkspaceTab | null): void {
+async function activate(tab?: WorkspaceTab | null): Promise<void> {
+  const project = activeProject.value;
+  // 首次进入时先确认仓库能力，避免 Git 项目在异步检查完成前被错误落到 Files。
+  if (project && gitStore.isGitRepo[project.id] === undefined) {
+    await gitStore.checkGitRepo(project.id, project.path);
+    if (activeProject.value?.id !== project.id) return;
+  }
   activeTab.value = resolveInitialTab(tab);
   void nextTick(checkTabOverflow);
 }
@@ -74,8 +89,8 @@ function selectTab(tab: WorkspaceTab, remember = true): void {
 }
 
 watch(() => activeProject.value?.id, () => {
-  activeTab.value = 'git';
-  activate(props.initialTab);
+  activeTab.value = 'files';
+  void activate(props.initialTab);
 
   const project = activeProject.value;
   if (project) {
@@ -84,10 +99,10 @@ watch(() => activeProject.value?.id, () => {
 }, { immediate: true });
 
 watch(() => props.initialTab, (tab, previous) => {
-  if (tab !== previous) activate(tab);
+  if (tab !== previous) void activate(tab);
 });
 
-watch([hasRunnableCommands, hasFrontendEnv, leafTabsDisabled, activeTab], () => {
+watch([hasRunnableCommands, hasGitRepo, hasFrontendEnv, leafTabsDisabled, activeTab], () => {
   const next = resolveWorkspaceTabFallback(activeTab.value, tabCapabilities.value);
   if (next !== activeTab.value) activeTab.value = next;
 });
@@ -111,10 +126,6 @@ watch(() => {
 });
 
 /***********************Git 状态与页签栏*********************/
-const isGitRepo = computed(() => {
-  const projectId = activeProject.value?.id;
-  return projectId ? gitStore.isGitRepo[projectId] || false : false;
-});
 const gitChangesCount = computed(() => {
   const projectId = activeProject.value?.id;
   return projectId ? gitStore.getTotalChanges(projectId) : 0;
@@ -149,7 +160,7 @@ onMounted(() => {
 let tabResizeObserver: ResizeObserver | null = null;
 onBeforeUnmount(() => tabResizeObserver?.disconnect());
 
-watch([activeProject, hasRunnableCommands, hasFrontendEnv], () => {
+watch([activeProject, hasRunnableCommands, hasGitRepo, hasFrontendEnv], () => {
   void nextTick(checkTabOverflow);
 });
 
@@ -157,7 +168,7 @@ defineExpose({ activate });
 </script>
 
 <template>
-  <div class="project-management-panel h-full flex flex-col overflow-hidden app-workspace-panel">
+  <div class="project-management-panel flex-1 min-w-0 w-full h-full min-h-0 flex flex-col overflow-hidden app-workspace-panel">
     <div
       class="workspace-topbar app-workspace-topbar flex items-center border-b px-3 shrink-0 min-w-0"
       :class="{ 'project-management-panel-titleless': !showTitle }"
@@ -183,6 +194,7 @@ defineExpose({ activate });
             <span>{{ t('dashboard.console') }}</span>
           </button>
           <button
+            v-if="hasGitRepo"
             @click="selectTab('git')"
             class="workspace-tab-btn"
             :class="{ 'workspace-tab-btn-active': activeTab === 'git' }"
@@ -190,7 +202,7 @@ defineExpose({ activate });
           >
             <div class="i-mdi-git text-sm" />
             <span>{{ t('git.title') }}</span>
-            <span v-if="isGitRepo && gitChangesCount > 0" class="workspace-tab-badge">{{ gitChangesCount }}</span>
+            <span v-if="hasGitRepo && gitChangesCount > 0" class="workspace-tab-badge">{{ gitChangesCount }}</span>
           </button>
           <button
             v-if="hasFrontendEnv"
@@ -217,7 +229,7 @@ defineExpose({ activate });
       </button>
     </div>
 
-    <div class="flex-1 overflow-hidden relative">
+    <div class="flex-1 min-w-0 overflow-hidden relative">
       <div
         v-if="!activeProject"
         class="absolute inset-0 z-10 flex flex-col items-center justify-center app-workspace-panel text-slate-400 dark:text-slate-500"
@@ -233,7 +245,7 @@ defineExpose({ activate });
             :project="activeProject"
           />
           <GitView
-            v-else-if="activeTab === 'git' && activeProject"
+            v-else-if="activeTab === 'git' && activeProject && hasGitRepo"
             :key="`git:${activeProject.id}`"
             :project="activeProject"
           />
