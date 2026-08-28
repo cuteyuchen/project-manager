@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Project } from '../types';
+import type { Project, ProjectQuickCommand } from '../types';
 import { useProjectStore } from '../stores/project';
 import { useNodeStore } from '../stores/node';
 import { useSettingsStore } from '../stores/settings';
@@ -11,7 +11,10 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import { useI18n } from 'vue-i18n';
 import { resolveNodePathFromVersion, resolveProjectNodePath, isExplicitNodeVersion } from '../utils/nodeRuntime';
 import { normalizeNvmVersion } from '../utils/nvm';
+import { getCustomCommandDisplayName, getProjectCommandRunId } from '../utils/projectCommands';
 import { resolveTerminalCommand } from '../utils/terminalConfig';
+import type { ProjectGitOverview } from '../utils/projectGitOverview';
+import { resolveProjectQuickCommands } from '../utils/projectQuickCommands';
 
 const { t } = useI18n();
 const props = defineProps<{
@@ -28,8 +31,22 @@ const props = defineProps<{
     layout?: 'inline' | 'stacked';
     /** 仅覆盖界面显示名称，不修改项目数据 */
     displayName?: string;
+    /** 一级项目树模式：显示快捷命令、Git 汇总和低频操作菜单。 */
+    treeMode?: boolean;
+    /** 一级树行的 Git 状态汇总；未加载时不显示。 */
+    gitOverview?: ProjectGitOverview;
+    /** 树行是否已展开，供无障碍属性和外部状态使用。 */
+    expanded?: boolean;
 }>();
-const emit = defineEmits(['edit', 'open', 'toggle-select']);
+const emit = defineEmits<{
+    (event: 'edit', project: Project): void;
+    (event: 'open', project: Project): void;
+    (event: 'toggle-select', projectId: string): void;
+    (event: 'open-management', project: Project): void;
+    (event: 'open-workspace', project: Project): void;
+    (event: 'open-git', project: Project): void;
+    (event: 'open-running', project: Project): void;
+}>();
 const store = useProjectStore();
 const nodeStore = useNodeStore();
 const settingsStore = useSettingsStore();
@@ -92,6 +109,57 @@ const extraTagsCount = computed(() => {
     if (!props.project.tags) return 0;
     return Math.max(0, props.project.tags.length - 3);
 });
+
+/***********************一级树高频操作*********************/
+const treeQuickCommands = computed(() => props.treeMode
+    ? resolveProjectQuickCommands(props.project)
+    : []);
+
+function isQuickCommandRunning(command: ProjectQuickCommand): boolean {
+    return !!store.runningStatus[getProjectCommandRunId(props.project.id, command.type, command.id)];
+}
+
+function getQuickCommandLabel(command: ProjectQuickCommand): string {
+    if (command.type === 'script') return command.id;
+    const customCommand = props.project.customCommands?.find(item => item.id === command.id);
+    return customCommand ? getCustomCommandDisplayName(customCommand, t) : command.id;
+}
+
+function toggleQuickCommand(command: ProjectQuickCommand): void {
+    if (isQuickCommandRunning(command)) {
+        void store.stopProject(props.project, command.id, command.type);
+        return;
+    }
+
+    if (command.type === 'script') {
+        void store.runProject(props.project, command.id);
+    } else {
+        void store.runCustomCommand(props.project, command.id);
+    }
+}
+
+function handleMoreCommand(command: 'pin' | 'editor' | 'terminal' | 'folder' | 'edit' | 'delete'): void {
+    switch (command) {
+        case 'pin':
+            handleTogglePin();
+            break;
+        case 'editor':
+            void openEditor();
+            break;
+        case 'terminal':
+            void openTerminal();
+            break;
+        case 'folder':
+            void openFolder();
+            break;
+        case 'edit':
+            emit('edit', props.project);
+            break;
+        case 'delete':
+            void handleDelete();
+            break;
+    }
+}
 
 /***********************交互*********************/
 
@@ -225,6 +293,7 @@ async function openFolder() {
             {
                 'project-row-selected': selected,
                 'project-row-stacked': layout === 'stacked',
+                'project-row-tree': treeMode,
             },
         ]"
         @click="handleClick"
@@ -269,11 +338,51 @@ async function openFolder() {
                     <span v-if="moduleKindLabel" class="project-kind-chip shrink-0">{{ moduleKindLabel }}</span>
                     <span class="project-row-path">{{ project.path }}</span>
                     <div
-                        v-if="isRunning"
+                        v-if="isRunning && !treeMode"
                         class="project-running-dot shrink-0"
                         :class="{ 'project-running-dot-descendant': isDescendantOnlyRunning }"
                         :title="runningTitle"
                     />
+                </div>
+                <div v-if="treeMode && (treeQuickCommands.length > 0 || gitOverview || isRunning)" class="project-tree-highlights" @click.stop>
+                    <button
+                        v-for="command in treeQuickCommands"
+                        :key="`${command.type}:${command.id}`"
+                        class="project-quick-command"
+                        :class="{ 'project-quick-command-running': isQuickCommandRunning(command) }"
+                        :title="isQuickCommandRunning(command) ? t('dashboard.stop') : t('dashboard.start')"
+                        @click.stop="toggleQuickCommand(command)"
+                    >
+                        <div :class="isQuickCommandRunning(command) ? 'i-mdi-stop' : 'i-mdi-play'" class="text-[10px]" />
+                        <span class="truncate">{{ getQuickCommandLabel(command) }}</span>
+                    </button>
+                    <button
+                        v-if="gitOverview"
+                        class="project-git-summary"
+                        :class="{ 'project-git-summary-dirty': !gitOverview.clean }"
+                        :title="t('dashboard.openGitOverview')"
+                        @click.stop="emit('open-git', project)"
+                    >
+                        <span>{{ t('git.title') }}</span>
+                        <template v-if="gitOverview.isGitRepo && !gitOverview.clean">
+                            <span v-if="gitOverview.modified > 0">M{{ gitOverview.modified }}</span>
+                            <span v-if="gitOverview.added > 0">A{{ gitOverview.added }}</span>
+                            <span v-if="gitOverview.deleted > 0">D{{ gitOverview.deleted }}</span>
+                            <span v-if="gitOverview.conflicted > 0" class="project-git-conflict">!{{ gitOverview.conflicted }}</span>
+                        </template>
+                        <span v-else-if="gitOverview.isGitRepo">{{ t('dashboard.gitClean') }}</span>
+                        <span v-else>{{ t('dashboard.noGit') }}</span>
+                    </button>
+                    <button
+                        v-if="isRunning"
+                        class="project-running-summary"
+                        :class="{ 'project-running-summary-descendant': isDescendantOnlyRunning }"
+                        :title="runningTitle"
+                        @click.stop="emit('open-running', project)"
+                    >
+                        <span class="project-running-summary-dot" />
+                        <span>{{ subtreeRunningCount }}</span>
+                    </button>
                 </div>
                 <div v-if="project.description || displayTags.length > 0 || groupName" class="project-row-meta">
                     <span v-if="project.description" class="text-[10px] text-slate-400 dark:text-slate-500 truncate max-w-40" :title="project.description">
@@ -295,7 +404,7 @@ async function openFolder() {
             </div>
 
             <!-- ─── 子项目数量 + 下钻箭头 ─────────────── -->
-            <div v-if="childCount > 0" class="project-row-child">
+            <div v-if="childCount > 0 && !treeMode" class="project-row-child">
                 <span class="project-child-chip inline-flex items-center gap-0.5" :title="t('dashboard.subProjectCount', { count: childCount })">
                     <div class="i-mdi-file-tree text-[9px]" />
                     {{ childCount }}
@@ -304,8 +413,45 @@ async function openFolder() {
             </div>
         </div>
 
-        <!-- ─── 行尾：操作按钮（常驻，不再悬浮）─────────────── -->
+        <!-- ─── 行尾：树模式保留高频入口，其余操作收进更多菜单 ─────── -->
         <div class="project-row-actions" @click.stop>
+            <template v-if="treeMode">
+                <button class="row-action-btn hover:text-blue-500" :title="t('dashboard.quickManage')" @click.stop="emit('open-management', project)">
+                    <div class="i-mdi-tune-variant text-sm" />
+                </button>
+                <button class="row-action-btn hover:text-emerald-500" :title="t('dashboard.openFullWorkspace')" @click.stop="emit('open-workspace', project)">
+                    <div class="i-mdi-open-in-new text-sm" />
+                </button>
+                <el-dropdown trigger="click" @command="handleMoreCommand">
+                    <button class="row-action-btn hover:text-slate-700 dark:hover:text-slate-200" :title="t('dashboard.moreActions')">
+                        <div class="i-mdi-dots-horizontal text-sm" />
+                    </button>
+                    <template #dropdown>
+                        <el-dropdown-menu>
+                            <el-dropdown-item command="pin">
+                                <div :class="project.pinned ? 'i-mdi-pin-off-outline' : 'i-mdi-pin-outline'" class="mr-2" />
+                                {{ project.pinned ? t('dashboard.unpin') : t('dashboard.pin') }}
+                            </el-dropdown-item>
+                            <el-dropdown-item command="editor">
+                                <div class="i-mdi-code-tags mr-2" />{{ t('dashboard.openInEditor') }}
+                            </el-dropdown-item>
+                            <el-dropdown-item command="terminal">
+                                <div class="i-mdi-console-line mr-2" />{{ t('dashboard.openInTerminal') }}
+                            </el-dropdown-item>
+                            <el-dropdown-item command="folder">
+                                <div class="i-mdi-folder-open mr-2" />{{ t('dashboard.openInExplorer') }}
+                            </el-dropdown-item>
+                            <el-dropdown-item command="edit">
+                                <div class="i-mdi-pencil mr-2" />{{ t('project.editProject') }}
+                            </el-dropdown-item>
+                            <el-dropdown-item command="delete" divided>
+                                <div class="i-mdi-delete mr-2" />{{ t('dashboard.deleteProject') }}
+                            </el-dropdown-item>
+                        </el-dropdown-menu>
+                    </template>
+                </el-dropdown>
+            </template>
+            <template v-else>
             <button class="row-action-btn hover:text-amber-500" :class="{ 'text-amber-500': project.pinned }" :title="project.pinned ? t('dashboard.unpin') : t('dashboard.pin')" @click.stop="handleTogglePin">
                 <div :class="project.pinned ? 'i-mdi-pin' : 'i-mdi-pin-outline'" class="text-sm" />
             </button>
@@ -318,12 +464,13 @@ async function openFolder() {
             <button class="row-action-btn hover:text-amber-500" :title="t('dashboard.openInExplorer')" @click.stop="openFolder">
                 <div class="i-mdi-folder-open text-sm" />
             </button>
-            <button class="row-action-btn hover:text-emerald-500" :title="t('project.editProject')" @click.stop="$emit('edit')">
+            <button class="row-action-btn hover:text-emerald-500" :title="t('project.editProject')" @click.stop="emit('edit', project)">
                 <div class="i-mdi-pencil text-sm" />
             </button>
             <button class="row-action-btn hover:text-red-500" :title="t('dashboard.deleteProject')" @click.stop="handleDelete">
                 <div class="i-mdi-delete text-sm" />
             </button>
+            </template>
         </div>
 
     </div>
@@ -383,6 +530,69 @@ async function openFolder() {
 .project-row-main {
   flex: 1;
   min-width: 0;
+}
+
+.project-row-tree {
+  border-radius: var(--app-radius-md);
+}
+
+.project-tree-highlights {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 5px;
+  min-width: 0;
+}
+
+.project-quick-command,
+.project-git-summary,
+.project-running-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 22px;
+  max-width: 180px;
+  padding: 0 7px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-sm);
+  background: var(--app-surface-soft);
+  color: var(--app-text-secondary);
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background-color var(--app-duration-fast) var(--app-ease), color var(--app-duration-fast) var(--app-ease), border-color var(--app-duration-fast) var(--app-ease);
+}
+.project-quick-command:hover,
+.project-git-summary:hover,
+.project-running-summary:hover {
+  border-color: color-mix(in srgb, var(--app-primary) 36%, transparent);
+  color: var(--app-primary);
+}
+.project-quick-command-running {
+  border-color: color-mix(in srgb, var(--app-success) 42%, transparent);
+  background: color-mix(in srgb, var(--app-success) 10%, transparent);
+  color: var(--app-success);
+}
+.project-git-summary-dirty {
+  border-color: color-mix(in srgb, var(--app-warning) 40%, transparent);
+  color: var(--app-warning);
+}
+.project-git-conflict {
+  color: var(--app-danger, #ef4444);
+}
+.project-running-summary {
+  color: var(--app-success);
+}
+.project-running-summary-descendant {
+  opacity: 0.65;
+}
+.project-running-summary-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 5px currentColor;
 }
 
 .project-row-title-line {

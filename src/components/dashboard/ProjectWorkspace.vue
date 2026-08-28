@@ -1,42 +1,19 @@
 <script setup lang="ts">
 /** *********************项目工作区页：钻取进入一级项目后的详情视图*********************/
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount, useTemplateRef } from 'vue';
+import { ref, computed, watch, onMounted, onBeforeUnmount, useTemplateRef } from 'vue';
 import { useProjectStore } from '../../stores/project';
-import { useGitStore } from '../../stores/git';
 import { useNavMemoryStore } from '../../stores/navMemory.ts';
 import { useI18n } from 'vue-i18n';
-import type { Project, WorkspaceTab } from '../../types';
+import type { Project } from '../../types';
 import ProjectListItem from '../ProjectListItem.vue';
-import ConsoleView from '../ConsoleView.vue';
-import GitView from '../git/GitView.vue';
-import FileManager from '../FileManager.vue';
-import ProjectMemo from '../ProjectMemo.vue';
-import FrontendEnvPanel from '../FrontendEnvPanel.vue';
+import ProjectManagementPanel from './ProjectManagementPanel.vue';
 import SubProjectScanModal from '../SubProjectScanModal.vue';
 import { MAX_PROJECT_DEPTH } from '../../utils/projectTree';
-import { resolveWorkspaceTabFallback } from '../../utils/workspaceTabFallback.ts';
 import { useListDragSort } from '../../composables/useListDragSort.ts';
 import { useAppShortcuts } from '../../composables/useAppShortcuts.ts';
 
 /** 最大钻取层级（一级→二级→三级），与扫描深度共用同一常量 */
 const MAX_DEPTH = MAX_PROJECT_DEPTH;
-
-/**
- * KeepAlive 缓存上限。
- *
- * 缓存键的粒度是 (页签, 项目 id)，共 5 个页签，所以按「想覆盖几个项目」折算：
- * 3 个项目 × 5 个页签 = 15。这个窗口足以覆盖「下钻→回退→再进去」和
- * 「两个一级项目来回切」这两种手势。
- *
- * 不设上限的后果：缓存寿命是「进入工作区 → 返回列表」，而 Dashboard 自身
- * 又被 App.vue 的无上限 KeepAlive 缓存，逐个点过 30 个子项目就能钉住
- * 上百个常驻组件实例（每个 GitView 都带着完整 DOM 与若干 ResizeObserver）。
- *
- * 与 utils/gitDiffSelection.ts 的 MAX_DIFF_SELECTION_BUCKETS（按项目数）
- * 刻意对齐到同一个「3 个项目」，避免两个淘汰窗口不一致，出现
- * 「页签还在但 diff 空了」或反之的半吊子状态。
- */
-const KEEP_ALIVE_MAX = 15;
 
 const props = defineProps<{
   /** 钻取进入的一级项目 id */
@@ -53,7 +30,6 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const projectStore = useProjectStore();
-const gitStore = useGitStore();
 const navMemory = useNavMemoryStore();
 
 /** *********************钻取路径栈*********************/
@@ -150,15 +126,8 @@ const activeLeaf = computed<Project | null>(() => {
   return currentNode.value;
 });
 
-/** 文件、备忘录以及能力判断绑定当前层级或选中的子项目，避免父子项目共用数据 */
+/** 共享管理面板绑定的当前项目：有选中子项目时优先子项目，否则使用当前层级自身。 */
 const workspaceProject = computed<Project | null>(() => activeLeaf.value || currentNode.value);
-const hasRunnableCommands = computed(() => {
-  const project = workspaceProject.value;
-  if (!project) return false;
-  const scripts = project.visibleScripts?.length ? project.visibleScripts : project.scripts;
-  return (scripts?.length || 0) > 0 || (project.customCommands?.length || 0) > 0;
-});
-const hasFrontendEnv = computed(() => (workspaceProject.value?.frontendEnvGroups?.length || 0) > 0);
 
 /** 把 store 的双 active id 与当前状态同步 */
 function syncActiveIds() {
@@ -191,14 +160,6 @@ function handleOpenChild(project: Project) {
     selectedLeafId.value = restoreLevelLeaf(project.id);
   } else {
     selectedLeafId.value = project.id;
-    // 先写 selectedLeafId 再算页签：hasRunnableCommands 等 computed 是惰性求值，
-    // 顺序反了会拿到上一个叶子的能力。
-    // 优先用该叶子记住的页签；没有记忆才回落到默认，
-    // 再由 resolveWorkspaceTabFallback 保证它在新叶子上确实可用。
-    rightTab.value = resolveWorkspaceTabFallback(
-      navMemory.getLeafTab(project.id) ?? rightTab.value,
-      tabCapabilities.value,
-    );
   }
   syncActiveIds();
 }
@@ -248,71 +209,8 @@ function handleOpenParentProject() {
   // null 语义：这一层选中的是父项目入口卡本身
   navMemory.rememberLevelLeaf(levelId, null);
   selectedLeafId.value = levelId;
-  // 同 handleOpenChild：优先用记忆，再由回退判据保证可用
-  rightTab.value = resolveWorkspaceTabFallback(
-    navMemory.getLeafTab(levelId) ?? rightTab.value,
-    tabCapabilities.value,
-  );
   syncActiveIds();
 }
-
-/** 当前层级始终有活动项目；防御项目被删除等瞬时空状态 */
-const leafTabsDisabled = computed(() => !activeLeaf.value);
-
-/** 页签可用性判据的入参快照，切换子项目与兜底纠正共用同一份 */
-const tabCapabilities = computed(() => ({
-  leafTabsDisabled: leafTabsDisabled.value,
-  hasRunnableCommands: hasRunnableCommands.value,
-  hasFrontendEnv: hasFrontendEnv.value,
-}));
-
-/** *********************右侧工作区 tab*********************/
-// 初值取 git：它无条件渲染。若初值给 console，无脚本的项目会先渲染一个
-// 并不存在的页签、再被下面的 watcher 纠正，视觉上闪一下。
-const rightTab = ref<WorkspaceTab>('git');
-
-/**
- * 记下用户**手动**选择的页签。
- *
- * 模板里 5 个页签按钮都走这里，而不是直接 `rightTab = 'x'`：
- * 只有点击才算「用户意图」。若改用 watch(rightTab) 自动记忆，
- * 兜底纠正的结果也会被写进记忆，形成单向棘轮——脚本被删导致 console
- * 被纠成 git 后，用户把脚本加回来也再回不到 console。
- */
-function selectTab(tab: WorkspaceTab) {
-  rightTab.value = tab;
-  const leafId = activeLeaf.value?.id;
-  if (leafId) navMemory.rememberLeafTab(leafId, tab);
-}
-
-/**
- * 默认页签。
- *
- * 命令入口带 `v-if="hasRunnableCommands"`，没有脚本时整个页签不存在，
- * 此时落到「Git 管理」——它无条件渲染（没有 v-if），且比「文件」更常用。
- *
- * 容器模式（当前节点有子项目）默认选中的是父项目自身，同样按它有没有
- * 可运行命令来决定，不再一律给「文件」。
- */
-const defaultLeafTab = computed<WorkspaceTab>(() => (hasRunnableCommands.value ? 'console' : 'git'));
-
-/**
- * 容器/叶子模式翻转时纠正页签。
- *
- * 改成「仅当当前页签在新模式下不可用才回退」而不是无条件重置：
- * 无条件重置会把恢复出来的记忆页签盖掉，而且用同步标志位挡不住它——
- * 它是 pre-flush watcher，回调执行时同步设置的标志早已复位。
- * 判据仍然只有 resolveWorkspaceTabFallback 这一份。
- */
-watch(isContainer, () => {
-  rightTab.value = resolveWorkspaceTabFallback(rightTab.value, tabCapabilities.value);
-}, { immediate: true });
-
-// 跨组件请求切 tab（运行命令时联动到 console）
-watch(() => projectStore.requestedRightTabToken, () => {
-  const tab = projectStore.requestedRightTab;
-  if (tab) rightTab.value = tab;
-});
 
 /** 将外部搜索结果定位到对应层级，并选中最终的叶子项目。 */
 function selectTargetProject(targetId: string | null | undefined) {
@@ -341,76 +239,13 @@ function selectTargetProject(targetId: string | null | undefined) {
     drillStack.value = ancestors.slice(0, -1);
     selectedLeafId.value = target.id;
   }
-  rightTab.value = defaultLeafTab.value;
   syncActiveIds();
 }
 
 watch(() => props.targetProjectId, selectTargetProject, { immediate: true });
 
-/** git 徽章 */
-const isGitRepo = computed(() =>
-  activeLeaf.value ? (gitStore.isGitRepo[activeLeaf.value.id] || false) : false
-);
-const gitChangesCount = computed(() =>
-  activeLeaf.value ? gitStore.getTotalChanges(activeLeaf.value.id) : 0
-);
-
-watch(activeLeaf, (leaf) => {
-  if (leaf) void gitStore.checkGitRepo(leaf.id, leaf.path);
-});
-
-watch(currentNode, (node) => {
-  if (node) void gitStore.checkGitRepo(node.id, node.path);
-}, { immediate: true });
-
-/** 当前层级始终有活动项目；防御项目被删除等瞬时空状态 */
-// leafTabsDisabled 与 tabCapabilities 已上移到 rightTab 之前声明：
-// watch(isContainer, { immediate: true }) 在 setup 期同步读它们，声明在后会撞 TDZ。
-
-// 能力变化导致当前页签失效时的兜底纠正。
-// 判据与 handleOpenChild / handleOpenParentProject 共用 resolveWorkspaceTabFallback，
-// 规则只有一份，不会两处漂移。
-watch([leafTabsDisabled, hasRunnableCommands, hasFrontendEnv, rightTab], () => {
-  const next = resolveWorkspaceTabFallback(rightTab.value, tabCapabilities.value);
-  if (next !== rightTab.value) rightTab.value = next;
-});
-
 /** *********************子项目扫描/关联*********************/
 const showScanModal = ref(false);
-
-const tabScrollContainer = useTemplateRef<HTMLElement>('tabScrollContainer');
-const canScrollLeft = ref(false);
-const canScrollRight = ref(false);
-
-function checkTabOverflow() {
-  const el = tabScrollContainer.value;
-  if (!el) return;
-  canScrollLeft.value = el.scrollLeft > 0;
-  canScrollRight.value = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
-}
-
-function scrollTabs(direction: 'left' | 'right') {
-  const el = tabScrollContainer.value;
-  if (!el) return;
-  el.scrollBy({ left: direction === 'left' ? -120 : 120, behavior: 'smooth' });
-}
-
-let tabResizeObserver: ResizeObserver | null = null;
-onMounted(() => {
-  nextTick(checkTabOverflow);
-  if (tabScrollContainer.value) {
-    tabResizeObserver = new ResizeObserver(checkTabOverflow);
-    tabResizeObserver.observe(tabScrollContainer.value);
-  }
-});
-onBeforeUnmount(() => tabResizeObserver?.disconnect());
-
-// tab 栏不再随层级重建，onMounted 只跑一次；而 ResizeObserver 只对容器**自身
-// 尺寸**反应，对「命令/环境入口出现或消失导致 scrollWidth 变化」无感。
-// 所以页签集合变化时要主动重算，否则左右滚动箭头会一直显示陈旧状态。
-watch([activeLeaf, hasRunnableCommands, hasFrontendEnv], () => {
-  void nextTick(checkTabOverflow);
-});
 
 /**
  * 恢复当前层级的导航记忆（选中的叶子 + 该叶子的页签）。
@@ -431,11 +266,6 @@ function restoreNavMemory() {
   if (!levelId) return;
 
   selectedLeafId.value = restoreLevelLeaf(levelId);
-
-  const leafId = activeLeaf.value?.id;
-  const remembered = leafId ? navMemory.getLeafTab(leafId) : null;
-  // 可用性交给 resolveWorkspaceTabFallback 兜底，这里不重复写规则
-  rightTab.value = resolveWorkspaceTabFallback(remembered ?? defaultLeafTab.value, tabCapabilities.value);
 
   syncActiveIds();
 }
@@ -471,20 +301,12 @@ function resetForRoot(id: string) {
   selectedLeafId.value = null;
   // 新的一级项目一律按「前进」入场，否则会沿用上次 handleBack 留下的反向动画
   navigationDirection.value = 'forward';
-  // 必须放在前两项之后：defaultLeafTab 依赖的 computed 是惰性求值，
-  // 先重置 drillStack/selectedLeafId 才能读到新项目的能力
-  rightTab.value = defaultLeafTab.value;
   // 旧项目各层级的滚动位置对新项目毫无意义，实例长寿后也没人清理
   subProjectScrollPositions.clear();
   // 弹窗绑的是 :parent-project="currentNode"，开着不关会静默换成另一个项目的父级
   showScanModal.value = false;
-  // 页签集合可能变少，滚动偏移要归零否则会停在被裁掉的位置
-  if (tabScrollContainer.value) tabScrollContainer.value.scrollLeft = 0;
-  void nextTick(checkTabOverflow);
   syncActiveIds();
-  // 最后再用记忆覆盖 selectedLeafId / rightTab。
-  // 上面的无条件重置必须保留：记忆可能没有、可能已失效，
-  // 没有兜底会让上一个一级项目的叶子泄漏到新项目里。
+  // 最后再用导航记忆覆盖 selectedLeafId，避免上一个一级项目的叶子泄漏。
   restoreNavMemory();
 }
 </script>
@@ -588,117 +410,8 @@ function resetForRoot(id: string) {
         </Transition>
       </div>
 
-      <!-- ─── 右侧工作区：静态，不随层级重建 ─────────────────────── -->
-      <div class="flex-1 flex flex-col overflow-hidden app-workspace-panel">
-        <!-- Tab 栏 -->
-        <div class="workspace-topbar app-workspace-topbar flex items-center border-b px-3 shrink-0 min-w-0">
-          <div class="project-title-group flex items-center gap-2 pr-3 mr-2 shrink-0 min-w-0">
-            <h3 class="text-sm font-semibold text-slate-700 dark:text-slate-200 truncate max-w-40 tracking-tight">
-              {{ (isContainer ? activeLeaf?.name : currentNode?.name) ?? currentNode?.name }}
-            </h3>
-          </div>
-          <button v-show="canScrollLeft" @click="scrollTabs('left')" class="toolbar-scroll-btn shrink-0">
-            <div class="i-mdi-chevron-left text-base" />
-          </button>
-          <div ref="tabScrollContainer" @scroll="checkTabOverflow" class="flex items-center overflow-x-auto scrollbar-none min-w-0 flex-1 py-2 px-1">
-            <div class="workspace-tab-group">
-              <button
-                v-if="hasRunnableCommands"
-                @click="selectTab('console')"
-                class="workspace-tab-btn"
-                :class="{ 'workspace-tab-btn-active': rightTab === 'console' }"
-                :disabled="leafTabsDisabled"
-              >
-                <div class="i-mdi-console text-sm" />
-                <span>{{ t('dashboard.console') }}</span>
-              </button>
-              <button
-                @click="selectTab('git')"
-                class="workspace-tab-btn"
-                :class="{ 'workspace-tab-btn-active': rightTab === 'git' }"
-                :disabled="leafTabsDisabled"
-              >
-                <div class="i-mdi-git text-sm" />
-                <span>{{ t('git.title') }}</span>
-                <span v-if="isGitRepo && gitChangesCount > 0" class="workspace-tab-badge">{{ gitChangesCount }}</span>
-              </button>
-              <button
-                v-if="hasFrontendEnv"
-                @click="selectTab('env')"
-                class="workspace-tab-btn"
-                :class="{ 'workspace-tab-btn-active': rightTab === 'env' }"
-                :disabled="leafTabsDisabled"
-              >
-                <div class="i-mdi-tune-variant text-sm" />
-                <span>{{ t('dashboard.envSwitcher') }}</span>
-              </button>
-              <!-- 文件/备忘录：跟随当前父级或选中的子项目 -->
-              <button
-                @click="selectTab('files')"
-                class="workspace-tab-btn"
-                :class="{ 'workspace-tab-btn-active': rightTab === 'files' }"
-              >
-                <div class="i-mdi-folder-outline text-sm" />
-                <span>{{ t('dashboard.files') }}</span>
-              </button>
-              <button
-                @click="selectTab('memo')"
-                class="workspace-tab-btn"
-                :class="{ 'workspace-tab-btn-active': rightTab === 'memo' }"
-              >
-                <div class="i-mdi-note-text-outline text-sm" />
-                <span>{{ t('dashboard.memo') }}</span>
-              </button>
-            </div>
-          </div>
-          <button v-show="canScrollRight" @click="scrollTabs('right')" class="toolbar-scroll-btn shrink-0">
-            <div class="i-mdi-chevron-right text-base" />
-          </button>
-        </div>
-
-        <!-- Tab 内容 -->
-        <div class="flex-1 overflow-hidden relative">
-          <!-- 没有活动叶子时的占位提示。
-               做成绝对定位覆盖层而不是 v-if/v-else 的兄弟分支：后者会让
-               KeepAlive 随分支切换整份卸载，把缓存的视图实例全部销毁。 -->
-          <div
-            v-if="!activeLeaf"
-            class="absolute inset-0 z-10 flex flex-col items-center justify-center app-workspace-panel text-slate-400 dark:text-slate-500"
-          >
-            <div class="i-mdi-gesture-tap text-5xl mb-3 opacity-20" />
-            <p class="text-sm">{{ t('dashboard.selectSubProjectHint') }}</p>
-          </div>
-          <Transition name="tab-fade" mode="out-in">
-            <KeepAlive :max="KEEP_ALIVE_MAX">
-              <ConsoleView
-                v-if="rightTab === 'console' && activeLeaf"
-                :key="`console:${activeLeaf.id}`"
-                :project="activeLeaf"
-              />
-              <GitView
-                v-else-if="rightTab === 'git' && activeLeaf"
-                :key="`git:${activeLeaf.id}`"
-                :project="activeLeaf"
-              />
-              <FrontendEnvPanel
-                v-else-if="rightTab === 'env' && activeLeaf"
-                :key="`env:${activeLeaf.id}`"
-                :project="activeLeaf"
-              />
-              <FileManager
-                v-else-if="rightTab === 'files' && workspaceProject"
-                :key="`files:${workspaceProject.id}`"
-                :project="workspaceProject"
-              />
-              <ProjectMemo
-                v-else-if="rightTab === 'memo' && workspaceProject"
-                :key="`memo:${workspaceProject.id}`"
-                :project="workspaceProject"
-              />
-            </KeepAlive>
-          </Transition>
-        </div>
-      </div>
+      <!-- ─── 右栏管理内容：完整工作区与快速管理弹窗共用 ─────────────── -->
+      <ProjectManagementPanel :project="workspaceProject" />
     </div>
 
     <!-- 子项目扫描/关联弹窗 -->

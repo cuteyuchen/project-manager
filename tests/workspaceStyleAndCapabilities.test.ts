@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 
 const read = (path: string) => readFileSync(resolve(process.cwd(), path), 'utf8');
 const workspace = read('src/components/dashboard/ProjectWorkspace.vue');
+const managementPanel = read('src/components/dashboard/ProjectManagementPanel.vue');
 const tabFallback = read('src/utils/workspaceTabFallback.ts');
 const calendar = read('src/views/CommitCalendar.vue');
 const projectStore = read('src/stores/project.ts');
@@ -12,8 +13,8 @@ const theme = read('src/styles/theme.css');
 assert(/workspaceProject = computed<Project \| null>\(\(\) => activeLeaf\.value \|\| currentNode\.value\)/.test(workspace), '文件和备忘录应绑定当前项目');
 assert(/if \(!selectedLeafId\.value\) return currentNode\.value/.test(workspace), '父项目应作为容器模式下的默认活动项目');
 assert(/parentProjectEntry/.test(workspace) && /:active="!selectedLeafId \|\| selectedLeafId === currentNode\.id"/.test(workspace), '父项目入口应与子项目同级并默认选中');
-assert(/v-if="hasRunnableCommands"[\s\S]*?selectTab\('console'\)/.test(workspace), '无命令时应隐藏命令入口');
-assert(/v-if="hasFrontendEnv"[\s\S]*?selectTab\('env'\)/.test(workspace), '无环境配置时应隐藏环境入口');
+assert(/v-if="hasRunnableCommands"[\s\S]*?selectTab\('console'\)/.test(managementPanel), '无命令时应隐藏命令入口');
+assert(/v-if="hasFrontendEnv"[\s\S]*?selectTab\('env'\)/.test(managementPanel), '无环境配置时应隐藏环境入口');
 
 // 页签按钮必须走 selectTab 而不是直接赋值：
 // 只有「用户点击」才算意图，才该被写进导航记忆。若用 watch(rightTab) 自动记忆，
@@ -26,7 +27,7 @@ assert(
 /***********************无可运行命令时默认落在 Git*********************/
 
 assert(
-  /const defaultLeafTab = computed<WorkspaceTab>\(\(\) => \(hasRunnableCommands\.value \? 'console' : 'git'\)\)/.test(workspace),
+  /const defaultTab = computed<WorkspaceTab>\(\(\) => \(hasRunnableCommands\.value \? 'console' : 'git'\)\)/.test(managementPanel),
   '没有可运行脚本时默认页签应为 Git 而非文件——命令入口带 v-if 会整个消失，Git 则无条件渲染',
 );
 
@@ -62,27 +63,25 @@ assert(
 );
 
 assert(
-  /resolveWorkspaceTabFallback\(rightTab\.value, tabCapabilities\.value\)/.test(workspace),
-  'ProjectWorkspace 应复用 resolveWorkspaceTabFallback，不要另写一份回退规则',
+  /resolveWorkspaceTabFallback\(activeTab\.value, tabCapabilities\.value\)/.test(managementPanel),
+  '共享管理面板应复用 resolveWorkspaceTabFallback，不要另写一份回退规则',
 );
 
 assert(
-  !/selectedLeafId\.value = project\.id;\s*\n\s*rightTab\.value = defaultLeafTab\.value/.test(workspace),
-  '切换子项目不应无条件重置页签，否则用户手动选的「Git 管理」切回来就丢了',
+  /navMemory\.getLeafTab\(project\.id\)/.test(managementPanel),
+  '共享管理面板应优先恢复项目自己的页签记忆',
 );
 
-// 顺序陷阱：tabCapabilities 依赖的 computed 是惰性求值，
-// 必须先写 selectedLeafId 再算页签，否则拿到的是上一个叶子的能力
 assert(
-  /selectedLeafId\.value = project\.id;[\s\S]{0,400}?resolveWorkspaceTabFallback/.test(workspace),
-  'handleOpenChild 必须先写 selectedLeafId 再算回退页签，顺序反了会读到上一个叶子的能力',
+  /<ProjectManagementPanel :project="workspaceProject"\s*\/>/.test(workspace),
+  '完整工作区应把当前项目交给共享管理面板',
 );
 
-// defaultLeafTab 在 setup 期由 immediate watcher 同步求值，
+// defaultTab 在 setup 期由 immediate watcher 同步求值，
 // 其依赖的 hasRunnableCommands 必须先声明，否则无子项目的工作区会直接抛 TDZ 错误
 assert(
-  workspace.indexOf('const hasRunnableCommands = computed') < workspace.indexOf('const defaultLeafTab = computed'),
-  'hasRunnableCommands 必须声明在 defaultLeafTab 之前，否则 immediate watcher 会撞上暂时性死区',
+  managementPanel.indexOf('const hasRunnableCommands = computed') < managementPanel.indexOf('const defaultTab = computed'),
+  'hasRunnableCommands 必须声明在 defaultTab 之前，否则初始页签解析会撞上暂时性死区',
 );
 
 assert(/:project="workspaceProject"/.test(workspace), '文件和备忘录应使用当前项目实例');

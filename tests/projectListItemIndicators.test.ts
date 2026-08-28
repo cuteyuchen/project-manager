@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 const root = process.cwd();
 const projectListItem = readFileSync(resolve(root, 'src/components/ProjectListItem.vue'), 'utf8');
 const dashboard = readFileSync(resolve(root, 'src/views/Dashboard.vue'), 'utf8');
+const projectTreeNode = readFileSync(resolve(root, 'src/components/dashboard/ProjectTreeNode.vue'), 'utf8');
 const theme = readFileSync(resolve(root, 'src/styles/theme.css'), 'utf8');
 
 /***********************项目卡片左上角图标布局*********************/
@@ -25,8 +26,8 @@ assert(
   'HealthBadge should not be absolutely positioned away from the drag handle',
 );
 assert(
-  /<template\s+#leading>[\s\S]*class="drag-handle"/.test(dashboard),
-  'Dashboard should pass the drag handle through the ProjectListItem leading slot',
+  /<template\s+#leading>[\s\S]*class="drag-handle"/.test(projectTreeNode),
+  'ProjectTreeNode should pass the drag handle through the ProjectListItem leading slot',
 );
 // 拖拽样式已移到 styles/theme.css，与工作区的子项目列表共用一份
 assert(

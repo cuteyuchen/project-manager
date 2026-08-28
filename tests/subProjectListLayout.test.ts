@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 const root = process.cwd();
 const projectListItem = readFileSync(resolve(root, 'src/components/ProjectListItem.vue'), 'utf8');
 const projectWorkspace = readFileSync(resolve(root, 'src/components/dashboard/ProjectWorkspace.vue'), 'utf8');
+const managementPanel = readFileSync(resolve(root, 'src/components/dashboard/ProjectManagementPanel.vue'), 'utf8');
 
 /***********************子项目列表卡片布局*********************/
 
@@ -42,8 +43,8 @@ assert(
 );
 
 assert(
-  /<KeepAlive :max="KEEP_ALIVE_MAX">/.test(projectWorkspace),
-  'KeepAlive 必须设上限，否则缓存实例会随访问过的子项目数线性增长',
+  /<KeepAlive :max="KEEP_ALIVE_MAX">/.test(managementPanel),
+  '共享管理面板的 KeepAlive 必须设上限，否则缓存实例会随访问过的子项目数线性增长',
 );
 
 assert(

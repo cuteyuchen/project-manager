@@ -14,6 +14,7 @@ import {
   WORKSPACE_PROFILE_CUSTOM_PREFIX,
   WORKSPACE_PROFILE_PROJECT_PREFIX,
 } from '../../utils/dashboardProfiles';
+import { getProjectCommandRunId } from '../../utils/projectCommands';
 
 const { t } = useI18n();
 const projectStore = useProjectStore();
@@ -106,7 +107,11 @@ function handleCreate() {
 /** 检查启动组是否有命令正在运行 */
 function isProfileRunning(profile: WorkspaceProfile): boolean {
   return profile.items.some((item) => {
-    const runId = `${item.projectId}:${item.nameOrCommandId}`;
+    const runId = getProjectCommandRunId(
+      item.projectId,
+      item.type === 'custom' ? 'custom' : 'script',
+      item.nameOrCommandId,
+    );
     return !!projectStore.runningStatus[runId];
   });
 }

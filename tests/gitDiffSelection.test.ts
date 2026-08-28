@@ -140,6 +140,7 @@ const gitView = readFileSync(resolve(root, 'src/components/git/GitView.vue'), 'u
 const gitHistory = readFileSync(resolve(root, 'src/components/git/GitHistory.vue'), 'utf8');
 const consoleView = readFileSync(resolve(root, 'src/components/ConsoleView.vue'), 'utf8');
 const workspace = readFileSync(resolve(root, 'src/components/dashboard/ProjectWorkspace.vue'), 'utf8');
+const managementPanel = readFileSync(resolve(root, 'src/components/dashboard/ProjectManagementPanel.vue'), 'utf8');
 
 /**
  * 剥掉注释再做断言。
@@ -195,8 +196,9 @@ assert(
   'props 冻结后 watch(activeProject) 永不触发，应删除而不是留着误导后人',
 );
 assert(
-  /:project="activeLeaf"/.test(workspace),
-  'ProjectWorkspace 必须把当前叶子项目传给 GitView / ConsoleView',
+  /:project="activeProject"/.test(managementPanel)
+  && /:project="workspaceProject"/.test(workspace),
+  '共享管理面板必须接收完整工作区解析出的当前项目，并把它传给 GitView / ConsoleView',
 );
 
 console.log('gitDiffSelection tests passed');

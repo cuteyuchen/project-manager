@@ -77,6 +77,7 @@ assert.deepEqual(nav.memory.levelLeaf, {});
 
 const root = process.cwd();
 const workspace = readFileSync(resolve(root, 'src/components/dashboard/ProjectWorkspace.vue'), 'utf8');
+const managementPanel = readFileSync(resolve(root, 'src/components/dashboard/ProjectManagementPanel.vue'), 'utf8');
 const projectStore = readFileSync(resolve(root, 'src/stores/project.ts'), 'utf8');
 
 function stripComments(source: string): string {
@@ -85,6 +86,7 @@ function stripComments(source: string): string {
     .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
 }
 const workspaceCode = stripComments(workspace);
+const managementPanelCode = stripComments(managementPanel);
 
 // 「选中父项目自身」这条记忆最容易被写坏：它的 parentId 指向上一层，
 // 用兄弟校验会永远判失败并把记忆删掉，必须有 leafId === levelId 的前置分支
@@ -95,8 +97,8 @@ assert(
 
 // 恢复出的页签必须再过一次可用性判据，规则只有一份
 assert(
-  /restoreNavMemory[\s\S]{0,600}?resolveWorkspaceTabFallback/.test(workspaceCode),
-  '恢复页签后应复用 resolveWorkspaceTabFallback 校验，不要另写一份规则',
+  /resolveInitialTab[\s\S]{0,300}?resolveWorkspaceTabFallback/.test(managementPanelCode),
+  '共享管理面板恢复页签后应复用 resolveWorkspaceTabFallback 校验，不要另写一份规则',
 );
 
 // 切一级项目时必须先无条件重置再用记忆覆盖，否则上一个项目的叶子会泄漏进来

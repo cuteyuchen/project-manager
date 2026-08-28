@@ -1,5 +1,34 @@
 import type { BuiltinCommandId, CustomCommand, Project } from '../types';
 
+/***********************项目命令运行标识*********************/
+/**
+ * 运行状态和日志按项目 + 命令类型 + 命令 id 分桶，避免同名 script/custom command
+ * 共用一个 runId 后互相停止或覆盖日志。
+ */
+export type ProjectCommandType = 'script' | 'custom';
+
+export function getProjectCommandKey(type: ProjectCommandType, id: string): string {
+  return `${type}:${id}`;
+}
+
+export function parseProjectCommandKey(key: string): { type: ProjectCommandType; id: string } | null {
+  if (key.startsWith('script:')) {
+    return { type: 'script', id: key.slice('script:'.length) };
+  }
+  if (key.startsWith('custom:')) {
+    return { type: 'custom', id: key.slice('custom:'.length) };
+  }
+  return null;
+}
+
+export function getProjectCommandRunId(
+  projectId: string,
+  type: ProjectCommandType,
+  id: string,
+): string {
+  return `${projectId}:${getProjectCommandKey(type, id)}`;
+}
+
 const AUTO_INSTALL_COMMAND_NAMES = new Set([
   '安装依赖',
   'Install Dependencies',
@@ -161,6 +190,18 @@ export function getCustomCommandDisplayNameByLocale(
   }
 
   return command.name;
+}
+
+/***********************可运行脚本解析*********************/
+/** 与 ConsoleView、一级页快捷命令共用 visibleScripts 白名单语义。 */
+export function getRunnableProjectScripts(
+  project: Pick<Project, 'type' | 'scripts' | 'visibleScripts'>,
+): string[] {
+  if (project.type !== 'node' || !project.scripts?.length) return [];
+  if (project.visibleScripts?.length) {
+    return project.scripts.filter(script => project.visibleScripts!.includes(script));
+  }
+  return project.scripts;
 }
 
 export function ensureNodeInstallCommand<T extends Pick<Project, 'type' | 'packageManager' | 'customCommands'>>(

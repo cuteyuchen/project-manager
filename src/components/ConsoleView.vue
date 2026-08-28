@@ -5,7 +5,13 @@ import type { CustomCommand, Project } from '../types';
 import { useI18n } from 'vue-i18n';
 import { AnsiUp } from 'ansi_up';
 import { api } from '../api';
-import { getCustomCommandDisplayName } from '../utils/projectCommands';
+import {
+    getCustomCommandDisplayName,
+    getProjectCommandKey,
+    getProjectCommandRunId,
+    getRunnableProjectScripts,
+    parseProjectCommandKey,
+} from '../utils/projectCommands';
 
 const { t } = useI18n();
 const projectStore = useProjectStore();
@@ -156,9 +162,9 @@ function initOpenTabsFromProject() {
     // Check node scripts
     if (project.scripts) {
         project.scripts.forEach(s => {
-            const key = `${project.id}:${s}`;
+            const key = getProjectCommandRunId(project.id, 'script', s);
             if (projectStore.runningStatus[key] || (projectStore.logs[key] && projectStore.logs[key].length > 0)) {
-                openTabs.value.add(s);
+                openTabs.value.add(getProjectCommandKey('script', s));
             }
         });
     }
@@ -166,9 +172,9 @@ function initOpenTabsFromProject() {
     // Check custom commands
     if (project.customCommands) {
         project.customCommands.forEach(c => {
-            const key = `${project.id}:${c.id}`;
+            const key = getProjectCommandRunId(project.id, 'custom', c.id);
             if (projectStore.runningStatus[key] || (projectStore.logs[key] && projectStore.logs[key].length > 0)) {
-                openTabs.value.add(c.id);
+                openTabs.value.add(getProjectCommandKey('custom', c.id));
             }
         });
     }
@@ -176,7 +182,7 @@ function initOpenTabsFromProject() {
     // Auto select first available
     if (openTabs.value.size > 0) {
         // Prefer running ones
-        const running = Array.from(openTabs.value).find(s => projectStore.runningStatus[`${project.id}:${s}`]);
+        const running = Array.from(openTabs.value).find(commandKey => isCommandKeyRunning(commandKey));
         activeScript.value = running || Array.from(openTabs.value)[0];
     }
 }
@@ -194,11 +200,7 @@ const availableTabs = computed(() => {
 /** 可见脚本（遵循 visibleScripts 白名单） */
 const runnableScripts = computed(() => {
     const project = activeProject.value;
-    if (!project || project.type !== 'node' || !project.scripts?.length) return [];
-    if (project.visibleScripts?.length) {
-        return project.scripts.filter(s => project.visibleScripts!.includes(s));
-    }
-    return project.scripts;
+    return project ? getRunnableProjectScripts(project) : [];
 });
 
 /** 自定义命令 */
@@ -209,9 +211,11 @@ const hasRunnableCommands = computed(() =>
     runnableScripts.value.length > 0 || runnableCustomCommands.value.length > 0
 );
 
-function isCommandRunning(id: string): boolean {
-    if (!activeProject.value) return false;
-    return !!projectStore.runningStatus[`${activeProject.value.id}:${id}`];
+function isCommandKeyRunning(commandKey: string): boolean {
+    const project = activeProject.value;
+    const command = parseProjectCommandKey(commandKey);
+    if (!project || !command) return false;
+    return !!projectStore.runningStatus[getProjectCommandRunId(project.id, command.type, command.id)];
 }
 
 function getCustomCmdLabel(cmd: Pick<CustomCommand, 'name' | 'builtinId'>): string {
@@ -219,16 +223,21 @@ function getCustomCmdLabel(cmd: Pick<CustomCommand, 'name' | 'builtinId'>): stri
 }
 
 function getTabLabel(tabId: string): string {
-    if (!activeProject.value) return tabId;
-    const customCmd = activeProject.value.customCommands?.find(c => c.id === tabId);
-    if (customCmd) return getCustomCommandDisplayName(customCmd, t);
-    return tabId;
+    const command = parseProjectCommandKey(tabId);
+    if (!activeProject.value || !command) return tabId;
+    if (command.type === 'custom') {
+        const customCmd = activeProject.value.customCommands?.find(c => c.id === command.id);
+        return customCmd ? getCustomCommandDisplayName(customCmd, t) : command.id;
+    }
+    return command.id;
 }
 
 const logs = computed(() => {
     if (!activeProject.value || !activeScript.value) return [];
+    const command = parseProjectCommandKey(activeScript.value);
+    if (!command) return [];
     // Use Object.freeze to avoid deep reactivity overhead on large arrays
-    const allLogs = projectStore.logs[`${activeProject.value.id}:${activeScript.value}`] || [];
+    const allLogs = projectStore.logs[getProjectCommandRunId(activeProject.value.id, command.type, command.id)] || [];
     // Return a frozen slice
     return allLogs.slice(-500);
 });
@@ -241,8 +250,7 @@ const renderedLogs = computed(() => {
 });
 
 const isRunning = computed(() => {
-    if (!activeProject.value || !activeScript.value) return false;
-    return projectStore.runningStatus[`${activeProject.value.id}:${activeScript.value}`] || false;
+    return activeScript.value ? isCommandKeyRunning(activeScript.value) : false;
 });
 
 function isNearLogBottom() {
@@ -311,18 +319,20 @@ watch(activeScript, () => {
 // 是每实例私有的，也不存在跨项目残留，故整段删除。
 
 function handleStop() {
-    if (activeProject.value && activeScript.value) {
-        projectStore.stopProject(activeProject.value, activeScript.value);
+    const command = activeScript.value ? parseProjectCommandKey(activeScript.value) : null;
+    if (activeProject.value && command) {
+        projectStore.stopProject(activeProject.value, command.id, command.type);
     }
 }
 
 async function handleRestart() {
-    if (activeProject.value && activeScript.value) {
-        const runId = `${activeProject.value.id}:${activeScript.value}`;
+    const command = activeScript.value ? parseProjectCommandKey(activeScript.value) : null;
+    if (activeProject.value && command) {
+        const runId = getProjectCommandRunId(activeProject.value.id, command.type, command.id);
         
         // 如果已经在运行，先停止
         if (projectStore.runningStatus[runId]) {
-            await projectStore.stopProject(activeProject.value, activeScript.value);
+            await projectStore.stopProject(activeProject.value, command.id, command.type);
             
             // 等待进程真正退出
             const maxWait = 5000;
@@ -334,54 +344,56 @@ async function handleRestart() {
         
         // 启动
         if (activeProject.value && activeScript.value) {
-            const customCmd = activeProject.value.customCommands?.find(c => c.id === activeScript.value);
-            if (customCmd) {
-                projectStore.runCustomCommand(activeProject.value, customCmd.id);
+            if (command.type === 'custom') {
+                projectStore.runCustomCommand(activeProject.value, command.id);
             } else {
-                projectStore.runProject(activeProject.value, activeScript.value);
+                projectStore.runProject(activeProject.value, command.id);
             }
         }
     }
 }
 
 function handleClear() {
-    if (activeProject.value && activeScript.value) {
-        projectStore.clearLog(`${activeProject.value.id}:${activeScript.value}`);
+    const command = activeScript.value ? parseProjectCommandKey(activeScript.value) : null;
+    if (activeProject.value && command) {
+        projectStore.clearLog(getProjectCommandRunId(activeProject.value.id, command.type, command.id));
     }
 }
 
-function handleRun(script: string) {
-    if (activeProject.value) {
-        // Check if it's a custom command id
-        const customCmd = activeProject.value.customCommands?.find(c => c.id === script);
-        if (customCmd) {
-            projectStore.runCustomCommand(activeProject.value, customCmd.id);
+function handleRun(commandKey: string) {
+    const command = parseProjectCommandKey(commandKey);
+    if (activeProject.value && command) {
+        if (command.type === 'custom') {
+            projectStore.runCustomCommand(activeProject.value, command.id);
         } else {
-            projectStore.runProject(activeProject.value, script);
+            projectStore.runProject(activeProject.value, command.id);
         }
     }
 }
 
 /** 启动器点击：运行中则停止，否则运行 */
-function toggleRun(id: string) {
+function toggleRun(commandKey: string) {
     if (!activeProject.value) return;
-    if (isCommandRunning(id)) {
-        projectStore.stopProject(activeProject.value, id);
+    const command = parseProjectCommandKey(commandKey);
+    if (!command) return;
+    if (isCommandKeyRunning(commandKey)) {
+        projectStore.stopProject(activeProject.value, command.id, command.type);
     } else {
-        handleRun(id);
+        handleRun(commandKey);
         // 运行后自动切到该命令的输出标签
-        activeScript.value = id;
+        activeScript.value = commandKey;
     }
 }
 
-function handleCloseTab(script: string) {
+function handleCloseTab(commandKey: string) {
     // Stop the script if running
-    if (activeProject.value && projectStore.runningStatus[`${activeProject.value.id}:${script}`]) {
-        projectStore.stopProject(activeProject.value, script);
+    const command = parseProjectCommandKey(commandKey);
+    if (activeProject.value && command && isCommandKeyRunning(commandKey)) {
+        projectStore.stopProject(activeProject.value, command.id, command.type);
     }
 
-    openTabs.value.delete(script);
-    if (activeScript.value === script) {
+    openTabs.value.delete(commandKey);
+    if (activeScript.value === commandKey) {
         activeScript.value = Array.from(openTabs.value)[0] || null;
     }
 }
@@ -396,24 +408,24 @@ function handleCloseTab(script: string) {
             <button
                 v-for="cmd in runnableCustomCommands"
                 :key="cmd.id"
-                @click="toggleRun(cmd.id)"
+                @click="toggleRun(getProjectCommandKey('custom', cmd.id))"
                 class="launcher-btn"
-                :class="isCommandRunning(cmd.id) ? 'launcher-btn-running' : 'launcher-btn-custom'"
+                :class="isCommandKeyRunning(getProjectCommandKey('custom', cmd.id)) ? 'launcher-btn-running' : 'launcher-btn-custom'"
             >
-                <div :class="isCommandRunning(cmd.id) ? 'i-mdi-stop' : 'i-mdi-play'" class="text-[11px]" />
+                <div :class="isCommandKeyRunning(getProjectCommandKey('custom', cmd.id)) ? 'i-mdi-stop' : 'i-mdi-play'" class="text-[11px]" />
                 {{ getCustomCmdLabel(cmd) }}
             </button>
             <!-- node 脚本 -->
             <button
                 v-for="script in runnableScripts"
                 :key="script"
-                @click="toggleRun(script)"
+                @click="toggleRun(getProjectCommandKey('script', script))"
                 class="launcher-btn"
-                :class="isCommandRunning(script)
+                :class="isCommandKeyRunning(getProjectCommandKey('script', script))
                     ? 'launcher-btn-running'
                     : (script === 'dev' || script === 'start' || script === 'serve' ? 'launcher-btn-primary' : 'launcher-btn-muted')"
             >
-                <div :class="isCommandRunning(script) ? 'i-mdi-stop' : 'i-mdi-play'" class="text-[11px]" />
+                <div :class="isCommandKeyRunning(getProjectCommandKey('script', script)) ? 'i-mdi-stop' : 'i-mdi-play'" class="text-[11px]" />
                 {{ script }}
             </button>
         </div>
@@ -423,19 +435,19 @@ function handleCloseTab(script: string) {
             class="app-panel-toolbar flex flex-col z-10">
             <!-- Tabs for outputs -->
             <div v-if="availableTabs.length > 0" class="flex px-3 gap-0.5 overflow-x-auto custom-scrollbar pt-1.5">
-                <div v-for="script in availableTabs" :key="script" @click="activeScript = script"
+                <div v-for="commandKey in availableTabs" :key="commandKey" @click="activeScript = commandKey"
                     class="group relative px-3 py-1.5 text-xs font-medium rounded-t-md border-t border-x transition-all duration-150 cursor-pointer select-none flex items-center gap-2 min-w-[90px] justify-between"
-                    :class="activeScript === script 
+                        :class="activeScript === commandKey
                         ? 'bg-[var(--app-bg-muted)] text-[var(--app-primary)] border-[var(--app-border)] border-b-transparent z-10'
                         : 'bg-[var(--app-surface)] text-muted hover:text-secondary border-[var(--app-border)] hover:bg-[var(--app-surface-soft)]'">
                     <div class="flex items-center gap-1.5">
-                        <span v-if="projectStore.runningStatus[`${activeProject.id}:${script}`]"
+                        <span v-if="isCommandKeyRunning(commandKey)"
                             class="console-status-dot console-status-dot-running"></span>
                         <span v-else class="console-status-dot"></span>
-                        {{ getTabLabel(script) }}
+                        {{ getTabLabel(commandKey) }}
                     </div>
 
-                    <button @click.stop="handleCloseTab(script)"
+                    <button @click.stop="handleCloseTab(commandKey)"
                         class="app-icon-btn !h-5 !min-w-5 opacity-0 group-hover:opacity-100 !rounded">
                         <div class="i-mdi-close text-[10px]" />
                     </button>

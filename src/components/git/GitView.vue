@@ -343,7 +343,8 @@ function enterActiveMode() {
 function enterColdStorage() {
   isViewActive.value = false;
   clearScheduledRefresh();
-  gitStore.setColdStorage(true);
+  // 刷新是否允许由本实例的 isViewActive 控制；不能在这里改写全局 coldStorage，
+  // 否则快速管理弹窗和完整工作区同时缓存 GitView 时会互相误伤。
 }
 
 async function handleRepositoryChanged() {

@@ -8,7 +8,11 @@ import { useSettingsStore } from './settings';
 import { useUsageStore } from './usage';
 import { useGitStore } from './git';
 import { useNavMemoryStore } from './navMemory.ts';
-import { getCustomCommandDisplayNameByLocale } from '../utils/projectCommands';
+import {
+  getCustomCommandDisplayNameByLocale,
+  getProjectCommandRunId,
+  type ProjectCommandType,
+} from '../utils/projectCommands';
 import { resolveNodePathFromVersion, resolveProjectNodePath, isExplicitNodeVersion } from '../utils/nodeRuntime';
 import { normalizeNvmVersion } from '../utils/nvm';
 import { scanFrontendEnvProject } from '../utils/frontendEnvSwitcher';
@@ -33,6 +37,7 @@ export const useProjectStore = defineStore('project', () => {
   // 外部工作区请求中需要定位的具体项目；可为根项目或任意子项目
   const pendingWorkspaceProjectId = ref<string | null>(null);
   const requestedRightTab = ref<WorkspaceTab | null>(null);
+  const requestedRightTabProjectId = ref<string | null>(null);
   const requestedRightTabToken = ref(0);
 
   // Load from local storage removed in favor of persistence.ts
@@ -315,8 +320,9 @@ export const useProjectStore = defineStore('project', () => {
     if (project) project.favorite = !project.favorite;
   }
 
-  function requestRightTab(tab: WorkspaceTab) {
+  function requestRightTab(tab: WorkspaceTab, projectId = activeProjectId.value) {
     requestedRightTab.value = tab;
+    requestedRightTabProjectId.value = projectId;
     requestedRightTabToken.value += 1;
   }
 
@@ -351,7 +357,7 @@ export const useProjectStore = defineStore('project', () => {
   }
 
   async function runProject(project: Project, script: string) {
-    const runId = `${project.id}:${script}`;
+    const runId = getProjectCommandRunId(project.id, 'script', script);
 
     if (runningStatus.value[runId]) return;
 
@@ -418,7 +424,7 @@ export const useProjectStore = defineStore('project', () => {
       logs.value[runId] = [];
 
       activeProjectId.value = project.id;
-      requestRightTab('console');
+      requestRightTab('console', project.id);
       setRunningState(runId, true);
       try { useUsageStore().recordUsage(project.id); } catch {}
 
@@ -452,7 +458,7 @@ export const useProjectStore = defineStore('project', () => {
     if (!cmd) return;
     const settingsStore = useSettingsStore();
 
-    const runId = `${project.id}:${cmd.id}`;
+    const runId = getProjectCommandRunId(project.id, 'custom', cmd.id);
 
     if (runningStatus.value[runId]) return;
 
@@ -468,7 +474,7 @@ export const useProjectStore = defineStore('project', () => {
     try {
       logs.value[runId] = [];
       activeProjectId.value = project.id;
-      requestRightTab('console');
+      requestRightTab('console', project.id);
       setRunningState(runId, true);
       try { useUsageStore().recordUsage(project.id); } catch {}
 
@@ -486,8 +492,11 @@ export const useProjectStore = defineStore('project', () => {
     }
   }
 
-  async function stopProject(project: Project, script: string) {
-    const runId = `${project.id}:${script}`;
+  async function stopProject(project: Project, commandId: string, type?: ProjectCommandType) {
+    // 旧调用方只传 id 时继续按既有规则推断；新调用方传 type 后可安全处理同名命令。
+    const commandType = type
+      ?? (project.customCommands?.some(command => command.id === commandId) ? 'custom' : 'script');
+    const runId = getProjectCommandRunId(project.id, commandType, commandId);
     try {
       await api.stopProjectCommand(runId);
     } catch (e) {
@@ -737,6 +746,7 @@ export const useProjectStore = defineStore('project', () => {
     pendingWorkspaceRootId,
     pendingWorkspaceProjectId,
     requestedRightTab,
+    requestedRightTabProjectId,
     requestedRightTabToken,
     addProject,
     updateProject,

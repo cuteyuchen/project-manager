@@ -14,6 +14,14 @@ export interface CustomCommand {
   builtinId?: BuiltinCommandId;
 }
 
+/***********************一级页快捷命令*********************/
+/** 一级项目列表展示的快捷运行命令，type 用于区分同名 script 与 custom command。 */
+export interface ProjectQuickCommand {
+  type: 'script' | 'custom';
+  /** script 名称或 CustomCommand.id */
+  id: string;
+}
+
 export interface EditorConfig {
   id: string;
   name: string;
@@ -94,6 +102,8 @@ export interface Project {
   scripts?: string[];
   visibleScripts?: string[];
   customCommands?: CustomCommand[];
+  /** 一级项目页最多展示 3 个快捷运行命令；旧数据缺省时由前端按默认顺序补齐。 */
+  quickCommands?: ProjectQuickCommand[];
   projectFiles?: ProjectFileEntry[];
   memo?: string;
   pinned?: boolean;

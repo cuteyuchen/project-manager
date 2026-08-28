@@ -22,6 +22,7 @@ import type {
   GitResetMode,
   GitPullStrategy,
 } from '../types';
+import { summarizeGitStatus } from '../utils/projectGitOverview.ts';
 
 const REPO_CHECK_MAX_AGE = 60_000;
 const SUMMARY_STATUS_MAX_AGE = 15_000;
@@ -130,8 +131,7 @@ export const useGitStore = defineStore('git', () => {
 
   function getTotalChanges(projectId: string): number {
     const s = status.value[projectId];
-    if (!s) return 0;
-    return s.staged.length + s.unstaged.length + s.untracked.length + s.conflicted.length;
+    return summarizeGitStatus(s, isGitRepo.value[projectId])?.total ?? 0;
   }
 
   function isFresh(record: Record<string, number>, projectId: string, maxAgeMs: number): boolean {

@@ -3,16 +3,22 @@ import { computed, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { useI18n } from 'vue-i18n';
 import { api } from '../api';
-import type { Project, CustomCommand } from '../types';
+import type { Project, CustomCommand, ProjectQuickCommand } from '../types';
 import type { ProjectInfo, ImportNode } from '../api/types';
 import { normalizeNvmVersion, findInstalledNodeVersion } from '../utils/nvm';
 import { ensureNodeInstallCommand, getInstallDependenciesCommand, buildJavaPresetCommands, isWindowsPlatform } from '../utils/projectCommands';
+import { getCustomCommandDisplayName } from '../utils/projectCommands';
 import { useSettingsStore } from '../stores/settings';
 import { useProjectStore } from '../stores/project';
 import type { PackageManagerResolveResult } from '../api/types';
 import { collectProjectTags, normalizeProjectTags } from '../utils/projectTags';
 import { countModulesInNode } from '../utils/scanCandidateTree';
 import { MAX_PROJECT_DEPTH } from '../utils/projectTree';
+import {
+  getAvailableProjectQuickCommands,
+  getDefaultProjectQuickCommands,
+  normalizeProjectQuickCommands,
+} from '../utils/projectQuickCommands';
 import SubProjectScanModal from './SubProjectScanModal.vue';
 
 /**
@@ -43,6 +49,7 @@ type ProjectForm = {
   scripts: string[];
   visibleScripts: string[];
   customCommands: CustomCommand[];
+  quickCommands: ProjectQuickCommand[];
   editorId: string;
   description: string;
   tags: string[];
@@ -101,6 +108,49 @@ const scannedSubModuleCount = computed(() =>
   scannedSubProjects.value.reduce((sum, node) => sum + countModulesInNode(node), 0),
 );
 
+/***********************一级页快捷运行配置*********************/
+const availableQuickCommands = computed(() => getAvailableProjectQuickCommands(form.value));
+const selectedQuickCommands = computed(() => normalizeProjectQuickCommands(form.value, form.value.quickCommands));
+
+function getQuickCommandLabel(command: ProjectQuickCommand): string {
+  if (command.type === 'script') return command.id;
+  const customCommand = form.value.customCommands.find(item => item.id === command.id);
+  return customCommand ? getCustomCommandDisplayName(customCommand, t) : command.id;
+}
+
+function isQuickCommandSelected(command: ProjectQuickCommand): boolean {
+  return selectedQuickCommands.value.some(item => item.type === command.type && item.id === command.id);
+}
+
+function toggleQuickCommand(command: ProjectQuickCommand): void {
+  if (isQuickCommandSelected(command)) {
+    form.value.quickCommands = form.value.quickCommands.filter(item => !(item.type === command.type && item.id === command.id));
+    return;
+  }
+
+  if (selectedQuickCommands.value.length >= 3) {
+    ElMessage.warning(t('project.quickCommandsMax'));
+    return;
+  }
+  form.value.quickCommands = [...form.value.quickCommands, command];
+}
+
+function moveQuickCommand(index: number, direction: -1 | 1): void {
+  const nextIndex = index + direction;
+  if (nextIndex < 0 || nextIndex >= form.value.quickCommands.length) return;
+  const commands = [...form.value.quickCommands];
+  [commands[index], commands[nextIndex]] = [commands[nextIndex], commands[index]];
+  form.value.quickCommands = commands;
+}
+
+function syncQuickCommands(useDefault = false): void {
+  const current = form.value.quickCommands;
+  form.value.quickCommands = normalizeProjectQuickCommands(
+    form.value,
+    useDefault && current.length === 0 ? getDefaultProjectQuickCommands(form.value) : current,
+  );
+}
+
 /***********************编辑态：调整子项目层级*********************/
 /** 层级管理弹窗开关 */
 const showLevelManager = ref(false);
@@ -132,6 +182,7 @@ const form = ref<ProjectForm>({
   scripts: [],
   visibleScripts: [],
   customCommands: [],
+  quickCommands: [],
   editorId: '',
   description: '',
   tags: [],
@@ -161,6 +212,7 @@ function buildEmptyForm(): ProjectForm {
     scripts: [],
     visibleScripts: [],
     customCommands: [],
+    quickCommands: [],
     editorId: '',
     description: '',
     tags: [],
@@ -250,6 +302,7 @@ async function applyScanResult(info: ProjectInfo, options: { preferDetectedName?
     form.value.packageManager = info.packageManager || 'npm';
     form.value.scripts = info.scripts || [];
     form.value.visibleScripts = [...(info.scripts || [])];
+    syncQuickCommands(true);
     await applyDetectedNodeVersion(info.nvmVersion);
     return;
   }
@@ -270,6 +323,7 @@ async function applyScanResult(info: ProjectInfo, options: { preferDetectedName?
         () => crypto.randomUUID(),
       );
     }
+    syncQuickCommands(true);
     return;
   }
 
@@ -304,6 +358,9 @@ function hydrateFormFromProject(project: Project) {
           : command.name,
       }))
       : [],
+    quickCommands: project.quickCommands
+      ? [...project.quickCommands]
+      : getDefaultProjectQuickCommands(project),
     editorId: project.editorId || '',
     description: project.description || '',
     tags: project.tags ? [...project.tags] : [],
@@ -587,6 +644,7 @@ function buildProjectPayload(): Project {
   }
 
   project.customCommands = form.value.customCommands.filter((command) => command.name && command.command);
+  project.quickCommands = normalizeProjectQuickCommands(project, form.value.quickCommands);
 
   if (form.value.editorId) {
     project.editorId = form.value.editorId;
@@ -899,6 +957,59 @@ async function cancelClone() {
         </el-form-item>
       </template>
 
+      <el-form-item v-if="availableQuickCommands.length > 0" :label="t('project.quickCommandsTitle')">
+        <div class="quick-command-config w-full">
+          <p class="text-xs text-slate-500 dark:text-slate-400 mb-3">{{ t('project.quickCommandsHint') }}</p>
+          <div v-if="selectedQuickCommands.length > 0" class="quick-command-selected">
+            <div
+              v-for="(command, index) in selectedQuickCommands"
+              :key="`${command.type}:${command.id}`"
+              class="quick-command-selected-item"
+            >
+              <div class="flex min-w-0 items-center gap-2">
+                <div class="i-mdi-play-circle-outline text-blue-500 text-sm" />
+                <span class="truncate">{{ getQuickCommandLabel(command) }}</span>
+              </div>
+              <div class="flex items-center gap-1 shrink-0">
+                <button
+                  class="quick-command-order-btn"
+                  :disabled="index === 0"
+                  :title="t('project.moveQuickCommandUp')"
+                  @click="moveQuickCommand(index, -1)"
+                >
+                  <div class="i-mdi-chevron-up" />
+                </button>
+                <button
+                  class="quick-command-order-btn"
+                  :disabled="index === selectedQuickCommands.length - 1"
+                  :title="t('project.moveQuickCommandDown')"
+                  @click="moveQuickCommand(index, 1)"
+                >
+                  <div class="i-mdi-chevron-down" />
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="quick-command-options">
+            <button
+              v-for="command in availableQuickCommands"
+              :key="`${command.type}:${command.id}`"
+              type="button"
+              class="quick-command-option"
+              :class="isQuickCommandSelected(command) ? 'quick-command-option-active' : 'quick-command-option-inactive'"
+              @click="toggleQuickCommand(command)"
+            >
+              <span class="truncate">{{ getQuickCommandLabel(command) }}</span>
+              <span class="quick-command-type">{{ command.type === 'script' ? t('project.quickCommandScript') : t('project.quickCommandCustom') }}</span>
+              <div
+                class="text-sm"
+                :class="isQuickCommandSelected(command) ? 'i-mdi-checkbox-marked-circle text-blue-500' : 'i-mdi-checkbox-blank-circle-outline text-slate-300 dark:text-slate-500'"
+              />
+            </button>
+          </div>
+        </div>
+      </el-form-item>
+
       <el-form-item :label="t('project.customCommands')">
         <div class="w-full space-y-2">
           <div
@@ -1004,6 +1115,78 @@ async function cancelClone() {
 .script-toggle:hover {
   transform: translateY(-1px);
   box-shadow: var(--app-shadow-md);
+}
+
+.quick-command-config {
+  padding: 10px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-surface-soft);
+}
+.quick-command-selected,
+.quick-command-options {
+  display: grid;
+  gap: 6px;
+}
+.quick-command-selected {
+  margin-bottom: 10px;
+}
+.quick-command-selected-item,
+.quick-command-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 32px;
+  padding: 5px 8px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-sm);
+  font-size: 12px;
+  text-align: left;
+}
+.quick-command-selected-item {
+  background: var(--app-surface);
+  color: var(--app-text);
+}
+.quick-command-option {
+  width: 100%;
+  transition: background-color var(--app-duration-fast) var(--app-ease), border-color var(--app-duration-fast) var(--app-ease), color var(--app-duration-fast) var(--app-ease);
+}
+.quick-command-option-active {
+  border-color: color-mix(in srgb, var(--app-primary) 35%, transparent);
+  background: var(--app-primary-soft);
+  color: var(--app-primary);
+}
+.quick-command-option-inactive {
+  background: var(--app-surface);
+  color: var(--app-text-secondary);
+}
+.quick-command-option:hover {
+  border-color: color-mix(in srgb, var(--app-primary) 35%, transparent);
+}
+.quick-command-type {
+  flex-shrink: 0;
+  color: var(--app-text-muted);
+  font-size: 10px;
+}
+.quick-command-order-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  color: var(--app-text-secondary);
+}
+.quick-command-order-btn:hover:not(:disabled) {
+  background: var(--app-primary-soft);
+  color: var(--app-primary);
+}
+.quick-command-order-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
 }
 
 .project-modal {
