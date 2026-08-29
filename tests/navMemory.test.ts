@@ -88,11 +88,16 @@ function stripComments(source: string): string {
 const workspaceCode = stripComments(workspace);
 const managementPanelCode = stripComments(managementPanel);
 
-// 「选中父项目自身」这条记忆最容易被写坏：它的 parentId 指向上一层，
-// 用兄弟校验会永远判失败并把记忆删掉，必须有 leafId === levelId 的前置分支
 assert(
-  /if \(leafId === levelId\) return true;/.test(workspaceCode),
-  'isUsableLeaf 必须特判「记的是层级自身」，否则父项目入口卡的记忆写进去就被读时删掉',
+  /useNavMemoryStore\(\)/.test(workspaceCode)
+  && /navMemory\.getLevelLeaf\(root\.id[\s\S]{0,500}?isProjectInWorkspace/.test(workspaceCode),
+  '完整工作区应按 root 恢复仍属于该工作区的选中项目',
+);
+
+assert(
+  /navMemory\.rememberLevelLeaf\(root\.id[\s\S]{0,180}?nextProjectId/.test(workspaceCode)
+  && /function selectProject[\s\S]{0,260}?navMemory\.rememberLevelLeaf/.test(workspaceCode),
+  'Explorer 选择项目后应更新该 root 的导航记忆',
 );
 
 // 恢复出的页签必须再过一次可用性判据，规则只有一份
@@ -101,10 +106,10 @@ assert(
   '共享管理面板恢复页签后应复用 resolveWorkspaceTabFallback 校验，不要另写一份规则',
 );
 
-// 切一级项目时必须先无条件重置再用记忆覆盖，否则上一个项目的叶子会泄漏进来
 assert(
-  /selectedLeafId\.value = null;[\s\S]{0,900}?restoreNavMemory\(\);/.test(workspaceCode),
-  'resetForRoot 必须保留无条件的 selectedLeafId 重置作为兜底，再由记忆覆盖',
+  /watch\([\s\S]{0,220}?props\.rootId[\s\S]{0,220}?resolveSelection/.test(workspaceCode)
+  && /selectedProjectId\.value = nextProjectId/.test(workspaceCode),
+  '切换工作区 root 时必须重新解析选中项目，避免上一个 root 的选择泄漏',
 );
 
 assert(

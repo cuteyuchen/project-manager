@@ -40,7 +40,10 @@ assert(!/:deep\(\.project-management-dialog/.test(dialog), 'Teleport 弹窗外�
 assert(dialog.includes('useProjectExternalActions'), 'Dialog Header 应复用外部打开 composable');
 assert(dialog.includes("t('dashboard.openInEditor')") && dialog.includes("t('dashboard.openInTerminal')") && dialog.includes("t('dashboard.openInExplorer')"), 'Dialog Header 应提供三个外部快捷入口');
 assert(dialog.includes("t('project.editProject')") && dialog.includes("t('dashboard.openFullWorkspace')"), 'Dialog Header 应提供编辑与完整工作区入口');
-assert(workspace.includes('flex-1 min-w-0 flex overflow-hidden'), '完整工作区右栏父容器应允许管理面板占满剩余宽度');
+assert(
+  /class="flex[^\"]*min-h-0[^\"]*flex-1[^\"]*min-w-0[^\"]*overflow-hidden"/.test(workspace),
+  '完整工作区右栏父容器应允许管理面板占满剩余宽度',
+);
 assert(/class="project-management-panel flex-1 min-w-0 w-full h-full/.test(panel), '共享管理面板应提供 flex/width/height contract');
 assert(/v-if="hasGitRepo"[\s\S]*t\('git\.title'\)/.test(panel), 'Panel 的 Git 页签必须受 Git capability 控制');
 assert(/async function initRepo[\s\S]*isGitRepo\.value\[projectId\] = true[\s\S]*refreshSummaryAndStatus/.test(gitStore), '初始化 Git 后 store 应立即更新 capability 并刷新状态');

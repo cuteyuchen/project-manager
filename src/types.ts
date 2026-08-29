@@ -255,7 +255,7 @@ export interface Settings {
  * 统一了原先 `stores/project.ts` 与 `ProjectWorkspace.vue` 里两份字面量完全
  * 相同的重复定义；`utils/workspaceTabFallback.ts` 也复用同一套取值。
  */
-export type WorkspaceTab = 'console' | 'git' | 'files' | 'memo' | 'env';
+export type WorkspaceTab = 'console' | 'git' | 'editor' | 'files' | 'memo' | 'env';
 
 /**
  * 工作区导航记忆。

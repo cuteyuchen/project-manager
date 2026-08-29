@@ -94,6 +94,34 @@ export interface PortEntry {
     command_line?: string | null;
 }
 
+export interface WorkspaceDirEntry {
+    name: string;
+    isDirectory: boolean;
+    size?: number;
+}
+
+export interface WorkspaceStat {
+    exists: boolean;
+    isDirectory: boolean;
+    size: number;
+    diskVersion: string;
+    readOnly: boolean;
+}
+
+export interface EditorFileSnapshot {
+    content: string;
+    size: number;
+    diskVersion: string;
+    encoding: 'utf-8' | 'utf-8-bom' | 'other';
+    eol: 'lf' | 'crlf';
+    readOnly: boolean;
+}
+
+export interface EditorWriteResult {
+    diskVersion: string;
+    size: number;
+}
+
 export interface PlatformAPI {
     // NVM
     getNvmList(): Promise<NodeVersion[]>;
@@ -133,6 +161,7 @@ export interface PlatformAPI {
     openInEditor(path: string, editor?: string): Promise<void>;
     openInTerminal(path: string, terminal?: string, nodePath?: string, packageManager?: string): Promise<void>;
     openFolder(path: string): Promise<void>;
+    openPath(path: string): Promise<void>;
     revealInFolder(path: string): Promise<void>;
     openUrl(url: string): Promise<void>;
 
@@ -143,6 +172,24 @@ export interface PlatformAPI {
     readBinaryFileBase64(path: string): Promise<string>;
     writeTextFile(path: string, content: string): Promise<void>;
     readDir(path: string): Promise<{ name: string; isDirectory: boolean }[]>;
+    workspaceReadDir(root: string, relativePath: string): Promise<WorkspaceDirEntry[]>;
+    workspaceCreateFile(root: string, relativePath: string): Promise<void>;
+    workspaceCreateDirectory(root: string, relativePath: string): Promise<void>;
+    workspaceRename(root: string, fromRelative: string, toRelative: string): Promise<void>;
+    workspaceTrash(root: string, relativePath: string): Promise<void>;
+    workspaceStat(root: string, relativePath: string): Promise<WorkspaceStat>;
+    workspaceReadEditorFile(root: string, relativePath: string): Promise<EditorFileSnapshot>;
+    workspaceReadBinaryFileBase64(root: string, relativePath: string): Promise<string>;
+    workspaceWriteEditorFile(
+        root: string,
+        relativePath: string,
+        content: string,
+        expectedDiskVersion?: string,
+        eol?: 'lf' | 'crlf',
+        bom?: boolean,
+        force?: boolean,
+    ): Promise<EditorWriteResult>;
+    workspaceTrashMode(): Promise<'recycle_bin' | 'permanent'>;
 
     getAppVersion(): Promise<string>;
 

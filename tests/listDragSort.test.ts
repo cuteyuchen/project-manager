@@ -51,11 +51,13 @@ assert.deepEqual(computeManualOrderAssignments([]), []);
 const root = process.cwd();
 const dashboard = readFileSync(resolve(root, 'src/views/Dashboard.vue'), 'utf8');
 const workspace = readFileSync(resolve(root, 'src/components/dashboard/ProjectWorkspace.vue'), 'utf8');
+const treeNode = readFileSync(resolve(root, 'src/components/dashboard/ProjectTreeNode.vue'), 'utf8');
+const fileTreeNode = readFileSync(resolve(root, 'src/components/dashboard/FileTreeNode.vue'), 'utf8');
 const composable = readFileSync(resolve(root, 'src/composables/useListDragSort.ts'), 'utf8');
 
 assert(
-  /useListDragSort/.test(dashboard) && /useListDragSort/.test(workspace),
-  '项目列表与子项目列表都应复用 useListDragSort，不要各写一份拖拽逻辑',
+  /useListDragSort/.test(dashboard) && /useListDragSort/.test(treeNode),
+  'Dashboard 项目树与其节点应复用 useListDragSort',
 );
 
 assert(
@@ -75,23 +77,11 @@ assert(
   '拖拽途中组件卸载时必须解绑 document 上的全局监听',
 );
 
-/***********************父项目入口卡必须在拖拽容器外*********************/
-// 换位判定用的是 .draggable-list 直接子元素的下标，必须与 draggableChildren
-// 一一对应。父项目入口卡不在 children 里，混进容器会让所有下标错位。
-
-const listStart = workspace.indexOf('class="draggable-list');
-const parentEntryIndex = workspace.indexOf('dashboard.parentProjectEntry');
-
-assert(listStart >= 0, '子项目列表应有 .draggable-list 容器');
-assert(parentEntryIndex >= 0, '子项目列表应有父项目入口卡');
 assert(
-  parentEntryIndex < listStart,
-  '父项目入口卡必须渲染在 .draggable-list 之前（容器外），否则拖拽换位的下标会错位',
-);
-
-assert(
-  /:data-project-id="child\.id"/.test(workspace),
-  '子项目条目必须带 data-project-id，FLIP 动画靠它匹配换位前后的元素',
+  /WorkspaceProjectExplorer/.test(workspace)
+  && !/useListDragSort/.test(workspace)
+  && !/draggable/.test(fileTreeNode),
+  'R1 Explorer 不承担项目排序，文件行也不能触发项目拖拽',
 );
 
 console.log('listDragSort tests passed');

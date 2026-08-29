@@ -40,6 +40,115 @@ function normalizeRepoRelativePath(raw) {
     return parts.join('/');
 }
 
+function normalizeWorkspaceRelativePath(raw, allowEmpty = false) {
+    const replaced = String(raw || '').replace(/\\/g, '/');
+    if (replaced.includes('\0') || replaced.startsWith('/') || /^[A-Za-z]:/.test(replaced)) {
+        throw new Error(`Invalid workspace-relative path: ${raw}`);
+    }
+    const parts = [];
+    for (const part of replaced.split('/')) {
+        if (!part || part === '.') continue;
+        if (part === '..') throw new Error(`Path escapes workspace root: ${raw}`);
+        parts.push(part);
+    }
+    if (!allowEmpty && !parts.length) throw new Error(`Workspace-relative path is required: ${raw}`);
+    return parts;
+}
+
+function assertWorkspaceWithin(root, candidate) {
+    const relative = path.relative(root, candidate);
+    if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+        throw new Error(`Path escapes workspace root: ${candidate}`);
+    }
+}
+
+function resolveWorkspacePath(root, relative, allowMissing = false) {
+    const rootPath = fs.realpathSync(path.resolve(String(root || '')));
+    if (!fs.statSync(rootPath).isDirectory()) throw new Error('Workspace root is not a directory');
+    const parts = normalizeWorkspaceRelativePath(relative, true);
+    const candidate = path.resolve(rootPath, ...parts);
+    if (fs.existsSync(candidate)) {
+        const realPath = fs.realpathSync(candidate);
+        assertWorkspaceWithin(rootPath, realPath);
+        return realPath;
+    }
+    if (!allowMissing) throw new Error(`Workspace path does not exist: ${relative}`);
+    const parent = fs.realpathSync(path.dirname(candidate));
+    assertWorkspaceWithin(rootPath, parent);
+    return path.join(parent, path.basename(candidate));
+}
+
+function workspaceDiskVersion(filePath, stat = fs.statSync(filePath)) {
+    return `${path.resolve(filePath)}:${stat.size}:${stat.mtimeMs}:${stat.mode}`;
+}
+
+function isReadonlyPath(filePath, stat = fs.statSync(filePath)) {
+    if ((stat.mode & 0o222) === 0) return true;
+    try {
+        fs.accessSync(filePath, fs.constants.W_OK);
+        return false;
+    } catch (_) {
+        return true;
+    }
+}
+
+function decodeEditorBuffer(buffer) {
+    let encoding = 'utf-8';
+    let contentBuffer = buffer;
+    if (buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
+        encoding = 'utf-8-bom';
+        contentBuffer = buffer.subarray(3);
+    } else {
+        try {
+            new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+        } catch (_) {
+            encoding = 'other';
+        }
+    }
+    return {
+        content: decodeTextBuffer(contentBuffer).replace(/\r\n/g, '\n').replace(/\r/g, '\n'),
+        encoding,
+        readOnly: encoding === 'other',
+    };
+}
+
+function editorBytes(content, eol = 'lf', bom = false) {
+    const normalized = String(content || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const output = eol === 'crlf' ? normalized.replace(/\n/g, '\r\n') : normalized;
+    const prefix = bom ? Buffer.from([0xef, 0xbb, 0xbf]) : Buffer.alloc(0);
+    return Buffer.concat([prefix, Buffer.from(output, 'utf8')]);
+}
+
+function atomicWriteEditorBytes(target, bytes) {
+    const parent = path.dirname(target);
+    const temp = path.join(parent, `.${path.basename(target)}.${process.pid}.${Date.now()}.editor.tmp`);
+    fs.writeFileSync(temp, bytes);
+    try {
+        fs.renameSync(temp, target);
+    } catch (error) {
+        if (!fs.existsSync(target) || !fs.statSync(target).isFile()) {
+            try { fs.rmSync(temp, { force: true }); } catch (_) {}
+            throw error;
+        }
+        const backup = path.join(parent, `.${path.basename(target)}.${process.pid}.${Date.now()}.editor.bak`);
+        try {
+            fs.renameSync(target, backup);
+            try {
+                fs.renameSync(temp, target);
+                try { fs.rmSync(backup, { force: true }); } catch (_) {}
+            } catch (replaceError) {
+                try { fs.renameSync(backup, target); } catch (restoreError) {
+                    throw new Error(`${replaceError.message}; failed to restore original: ${restoreError.message}`);
+                }
+                throw replaceError;
+            }
+        } catch (replaceError) {
+            try { fs.rmSync(temp, { force: true }); } catch (_) {}
+            throw replaceError;
+        }
+    }
+}
+
 function gitRepoRoot(projectPath) {
     return execFileSync('git', ['rev-parse', '--show-toplevel'], {
         cwd: projectPath, windowsHide: true,
@@ -150,6 +259,7 @@ function gitImageMime(file) {
         case '.gif': return 'image/gif';
         case '.bmp': return 'image/bmp';
         case '.svg': return 'image/svg+xml';
+        case '.ico': return 'image/x-icon';
         default: return null;
     }
 }
@@ -1606,14 +1716,112 @@ window.services = {
         platform.shellOpenExternal(url);
     },
 
-    openFolder: async (path) => {
-        platform.shellOpenPath(path);
+    openFolder: async (folderPath) => {
+        if (process.platform === 'win32') {
+            spawn('explorer.exe', [folderPath], { windowsHide: true });
+            return;
+        }
+        if (process.platform === 'darwin') {
+            spawn('open', [folderPath]);
+            return;
+        }
+        platform.shellOpenPath(folderPath);
     },
+
+    openPath: async (filePath) => {
+        platform.shellOpenPath(filePath);
+    },
+
+    workspaceReadDir: async (root, relativePath = '') => {
+        const rootPath = fs.realpathSync(path.resolve(root));
+        const directory = resolveWorkspacePath(rootPath, relativePath);
+        if (!fs.statSync(directory).isDirectory()) throw new Error('Workspace path is not a directory');
+        return fs.readdirSync(directory, { withFileTypes: true })
+            .filter(entry => !entry.isSymbolicLink())
+            .map(entry => {
+                const fullPath = path.join(directory, entry.name);
+                assertWorkspaceWithin(rootPath, fs.realpathSync(fullPath));
+                return { name: entry.name, isDirectory: entry.isDirectory(), size: fs.statSync(fullPath).size };
+            })
+            .sort((a, b) => Number(!a.isDirectory) - Number(!b.isDirectory) || a.name.localeCompare(b.name));
+    },
+
+    workspaceCreateFile: async (root, relativePath) => {
+        const filePath = resolveWorkspacePath(root, relativePath, true);
+        if (fs.existsSync(filePath)) throw new Error(`Path already exists: ${relativePath}`);
+        const fd = fs.openSync(filePath, 'wx');
+        fs.closeSync(fd);
+    },
+
+    workspaceCreateDirectory: async (root, relativePath) => {
+        const directory = resolveWorkspacePath(root, relativePath, true);
+        if (fs.existsSync(directory)) throw new Error(`Path already exists: ${relativePath}`);
+        fs.mkdirSync(directory);
+    },
+
+    workspaceRename: async (root, fromRelative, toRelative) => {
+        const rootPath = fs.realpathSync(path.resolve(root));
+        const fromPath = resolveWorkspacePath(rootPath, fromRelative);
+        if (fromPath === rootPath) throw new Error('Cannot rename workspace root');
+        const toPath = resolveWorkspacePath(rootPath, toRelative, true);
+        if (fs.existsSync(toPath)) throw new Error(`Target path already exists: ${toRelative}`);
+        fs.renameSync(fromPath, toPath);
+    },
+
+    workspaceTrash: async (root, relativePath) => {
+        const rootPath = fs.realpathSync(path.resolve(root));
+        const target = resolveWorkspacePath(rootPath, relativePath);
+        if (target === rootPath) throw new Error('Cannot delete workspace root');
+        fs.rmSync(target, { recursive: true, force: false });
+    },
+
+    workspaceStat: async (root, relativePath = '') => {
+        const target = resolveWorkspacePath(root, relativePath, true);
+        if (!fs.existsSync(target)) return { exists: false, isDirectory: false, size: 0, diskVersion: `missing:${target}`, readOnly: false };
+        const stat = fs.statSync(target);
+        return { exists: true, isDirectory: stat.isDirectory(), size: stat.size, diskVersion: workspaceDiskVersion(target, stat), readOnly: isReadonlyPath(target, stat) };
+    },
+
+    workspaceReadEditorFile: async (root, relativePath) => {
+        const target = resolveWorkspacePath(root, relativePath);
+        const stat = fs.statSync(target);
+        if (stat.isDirectory()) throw new Error('Cannot open a directory in the editor');
+        const bytes = fs.readFileSync(target);
+        const decoded = decodeEditorBuffer(bytes);
+        return {
+            content: decoded.content,
+            size: bytes.length,
+            diskVersion: workspaceDiskVersion(target, stat),
+            encoding: decoded.encoding,
+            eol: bytes.includes(Buffer.from('\r\n')) ? 'crlf' : 'lf',
+            readOnly: decoded.readOnly || isReadonlyPath(target, stat),
+        };
+    },
+
+    workspaceReadBinaryFileBase64: async (root, relativePath) => {
+        const target = resolveWorkspacePath(root, relativePath);
+        const stat = fs.statSync(target);
+        if (stat.size > 20 * 1024 * 1024) throw new Error('file_too_large');
+        return fs.readFileSync(target).toString('base64');
+    },
+
+    workspaceWriteEditorFile: async (root, relativePath, content, expectedDiskVersion = '', eol = 'lf', bom = false, force = false) => {
+        const target = resolveWorkspacePath(root, relativePath, true);
+        const currentVersion = fs.existsSync(target) ? workspaceDiskVersion(target) : '';
+        if (!force && String(expectedDiskVersion || '') !== currentVersion) throw new Error('external_modified');
+        const bytes = editorBytes(content, eol, Boolean(bom));
+        atomicWriteEditorBytes(target, bytes);
+        const stat = fs.statSync(target);
+        return { diskVersion: workspaceDiskVersion(target, stat), size: stat.size };
+    },
+
+    workspaceTrashMode: async () => 'permanent',
 
     revealInFolder: async (filePath) => {
         if (process.platform === 'win32') {
             const normalized = filePath.replace(/\//g, '\\');
-            spawn('explorer.exe', ['/select,', normalized], { windowsHide: true });
+            const target = fs.existsSync(normalized) ? normalized : path.dirname(normalized);
+            spawn('explorer.exe', ['/select,"' + target + '"'], { windowsHide: true });
             return;
         }
         if (process.platform === 'darwin') {

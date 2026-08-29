@@ -1,4 +1,15 @@
-import type { PlatformAPI, ProjectInfo, TerminalInfo, EditorInfo, PortEntry, PackageManagerResolveResult } from '../types';
+import type {
+  PlatformAPI,
+  ProjectInfo,
+  TerminalInfo,
+  EditorInfo,
+  PortEntry,
+  PackageManagerResolveResult,
+  WorkspaceDirEntry,
+  WorkspaceStat,
+  EditorFileSnapshot,
+  EditorWriteResult,
+} from '../types';
 import type {
   NodeVersion,
   GitStatusResult,
@@ -91,6 +102,11 @@ export class UToolsAdapter implements PlatformAPI {
         return this.service.openFolder(path);
   }
   openFolder(path: string): Promise<void> { return this.service.openFolder(path); }
+  openPath(path: string): Promise<void> {
+    const service = this.service as PlatformAPI & { openPath?: (path: string) => Promise<void> };
+    if (typeof service.openPath === 'function') return service.openPath(path);
+    return this.service.openFolder(path);
+  }
   revealInFolder(path: string): Promise<void> {
     const service = this.service as PlatformAPI & { revealInFolder?: (path: string) => Promise<void> };
     if (typeof service.revealInFolder === 'function') return service.revealInFolder(path);
@@ -106,6 +122,45 @@ export class UToolsAdapter implements PlatformAPI {
   readBinaryFileBase64(path: string): Promise<string> { return this.service.readBinaryFileBase64(path); }
   writeTextFile(path: string, content: string): Promise<void> { return this.service.writeTextFile(path, content); }
   readDir(path: string): Promise<{ name: string; isDirectory: boolean }[]> { return this.service.readDir(path); }
+
+  workspaceReadDir(root: string, relativePath: string): Promise<WorkspaceDirEntry[]> {
+    return this.service.workspaceReadDir(root, relativePath);
+  }
+  workspaceCreateFile(root: string, relativePath: string): Promise<void> {
+    return this.service.workspaceCreateFile(root, relativePath);
+  }
+  workspaceCreateDirectory(root: string, relativePath: string): Promise<void> {
+    return this.service.workspaceCreateDirectory(root, relativePath);
+  }
+  workspaceRename(root: string, fromRelative: string, toRelative: string): Promise<void> {
+    return this.service.workspaceRename(root, fromRelative, toRelative);
+  }
+  workspaceTrash(root: string, relativePath: string): Promise<void> {
+    return this.service.workspaceTrash(root, relativePath);
+  }
+  workspaceStat(root: string, relativePath: string): Promise<WorkspaceStat> {
+    return this.service.workspaceStat(root, relativePath);
+  }
+  workspaceReadEditorFile(root: string, relativePath: string): Promise<EditorFileSnapshot> {
+    return this.service.workspaceReadEditorFile(root, relativePath);
+  }
+  workspaceReadBinaryFileBase64(root: string, relativePath: string): Promise<string> {
+    return this.service.workspaceReadBinaryFileBase64(root, relativePath);
+  }
+  workspaceWriteEditorFile(
+    root: string,
+    relativePath: string,
+    content: string,
+    expectedDiskVersion?: string,
+    eol?: 'lf' | 'crlf',
+    bom?: boolean,
+    force?: boolean,
+  ): Promise<EditorWriteResult> {
+    return this.service.workspaceWriteEditorFile(root, relativePath, content, expectedDiskVersion, eol, bom, force);
+  }
+  workspaceTrashMode(): Promise<'recycle_bin' | 'permanent'> {
+    return this.service.workspaceTrashMode();
+  }
 
   getAppVersion(): Promise<string> { return this.service.getAppVersion(); }
 

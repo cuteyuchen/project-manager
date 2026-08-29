@@ -164,6 +164,7 @@ function editProject(): void {
         :project="project"
         :initial-tab="initialTab"
         :show-title="false"
+        :editor-enabled="false"
       />
     </div>
   </el-dialog>

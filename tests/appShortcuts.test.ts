@@ -219,14 +219,14 @@ assert(
 );
 
 assert(
-  /keys: 'Escape', enabled: \(\) => !!currentNode\.value, handler: handleBack/.test(workspace),
-  '工作区应支持 Esc 逐级返回，并在层级为空时不响应',
+  /keys: 'Escape', enabled: \(\) => !!rootProject\.value, handler: handleBack/.test(workspace),
+  '工作区应在存在根项目时响应 Esc 返回项目列表',
 );
 
 // Windows Tauri 通过 on_webview_ready 关闭 WebView2 浏览器加速键，方案键位可进入页面。
 assert(
   /keys: 'Alt\+ArrowLeft'/.test(workspace),
-  '工作区应绑定 Alt+← 逐级返回',
+  '工作区应绑定 Alt+← 返回项目列表',
 );
 assert(!/sidebarMenuShortcuts/.test(workspace), '工作区不应占用 Ctrl+1~5，否则会与左侧菜单导航冲突');
 assert(

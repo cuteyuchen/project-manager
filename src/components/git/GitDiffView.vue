@@ -6,6 +6,7 @@ import { ElMessageBox } from 'element-plus';
 import type { Project, GitBinaryDiffMeta, GitImageDiffPayload } from '../../types';
 import { showPersistentGitError } from './message';
 import GitImageDiffView from './GitImageDiffView.vue';
+import { isCurrentGitImageRequest, type GitImageRequestIdentity } from '../../utils/gitImageRequest';
 
 const props = defineProps<{
   project: Project;
@@ -35,13 +36,13 @@ let binaryRequestId = 0;
 // 那样「取回来还是空」会让这个 watch 反复自激成死循环。
 const refetchedTargets = new Set<string>();
 
-watch(selection, (current) => {
+watch([selection, () => props.project.id, () => props.project.path], ([current]) => {
   void loadBinaryPreview(current);
   if (!current.file || current.content) return;
 
   const target = current.source === 'worktree'
-    ? `worktree:${current.staged ? 'staged' : 'unstaged'}:${current.file}`
-    : `commit:${current.source.commit}:${current.file}`;
+    ? `${props.project.id}:worktree:${current.staged ? 'staged' : 'unstaged'}:${current.file}`
+    : `${props.project.id}:commit:${current.source.commit}:${current.file}`;
   if (refetchedTargets.has(target)) return;
   refetchedTargets.add(target);
 
@@ -57,28 +58,58 @@ const DIFF_BINARY_MARKER = '__BINARY_FILE__';
 const DIFF_TOO_LARGE_MARKER = '__FILE_TOO_LARGE__';
 const isBinaryFile = computed(() => diffContent.value === DIFF_BINARY_MARKER);
 const isTooLargeFile = computed(() => diffContent.value === DIFF_TOO_LARGE_MARKER);
-const isImageFile = computed(() => /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(diffFile.value || diffOldPath.value));
-const isImageDiff = computed(() => isImageFile.value && !isTooLargeFile.value);
+const isImageFile = computed(() =>
+  /\.(png|jpe?g|webp|gif|bmp|svg|ico)$/i.test(diffFile.value)
+  || /\.(png|jpe?g|webp|gif|bmp|svg|ico)$/i.test(diffOldPath.value),
+);
+// 图片大小由图片 endpoint 按 10 MB/侧、20 MB 总量校验，不能被文本 diff 的 5 MB 门槛提前拦截。
+const isImageDiff = computed(() => isImageFile.value);
 const isBinaryFallback = computed(() => isBinaryFile.value && !isImageDiff.value);
 
+function binaryRequestIdentity(current: typeof selection.value): GitImageRequestIdentity {
+  return {
+    projectId: props.project.id,
+    projectPath: props.project.path,
+    source: current.source === 'worktree' ? 'worktree' : `commit:${current.source.commit}`,
+    staged: current.staged,
+    file: current.file,
+    oldPath: current.oldPath || '',
+  };
+}
+
+function isCurrentBinaryRequest(requestId: number, identity: GitImageRequestIdentity): boolean {
+  const current = binaryRequestIdentity(selection.value);
+  return isCurrentGitImageRequest(requestId, binaryRequestId, identity, current)
+    && identity.projectId === props.project.id
+    && identity.projectPath === props.project.path;
+}
+
+function formatBinaryError(error: unknown): string {
+  const message = String(error);
+  return message.includes('too_large') ? t('git.imageTooLarge') : message;
+}
+
 async function loadBinaryPreview(current: typeof selection.value) {
+  const requestId = ++binaryRequestId;
+  const identity = binaryRequestIdentity(current);
   imageDiff.value = null;
   binaryMeta.value = null;
   binaryError.value = '';
-  if (!current.file || current.content === DIFF_TOO_LARGE_MARKER) return;
+  binaryLoading.value = false;
+  if (!current.file) return;
 
-  const imageFile = /\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(current.file || current.oldPath || '');
+  const imageFile = /\.(png|jpe?g|webp|gif|bmp|svg|ico)$/i.test(current.file)
+    || /\.(png|jpe?g|webp|gif|bmp|svg|ico)$/i.test(current.oldPath || '');
   const shouldLoadBinaryMeta = current.content === DIFF_BINARY_MARKER && !imageFile;
   if (!imageFile && !shouldLoadBinaryMeta) return;
 
-  const requestId = ++binaryRequestId;
   binaryLoading.value = true;
   try {
     const args = current.source === 'worktree'
       ? { staged: current.staged, commit: undefined, oldPath: current.oldPath }
       : { staged: false, commit: current.source.commit, oldPath: current.oldPath };
     if (imageFile) {
-      imageDiff.value = await gitStore.getImageDiff(
+      const result = await gitStore.getImageDiff(
         props.project.id,
         props.project.path,
         current.file,
@@ -86,19 +117,23 @@ async function loadBinaryPreview(current: typeof selection.value) {
         args.commit,
         args.oldPath,
       );
+      if (!isCurrentBinaryRequest(requestId, identity)) return;
+      imageDiff.value = result;
     } else {
-      binaryMeta.value = await gitStore.getBinaryDiffMeta(
+      const result = await gitStore.getBinaryDiffMeta(
         props.project.path,
         current.file,
         args.staged,
         args.commit,
         args.oldPath,
       );
+      if (!isCurrentBinaryRequest(requestId, identity)) return;
+      binaryMeta.value = result;
     }
   } catch (error) {
-    if (requestId === binaryRequestId) binaryError.value = String(error);
+    if (isCurrentBinaryRequest(requestId, identity)) binaryError.value = formatBinaryError(error);
   } finally {
-    if (requestId === binaryRequestId) binaryLoading.value = false;
+    if (isCurrentBinaryRequest(requestId, identity)) binaryLoading.value = false;
   }
 }
 

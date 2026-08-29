@@ -14,11 +14,12 @@ function caps(overrides: Partial<WorkspaceTabCapabilities> = {}): WorkspaceTabCa
     hasRunnableCommands: true,
     hasGitRepo: true,
     hasFrontendEnv: true,
+    editorEnabled: true,
     ...overrides,
   };
 }
 
-const ALL_TABS: WorkspaceTab[] = ['console', 'git', 'files', 'memo', 'env'];
+const ALL_TABS: WorkspaceTab[] = ['console', 'git', 'editor', 'files', 'memo', 'env'];
 
 /***********************可用性判定*********************/
 
@@ -36,11 +37,13 @@ assert(isWorkspaceTabAvailable('env', caps({ hasRunnableCommands: false })), 'en
 // 环境入口带 v-if，无环境组时 env 不可用
 assert(!isWorkspaceTabAvailable('env', caps({ hasFrontendEnv: false })), '无环境配置时 env 不可用');
 assert(isWorkspaceTabAvailable('console', caps({ hasFrontendEnv: false })), 'console 只看 hasRunnableCommands');
+assert(!isWorkspaceTabAvailable('editor', caps({ editorEnabled: false })), '快速管理弹窗应禁用 editor 页签');
 
 // 没有活动叶子时，绑定叶子的三个页签都不可用；文件/备忘录仍可用
 for (const tab of ['console', 'git', 'env'] as WorkspaceTab[]) {
   assert(!isWorkspaceTabAvailable(tab, caps({ leafTabsDisabled: true })), `无活动叶子时 ${tab} 不可用`);
 }
+assert(!isWorkspaceTabAvailable('editor', caps({ leafTabsDisabled: true })), '无活动项目时 editor 不可用');
 for (const tab of ['files', 'memo'] as WorkspaceTab[]) {
   assert(isWorkspaceTabAvailable(tab, caps({ leafTabsDisabled: true })), `无活动叶子时 ${tab} 仍可用`);
 }
@@ -57,11 +60,13 @@ assert.equal(resolveWorkspaceTabFallback('memo', caps()), 'memo');
 // 不可用时优先退到仍可用的命令，其次 Git，最后文件
 assert.equal(resolveWorkspaceTabFallback('console', caps({ hasRunnableCommands: false })), 'git');
 assert.equal(resolveWorkspaceTabFallback('env', caps({ hasFrontendEnv: false })), 'console');
+assert.equal(resolveWorkspaceTabFallback('editor', caps({ editorEnabled: false })), 'console');
 
 // 没有活动叶子时绑定项目的页签都渲染不出来，只能退到文件
 assert.equal(resolveWorkspaceTabFallback('git', caps({ leafTabsDisabled: true })), 'files');
 assert.equal(resolveWorkspaceTabFallback('console', caps({ leafTabsDisabled: true })), 'files');
 assert.equal(resolveWorkspaceTabFallback('env', caps({ leafTabsDisabled: true })), 'files');
+assert.equal(resolveWorkspaceTabFallback('editor', caps({ leafTabsDisabled: true })), 'files');
 
 // Git 失效时优先命令，其次文件；有 Git 时才回到 Git
 assert.equal(resolveWorkspaceTabFallback('git', caps({ hasGitRepo: false })), 'console');

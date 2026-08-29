@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 
 const read = (path: string) => readFileSync(resolve(process.cwd(), path), 'utf8');
 const workspace = read('src/components/dashboard/ProjectWorkspace.vue');
+const explorer = read('src/components/dashboard/WorkspaceProjectExplorer.vue');
+const explorerNode = read('src/components/dashboard/ProjectExplorerNode.vue');
 const managementPanel = read('src/components/dashboard/ProjectManagementPanel.vue');
 const tabFallback = read('src/utils/workspaceTabFallback.ts');
 const calendar = read('src/views/CommitCalendar.vue');
@@ -12,7 +14,8 @@ const theme = read('src/styles/theme.css');
 
 assert(/workspaceProject = computed<Project \| null>\(\(\) => activeLeaf\.value \|\| currentNode\.value\)/.test(workspace), '文件和备忘录应绑定当前项目');
 assert(/if \(!selectedLeafId\.value\) return currentNode\.value/.test(workspace), '父项目应作为容器模式下的默认活动项目');
-assert(/parentProjectEntry/.test(workspace) && /:active="!selectedLeafId \|\| selectedLeafId === currentNode\.id"/.test(workspace), '父项目入口应与子项目同级并默认选中');
+assert(/<WorkspaceProjectExplorer/.test(workspace) && /:selected-project-id="selectedProject\?\.id \|\| null"/.test(workspace), 'Explorer 应与右侧面板共享当前项目选择');
+assert(/<ProjectExplorerNode/.test(explorer) && /<FileTreeNode/.test(explorerNode), 'Explorer 应同时渲染项目节点与文件节点');
 assert(/v-if="hasRunnableCommands"[\s\S]*?selectTab\('console'\)/.test(managementPanel), '无命令时应隐藏命令入口');
 assert(/v-if="hasFrontendEnv"[\s\S]*?selectTab\('env'\)/.test(managementPanel), '无环境配置时应隐藏环境入口');
 

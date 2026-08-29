@@ -3,10 +3,9 @@
 /**
  * 右侧工作区页签。
  *
- * 与 `stores/project.ts` 的 `WorkspaceTab`、`ProjectWorkspace.vue` 的 `WorkTab`
- * 字面量一致（三处重复定义待统一）。
+ * 与 `types.ts` 的 `WorkspaceTab` 字面量一致。
  */
-export type WorkspaceTab = 'console' | 'git' | 'files' | 'memo' | 'env';
+export type WorkspaceTab = 'console' | 'git' | 'editor' | 'files' | 'memo' | 'env';
 
 /** 判定页签可用性所需的能力快照，全部来自 ProjectWorkspace 的 computed */
 export interface WorkspaceTabCapabilities {
@@ -18,6 +17,8 @@ export interface WorkspaceTabCapabilities {
   hasGitRepo: boolean;
   /** 有前端环境配置组 */
   hasFrontendEnv: boolean;
+  /** 当前面板允许完整编辑器 */
+  editorEnabled: boolean;
 }
 
 /**
@@ -33,12 +34,13 @@ export function isWorkspaceTabAvailable(
   capabilities: WorkspaceTabCapabilities,
 ): boolean {
   // 没有活动叶子时，绑定叶子的三个页签都渲染不出内容
-  if (capabilities.leafTabsDisabled && (tab === 'console' || tab === 'git' || tab === 'env')) {
+  if (capabilities.leafTabsDisabled && (tab === 'console' || tab === 'git' || tab === 'env' || tab === 'editor')) {
     return false;
   }
   if (tab === 'console') return capabilities.hasRunnableCommands;
   if (tab === 'git') return capabilities.hasGitRepo;
   if (tab === 'env') return capabilities.hasFrontendEnv;
+  if (tab === 'editor') return capabilities.editorEnabled;
   return true;
 }
 

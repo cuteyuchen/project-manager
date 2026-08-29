@@ -1500,8 +1500,9 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String, packa
 #[tauri::command]
 pub fn open_folder(path: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
-    Command::new("explorer")
+    Command::new("explorer.exe")
         .arg(path)
+        .creation_flags(CREATE_NO_WINDOW)
         .spawn()
         .map_err(|e| e.to_string())?;
 
@@ -1536,9 +1537,8 @@ pub fn reveal_in_folder(path: String) -> Result<(), String> {
                 .into_owned()
         };
 
-        Command::new("explorer")
-        .arg("/select,")
-        .arg(target)
+        Command::new("explorer.exe")
+        .arg(format!("/select,\"{target}\""))
         .creation_flags(CREATE_NO_WINDOW)
         .spawn()
         .map_err(|e| e.to_string())?;

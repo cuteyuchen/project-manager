@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { Project, ProjectQuickCommand } from '../types';
 import { useProjectStore } from '../stores/project';
+import { useWorkspaceEditorStore } from '../stores/workspaceEditor';
 import HealthBadge from './dashboard/HealthBadge.vue';
 import type { ProjectHealthSnapshot } from '../types';
 import { computed } from 'vue';
@@ -43,6 +44,7 @@ const emit = defineEmits<{
     (event: 'open-running', project: Project): void;
 }>();
 const store = useProjectStore();
+const editorStore = useWorkspaceEditorStore();
 const { openEditor, openTerminal, openFolder } = useProjectExternalActions(() => props.project);
 
 const isActive = computed(() =>
@@ -157,10 +159,14 @@ function handleTogglePin() {
 
 function handleDelete() {
     const hasChildren = childCount.value > 0;
+    const projectIds = [props.project.id, ...store.collectDescendantIds(props.project.id)];
+    const dirtyWarning = editorStore.hasDirtyDocuments(projectIds)
+        ? '\n\n该项目有未保存的编辑器内容，删除后这些文档会关闭。'
+        : '';
     ElMessageBox.confirm(
-        hasChildren
+        `${hasChildren
             ? t('dashboard.deleteProjectWithChildrenConfirm', { name: props.project.name, count: childCount.value })
-            : t('dashboard.deleteProjectConfirm', { name: props.project.name }),
+            : t('dashboard.deleteProjectConfirm', { name: props.project.name })}${dirtyWarning}`,
         t('dashboard.deleteProject'),
         {
             confirmButtonText: t('common.confirm'),

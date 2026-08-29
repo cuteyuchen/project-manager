@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 const root = process.cwd();
 const projectListItem = readFileSync(resolve(root, 'src/components/ProjectListItem.vue'), 'utf8');
 const projectWorkspace = readFileSync(resolve(root, 'src/components/dashboard/ProjectWorkspace.vue'), 'utf8');
+const explorer = readFileSync(resolve(root, 'src/components/dashboard/WorkspaceProjectExplorer.vue'), 'utf8');
 const managementPanel = readFileSync(resolve(root, 'src/components/dashboard/ProjectManagementPanel.vue'), 'utf8');
 
 /***********************子项目列表卡片布局*********************/
@@ -19,27 +20,22 @@ assert(
   'ProjectListItem stacked 模式应有独立样式类',
 );
 
-assert(
-  /(?:\:layout="['"]stacked['"]"|layout="stacked")/.test(projectWorkspace),
-  'ProjectWorkspace 的子项目列表应启用 stacked 卡片布局',
-);
+assert(/<WorkspaceProjectExplorer/.test(projectWorkspace), 'ProjectWorkspace 应渲染统一 Project Explorer');
 
 assert(
   /project-row-actions/.test(projectListItem),
   'ProjectListItem 应把操作按钮收敛到可重排的 actions 容器',
 );
 
-// 左栏拆成了「外壳 + 被过渡的内容」两层：外壳占住宽度与边框，
-// 内容才是随层级切换重建的部分。这样 mode="out-in" 的空档帧不会让左栏宽度归零，
-// 也让右栏连同 KeepAlive 缓存留在过渡范围之外活着。
 assert(
-  /class="w-80 shrink-0 app-surface-sidebar border-r overflow-hidden"/.test(projectWorkspace),
-  '子项目列表外壳应保持 w-80 宽度，减少名称和路径截断',
+  /class="workspace-project-explorer[^\"]*w-80/.test(explorer),
+  'Project Explorer 左栏应保持 w-80 宽度，减少名称和路径截断',
 );
 
 assert(
-  /<div v-if="currentNode" :key="currentNode\.id" class="h-full flex flex-col overflow-hidden">/.test(projectWorkspace),
-  '被过渡的左栏内容应只负责纵向布局，宽度与边框留在外壳上',
+  /:selected-project-id="selectedProject\?\.id \|\| null"/.test(projectWorkspace)
+  && /class="explorer-tree min-h-0 flex-1 overflow-y-auto/.test(explorer),
+  'Explorer 应把项目选择与文件树滚动区域分离',
 );
 
 assert(

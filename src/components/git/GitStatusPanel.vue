@@ -243,7 +243,11 @@ function handleGlobalScroll() {
 }
 
 function handleGlobalKeydown(event: KeyboardEvent) {
-  if (event.key === 'Escape') closeContextMenu();
+  if (event.key === 'Escape' && contextMenu.value) {
+    event.preventDefault();
+    event.stopPropagation();
+    closeContextMenu();
+  }
 }
 
 onMounted(() => {
@@ -251,7 +255,7 @@ onMounted(() => {
   document.addEventListener('click', handleGlobalClick);
   document.addEventListener('wheel', handleGlobalScroll, true);
   document.addEventListener('scroll', handleGlobalScroll, true);
-  document.addEventListener('keydown', handleGlobalKeydown);
+  document.addEventListener('keydown', handleGlobalKeydown, true);
   window.addEventListener('resize', handleGlobalScroll);
 });
 
@@ -260,7 +264,7 @@ onUnmounted(() => {
   document.removeEventListener('click', handleGlobalClick);
   document.removeEventListener('wheel', handleGlobalScroll, true);
   document.removeEventListener('scroll', handleGlobalScroll, true);
-  document.removeEventListener('keydown', handleGlobalKeydown);
+  document.removeEventListener('keydown', handleGlobalKeydown, true);
   window.removeEventListener('resize', handleGlobalScroll);
 });
 
@@ -339,20 +343,24 @@ async function handleIgnore(
     return;
   }
 
-  const tracked = applicable.filter(file => file.status !== 'untracked');
-  const untracked = applicable.filter(file => file.status === 'untracked');
-  try {
-    if (tracked.length > 0) {
-      if (!(await confirmStopTracking(tracked.length))) return;
-      await gitStore.stopTracking(
-        props.project.id,
-        props.project.path,
-        uniquePaths(tracked),
-        kind,
-        local,
-      );
-    }
-    if (untracked.length > 0) {
+    const tracked = applicable.filter(file => file.status !== 'untracked');
+    const untracked = applicable.filter(file => file.status === 'untracked');
+    try {
+      if (tracked.length > 0) {
+        if (local) {
+          ElMessage.warning(t('git.localIgnoreTrackedUnsupported'));
+        } else {
+          if (!(await confirmStopTracking(tracked.length))) return;
+          await gitStore.stopTracking(
+            props.project.id,
+            props.project.path,
+            uniquePaths(tracked),
+            kind,
+            local,
+          );
+        }
+      }
+      if (untracked.length > 0) {
       await gitStore.addIgnorePattern(
         props.project.id,
         props.project.path,
@@ -360,8 +368,9 @@ async function handleIgnore(
         kind,
         local,
       );
-    }
-    ElMessage.success(t(local ? 'git.localIgnoreSuccess' : 'git.ignoreSuccess'));
+      }
+      if (tracked.length > 0 && local && untracked.length === 0) return;
+      ElMessage.success(t(local ? 'git.localIgnoreSuccess' : 'git.ignoreSuccess'));
   } catch (e) {
     showPersistentGitError(t('git.operationFailed', { error: String(e) }));
   }

@@ -6,6 +6,8 @@ const root = process.cwd();
 const addProjectModal = readFileSync(resolve(root, 'src/components/AddProjectModal.vue'), 'utf8');
 const dashboard = readFileSync(resolve(root, 'src/views/Dashboard.vue'), 'utf8');
 const workspace = readFileSync(resolve(root, 'src/components/dashboard/ProjectWorkspace.vue'), 'utf8');
+const explorer = readFileSync(resolve(root, 'src/components/dashboard/WorkspaceProjectExplorer.vue'), 'utf8');
+const explorerNode = readFileSync(resolve(root, 'src/components/dashboard/ProjectExplorerNode.vue'), 'utf8');
 const projectListItem = readFileSync(resolve(root, 'src/components/ProjectListItem.vue'), 'utf8');
 
 /***********************手动导入子项目*********************/
@@ -124,16 +126,18 @@ assert(
   '调用方可能在挂载时 modelValue 已为 true，watch 需 immediate 才会加载候选树',
 );
 
-/***********************父项目虚拟入口*********************/
+/***********************完整工作区 Explorer 入口*********************/
 
 assert(
-  /v-if="currentNode"[\s\S]*?parentProjectEntry/.test(workspace),
-  '存在子项目时应始终显示父项目入口',
+  workspace.includes("import WorkspaceProjectExplorer from './WorkspaceProjectExplorer.vue';")
+  && /<WorkspaceProjectExplorer[\s\S]*:root-id="props\.rootId"[\s\S]*:selected-project-id="selectedProject\?\.id \|\| null"/.test(workspace),
+  '完整工作区应通过 Explorer 同时承载根项目及其所有子项目',
 );
 
 assert(
-  /const levelId = currentNode\.value\.id;[\s\S]{0,300}?selectedLeafId\.value = levelId;/.test(workspace),
-  '选择父项目入口后应将父项目作为活动项目',
+  /<ProjectExplorerNode[\s\S]*:project="rootProject"/.test(explorer)
+  && /<FileTreeNode[\s\S]*:relative-path="entry\.name"/.test(explorerNode),
+  'Explorer 应从项目根节点进入真实文件树',
 );
 
 assert(

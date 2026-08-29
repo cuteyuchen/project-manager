@@ -8,6 +8,7 @@ import { useSettingsStore } from './settings';
 import { useUsageStore } from './usage';
 import { useGitStore } from './git';
 import { useNavMemoryStore } from './navMemory.ts';
+import { useWorkspaceEditorStore } from './workspaceEditor';
 import {
   getCustomCommandDisplayNameByLocale,
   getProjectCommandRunId,
@@ -148,6 +149,7 @@ export const useProjectStore = defineStore('project', () => {
     try { useGitStore().cleanupRemovedProjects(projects.value.map(p => p.id)); } catch {}
     // 工作区导航记忆同样按项目 id 存，删完项目要一并裁掉
     try { useNavMemoryStore().cleanupRemovedProjects(projects.value.map(p => p.id)); } catch {}
+    try { useWorkspaceEditorStore().cleanupRemovedProjects(projects.value.map(p => p.id)); } catch {}
   }
 
   /***********************项目嵌套（多级）辅助*********************/

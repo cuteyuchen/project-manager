@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { GitFileStatus, GitIgnoreKind } from '../../types';
+import { positionContextSubmenu } from '../../utils/contextMenuPosition';
 
 const props = defineProps<{
   x: number;
@@ -22,6 +23,8 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const ignoreOpen = ref(false);
 const menuRef = ref<HTMLElement | null>(null);
+const submenuRef = ref<HTMLElement | null>(null);
+const submenuStyle = ref({ left: '0px', top: '0px' });
 
 function uniqueFiles(files: GitFileStatus[]): GitFileStatus[] {
   const seen = new Set<string>();
@@ -64,6 +67,20 @@ function updateMenuPosition() {
   };
 }
 
+function updateSubmenuPosition() {
+  if (!ignoreOpen.value || !menuRef.value || !submenuRef.value) return;
+  const wrap = menuRef.value.querySelector<HTMLElement>('.ctx-submenu-wrap');
+  if (!wrap) return;
+  const anchor = wrap.getBoundingClientRect();
+  const position = positionContextSubmenu(
+    { left: anchor.left, top: anchor.top, width: anchor.width, height: anchor.height },
+    submenuRef.value.offsetWidth || 210,
+    submenuRef.value.offsetHeight || 300,
+    { width: window.innerWidth, height: window.innerHeight },
+  );
+  submenuStyle.value = { left: `${position.left}px`, top: `${position.top}px` };
+}
+
 function action(type: 'stage' | 'unstage' | 'discard' | 'ignore' | 'stopTracking' | 'editor' | 'folder' | 'copyRelative' | 'copyAbsolute' | 'history', kind?: GitIgnoreKind, local?: boolean) {
   emit('action', { type, kind, local });
   if (type !== 'ignore') emit('close');
@@ -75,21 +92,43 @@ function handleMenuMouseMove(event: MouseEvent) {
   ignoreOpen.value = false;
 }
 
+function closeIgnoreSubmenu(): void {
+  ignoreOpen.value = false;
+}
+
+function closeOnViewportChange() {
+  emit('close');
+}
+
 function onKeydown(event: KeyboardEvent) {
-  if (event.key === 'Escape') emit('close');
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    emit('close');
+  }
 }
 
 onMounted(() => {
-  document.addEventListener('keydown', onKeydown);
+  document.addEventListener('keydown', onKeydown, true);
   void nextTick(updateMenuPosition);
+  window.addEventListener('resize', closeOnViewportChange);
+  document.addEventListener('scroll', closeOnViewportChange, true);
+  document.addEventListener('wheel', closeOnViewportChange, true);
 });
 
 onUnmounted(() => {
-  document.removeEventListener('keydown', onKeydown);
+  document.removeEventListener('keydown', onKeydown, true);
+  window.removeEventListener('resize', closeOnViewportChange);
+  document.removeEventListener('scroll', closeOnViewportChange, true);
+  document.removeEventListener('wheel', closeOnViewportChange, true);
 });
 
 watch(() => [props.x, props.y], () => {
   void nextTick(updateMenuPosition);
+});
+
+watch(ignoreOpen, (open) => {
+  if (open) void nextTick(updateSubmenuPosition);
 });
 </script>
 
@@ -103,18 +142,19 @@ watch(() => [props.x, props.y], () => {
       @mousemove="handleMenuMouseMove"
       @mouseleave="ignoreOpen = false"
     >
-      <button type="button" class="ctx-item" :disabled="stageable.length === 0" @click="action('stage')">
+      <button type="button" class="ctx-item" :disabled="stageable.length === 0" @mouseenter="closeIgnoreSubmenu" @click="action('stage')">
         <span>{{ stageable.length > 1 ? t('git.stageN', { count: stageable.length }) : t('git.stage') }}</span>
       </button>
-      <button type="button" class="ctx-item" :disabled="unstageable.length === 0" @click="action('unstage')">
+      <button type="button" class="ctx-item" :disabled="unstageable.length === 0" @mouseenter="closeIgnoreSubmenu" @click="action('unstage')">
         <span>{{ unstageable.length > 1 ? t('git.unstageN', { count: unstageable.length }) : t('git.unstage') }}</span>
       </button>
 
-      <div class="ctx-sep" />
+      <div class="ctx-sep" @mouseenter="closeIgnoreSubmenu" />
       <button
         type="button"
         class="ctx-item danger"
         :disabled="discardableTracked.length === 0 && discardableUntracked.length === 0"
+        @mouseenter="closeIgnoreSubmenu"
         @click="action('discard')"
       >
         <span>{{ (discardableTracked.length + discardableUntracked.length) > 1
@@ -122,13 +162,13 @@ watch(() => [props.x, props.y], () => {
           : t('git.discard') }}</span>
       </button>
 
-      <div class="ctx-sep" />
+      <div class="ctx-sep" @mouseenter="closeIgnoreSubmenu" />
       <div class="ctx-submenu-wrap" @mouseenter="ignoreOpen = true">
         <button type="button" class="ctx-item ctx-submenu-trigger" :disabled="props.files.length === 0">
           <span>{{ t('git.ignoreMenu') }}</span>
           <span class="i-mdi-chevron-right text-sm opacity-60" />
         </button>
-        <div v-if="ignoreOpen" class="ctx-submenu">
+        <div v-if="ignoreOpen" ref="submenuRef" class="ctx-submenu" :style="submenuStyle">
           <div class="ctx-group-label">{{ t('git.ignoreProject') }}</div>
           <button type="button" class="ctx-item" @click="action('ignore', 'file', false)">
             {{ t('git.ignoreThisFile') }}<span v-if="props.files.length > 1">（{{ props.files.length }}）</span>
@@ -159,26 +199,26 @@ watch(() => [props.x, props.y], () => {
         </div>
       </div>
 
-      <button type="button" class="ctx-item" :disabled="tracked.length === 0" @click="action('stopTracking')">
+      <button type="button" class="ctx-item" :disabled="tracked.length === 0" @mouseenter="closeIgnoreSubmenu" @click="action('stopTracking')">
         {{ tracked.length > 1 ? t('git.stopTrackingN', { count: tracked.length }) : t('git.stopTracking') }}
       </button>
 
-      <div class="ctx-sep" />
-      <button type="button" class="ctx-item" @click="action('editor')">
+      <div class="ctx-sep" @mouseenter="closeIgnoreSubmenu" />
+      <button type="button" class="ctx-item" @mouseenter="closeIgnoreSubmenu" @click="action('editor')">
         {{ t('git.openInEditor') }}
       </button>
-      <button type="button" class="ctx-item" @click="action('folder')">
+      <button type="button" class="ctx-item" @mouseenter="closeIgnoreSubmenu" @click="action('folder')">
         {{ t('git.revealInFolder') }}
       </button>
-      <button type="button" class="ctx-item" @click="action('copyRelative')">
+      <button type="button" class="ctx-item" @mouseenter="closeIgnoreSubmenu" @click="action('copyRelative')">
         {{ t('git.copyRelativePath') }}
       </button>
-      <button type="button" class="ctx-item" @click="action('copyAbsolute')">
+      <button type="button" class="ctx-item" @mouseenter="closeIgnoreSubmenu" @click="action('copyAbsolute')">
         {{ t('git.copyAbsolutePath') }}
       </button>
 
-      <div class="ctx-sep" />
-      <button type="button" class="ctx-item" @click="action('history')">
+      <div class="ctx-sep" @mouseenter="closeIgnoreSubmenu" />
+      <button type="button" class="ctx-item" @mouseenter="closeIgnoreSubmenu" @click="action('history')">
         {{ t('git.fileHistory') }}
       </button>
     </div>
@@ -240,9 +280,7 @@ watch(() => [props.x, props.y], () => {
 }
 
 .ctx-submenu {
-  position: absolute;
-  top: -5px;
-  left: calc(100% - 4px);
+  position: fixed;
   min-width: 210px;
   padding: 4px 0;
   border: 1px solid var(--app-border);

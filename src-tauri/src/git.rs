@@ -1271,6 +1271,15 @@ pub async fn git_add_ignore_pattern(
         let root = repository_root(&path)?;
         let kind = parse_git_ignore_kind(&kind)?;
         let normalized_files = normalize_file_list(&files)?;
+        if local.unwrap_or(false) {
+            for file in &normalized_files {
+                if run_git(&path, &["ls-files", "--error-unmatch", "--", file]).is_ok() {
+                    return Err(format!(
+                        "Tracked file cannot use local-only ignore: {file}"
+                    ));
+                }
+            }
+        }
         let patterns = normalized_files
             .iter()
             .map(|file| build_ignore_pattern(&root, file, kind))
@@ -1295,6 +1304,13 @@ pub async fn git_stop_tracking(
         for file in &normalized_files {
             run_git(&path, &["ls-files", "--error-unmatch", "--", file])
                 .map_err(|_| format!("File is not tracked by Git: {file}"))?;
+        }
+
+        if local.unwrap_or(false) {
+            return Err(
+                "Tracked files cannot use local-only ignore; refusing to change Git index"
+                    .to_string(),
+            );
         }
 
         let patterns = normalized_files
@@ -1521,8 +1537,13 @@ fn image_mime(path: &str) -> Option<&'static str> {
         Some("gif") => Some("image/gif"),
         Some("bmp") => Some("image/bmp"),
         Some("svg") => Some("image/svg+xml"),
+        Some("ico") => Some("image/x-icon"),
         _ => None,
     }
+}
+
+fn is_image_file_path(path: &str) -> bool {
+    image_mime(path).is_some() || path.to_ascii_lowercase().ends_with(".ico")
 }
 
 fn validate_commit_hash(hash: &str) -> Result<(), String> {
@@ -1701,7 +1722,7 @@ fn build_added_file_diff(repo_path: &str, file: &str) -> Result<String, String> 
     let full_path = std::path::Path::new(repo_path).join(file);
 
     if let Ok(meta) = std::fs::metadata(&full_path) {
-        if meta.len() > DIFF_MAX_FILE_SIZE {
+        if meta.len() > DIFF_MAX_FILE_SIZE && !is_image_file_path(file) {
             return Ok(DIFF_TOO_LARGE_MARKER.to_string());
         }
     }
@@ -1737,7 +1758,7 @@ pub fn git_diff_sync(path: &str, file: Option<&str>, staged: bool) -> Result<Str
         let full_path = std::path::Path::new(path).join(f);
 
         if let Ok(meta) = std::fs::metadata(&full_path) {
-            if meta.len() > DIFF_MAX_FILE_SIZE {
+            if meta.len() > DIFF_MAX_FILE_SIZE && !is_image_file_path(f) {
                 return Ok(DIFF_TOO_LARGE_MARKER.to_string());
             }
         }
@@ -2676,6 +2697,7 @@ mod tests {
     use super::clone_branch_args;
     use super::git_diff_for_ai_sync;
     use super::git_diff_sync;
+    use super::is_image_file_path;
     use super::git_own_commits_sync;
     use super::is_legacy_single_branch_fetch_refspec;
     use super::make_image_side;
@@ -3174,6 +3196,13 @@ mod tests {
         assert!(error.contains("too_large"));
 
         let _ = fs::remove_dir_all(&repo_dir);
+    }
+
+    #[test]
+    fn image_paths_bypass_text_diff_size_guard_but_text_does_not() {
+        assert!(is_image_file_path("assets/large.PNG"));
+        assert!(is_image_file_path("assets/icon.ico"));
+        assert!(!is_image_file_path("logs/large.txt"));
     }
 
     /***********************自己的提交按身份与日期过滤*********************/

@@ -12,6 +12,7 @@ import GitView from '../git/GitView.vue';
 import FileManager from '../FileManager.vue';
 import ProjectMemo from '../ProjectMemo.vue';
 import FrontendEnvPanel from '../FrontendEnvPanel.vue';
+import WorkspaceEditor from './WorkspaceEditor.vue';
 import { getRunnableProjectScripts } from '../../utils/projectCommands';
 
 const KEEP_ALIVE_MAX = 15;
@@ -23,9 +24,12 @@ const props = withDefaults(defineProps<{
   initialTab?: WorkspaceTab | null;
   /** 完整工作区需要标题，快速管理弹窗的标题由弹窗头部负责。 */
   showTitle?: boolean;
+  /** 完整工作区启用轻量编辑器，快速管理弹窗显式关闭。 */
+  editorEnabled?: boolean;
 }>(), {
   initialTab: null,
   showTitle: true,
+  editorEnabled: true,
 });
 
 const { t } = useI18n();
@@ -56,6 +60,7 @@ const tabCapabilities = computed(() => ({
   hasRunnableCommands: hasRunnableCommands.value,
   hasGitRepo: hasGitRepo.value,
   hasFrontendEnv: hasFrontendEnv.value,
+  editorEnabled: props.editorEnabled,
 }));
 const defaultTab = computed<WorkspaceTab>(() => {
   if (hasRunnableCommands.value) return 'console';
@@ -128,7 +133,7 @@ watch(() => props.initialTab, (tab, previous) => {
   if (tab !== previous) void activate(tab);
 });
 
-watch([hasRunnableCommands, hasGitRepo, hasFrontendEnv, leafTabsDisabled, activeTab], () => {
+watch([hasRunnableCommands, hasGitRepo, hasFrontendEnv, leafTabsDisabled, activeTab, () => props.editorEnabled], () => {
   if (isResolvingTab.value || !gitCapabilityKnown.value) return;
   const next = resolveWorkspaceTabFallback(activeTab.value, tabCapabilities.value);
   if (next !== activeTab.value) activeTab.value = next;
@@ -192,7 +197,7 @@ onMounted(() => {
 let tabResizeObserver: ResizeObserver | null = null;
 onBeforeUnmount(() => tabResizeObserver?.disconnect());
 
-watch([activeProject, hasRunnableCommands, hasGitRepo, hasFrontendEnv], () => {
+watch([activeProject, hasRunnableCommands, hasGitRepo, hasFrontendEnv, () => props.editorEnabled], () => {
   void nextTick(checkTabOverflow);
 });
 
@@ -237,6 +242,16 @@ defineExpose({ activate });
             <span v-if="hasGitRepo && gitChangesCount > 0" class="workspace-tab-badge">{{ gitChangesCount }}</span>
           </button>
           <button
+            v-if="editorEnabled"
+            @click="selectTab('editor')"
+            class="workspace-tab-btn"
+            :class="{ 'workspace-tab-btn-active': activeTab === 'editor' }"
+            :disabled="leafTabsDisabled"
+          >
+            <div class="i-mdi-file-edit-outline text-sm" />
+            <span>{{ t('dashboard.editor') }}</span>
+          </button>
+          <button
             v-if="hasFrontendEnv"
             @click="selectTab('env')"
             class="workspace-tab-btn"
@@ -279,6 +294,11 @@ defineExpose({ activate });
           <GitView
             v-else-if="activeTab === 'git' && activeProject && hasGitRepo"
             :key="`git:${activeProject.id}`"
+            :project="activeProject"
+          />
+          <WorkspaceEditor
+            v-else-if="activeTab === 'editor' && activeProject && editorEnabled"
+            :key="`editor:${activeProject.id}`"
             :project="activeProject"
           />
           <FrontendEnvPanel

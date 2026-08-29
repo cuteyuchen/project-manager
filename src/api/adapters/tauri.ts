@@ -3,7 +3,18 @@ import { listen } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
 import { open as openDialogFn, save as saveDialogFn } from '@tauri-apps/plugin-dialog';
 import { openPath as openPathFn, openUrl as openUrlFn } from '@tauri-apps/plugin-opener';
-import type { PlatformAPI, ProjectInfo, TerminalInfo, EditorInfo, PortEntry, PackageManagerResolveResult } from '../types';
+import type {
+    PlatformAPI,
+    ProjectInfo,
+    TerminalInfo,
+    EditorInfo,
+    PortEntry,
+    PackageManagerResolveResult,
+    WorkspaceDirEntry,
+    WorkspaceStat,
+    EditorFileSnapshot,
+    EditorWriteResult,
+} from '../types';
 import type {
     NodeVersion,
     GitStatusResult,
@@ -108,11 +119,11 @@ export class TauriAdapter implements PlatformAPI {
     }
 
     async openFolder(path: string): Promise<void> {
-        try {
-            await openPathFn(path);
-        } catch {
-            return invoke('open_folder', { path });
-        }
+        return invoke('open_folder', { path });
+    }
+
+    async openPath(path: string): Promise<void> {
+        return openPathFn(path);
     }
 
     async revealInFolder(path: string): Promise<void> {
@@ -155,6 +166,62 @@ export class TauriAdapter implements PlatformAPI {
 
     async readDir(path: string): Promise<{ name: string; isDirectory: boolean }[]> {
         return invoke('read_dir', { path });
+    }
+
+    async workspaceReadDir(root: string, relativePath: string): Promise<WorkspaceDirEntry[]> {
+        return invoke('workspace_read_dir', { root, relativePath });
+    }
+
+    async workspaceCreateFile(root: string, relativePath: string): Promise<void> {
+        return invoke('workspace_create_file', { root, relativePath });
+    }
+
+    async workspaceCreateDirectory(root: string, relativePath: string): Promise<void> {
+        return invoke('workspace_create_directory', { root, relativePath });
+    }
+
+    async workspaceRename(root: string, fromRelative: string, toRelative: string): Promise<void> {
+        return invoke('workspace_rename', { root, fromRelative, toRelative });
+    }
+
+    async workspaceTrash(root: string, relativePath: string): Promise<void> {
+        return invoke('workspace_trash', { root, relativePath });
+    }
+
+    async workspaceStat(root: string, relativePath: string): Promise<WorkspaceStat> {
+        return invoke('workspace_stat', { root, relativePath });
+    }
+
+    async workspaceReadEditorFile(root: string, relativePath: string): Promise<EditorFileSnapshot> {
+        return invoke('workspace_read_editor_file', { root, relativePath });
+    }
+
+    async workspaceReadBinaryFileBase64(root: string, relativePath: string): Promise<string> {
+        return invoke('workspace_read_binary_file_base64', { root, relativePath });
+    }
+
+    async workspaceWriteEditorFile(
+        root: string,
+        relativePath: string,
+        content: string,
+        expectedDiskVersion?: string,
+        eol?: 'lf' | 'crlf',
+        bom?: boolean,
+        force?: boolean,
+    ): Promise<EditorWriteResult> {
+        return invoke('workspace_write_editor_file', {
+            root,
+            relativePath,
+            content,
+            expectedDiskVersion,
+            eol,
+            bom,
+            force,
+        });
+    }
+
+    async workspaceTrashMode(): Promise<'recycle_bin' | 'permanent'> {
+        return invoke('workspace_trash_mode');
     }
 
     async getAppVersion(): Promise<string> {

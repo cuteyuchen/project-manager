@@ -3,6 +3,7 @@ mod nvm;
 mod project;
 mod runner;
 mod system;
+mod workspace;
 
 use std::{
     fs,
@@ -201,6 +202,16 @@ pub fn run() {
             project::read_text_file,
             project::write_text_file,
             project::read_binary_file_base64,
+            workspace::workspace_read_dir,
+            workspace::workspace_create_file,
+            workspace::workspace_create_directory,
+            workspace::workspace_rename,
+            workspace::workspace_trash,
+            workspace::workspace_stat,
+            workspace::workspace_read_editor_file,
+            workspace::workspace_read_binary_file_base64,
+            workspace::workspace_write_editor_file,
+            workspace::workspace_trash_mode,
             runner::run_project_command,
             runner::run_custom_command,
             runner::stop_project_command,
