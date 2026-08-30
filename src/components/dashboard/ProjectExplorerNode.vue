@@ -78,7 +78,6 @@ const quickCommands = computed(() => resolveProjectQuickCommands(props.project))
 const quickCommandsOpen = ref(false);
 const moreOpen = ref(false);
 const projectRow = ref<HTMLElement | null>(null);
-const moduleKindLabel = computed(() => props.project.moduleKind ? t(`project.moduleKind.${props.project.moduleKind}`) : '');
 
 function isQuickCommandRunning(command: ProjectQuickCommand): boolean {
   return !!projectStore.runningStatus[getProjectCommandRunId(props.project.id, command.type, command.id)];
@@ -220,7 +219,6 @@ onBeforeUnmount(() => {
       <button type="button" class="explorer-project-name flex min-w-0 flex-1 items-center gap-2" @click.stop="selectProject">
         <div :class="depth === 0 ? 'i-mdi-folder-home-outline' : 'i-mdi-folder-star-outline'" class="explorer-project-icon" />
         <span class="min-w-0 flex-1 truncate">{{ project.name }}</span>
-        <span v-if="moduleKindLabel" class="explorer-module-kind">{{ moduleKindLabel }}</span>
       </button>
       <div class="explorer-project-meta">
         <span v-if="running" class="explorer-running-dot" title="运行中" />
@@ -403,7 +401,6 @@ onBeforeUnmount(() => {
 .is-child-project .explorer-project-icon {
   color: color-mix(in srgb, var(--app-primary) 76%, var(--app-text-secondary));
 }
-.explorer-module-kind,
 .explorer-project-branch {
   flex: 0 0 auto;
   color: var(--app-text-muted);

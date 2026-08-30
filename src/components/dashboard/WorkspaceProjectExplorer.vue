@@ -39,6 +39,14 @@ const contextMenuRef = ref<HTMLElement | null>(null);
 const contextMenu = ref<{ x: number; y: number; payload: ExplorerContextPayload } | null>(null);
 const contextMenuStyle = ref({ left: '0px', top: '0px' });
 const actionProject = ref<Project | null>(null);
+const EXPLORER_MIN_WIDTH = 240;
+const EXPLORER_MAX_WIDTH = 520;
+const explorerWidth = ref(320);
+const resizingExplorer = ref(false);
+const explorerResizeStartX = ref(0);
+const explorerResizeStartWidth = ref(explorerWidth.value);
+let previousBodyCursor = '';
+let previousBodyUserSelect = '';
 const { openEditor, openTerminal, openFolder } = useProjectExternalActions(() => actionProject.value);
 const gitStatusMaps = computed<Record<string, ReadonlyMap<string, GitFileStatus>>>(() => {
   const maps: Record<string, ReadonlyMap<string, GitFileStatus>> = {};
@@ -69,6 +77,57 @@ function expandTargetAncestors(projectId: string | null): void {
     seen.add(current.id);
     setExplorerExpanded(workspaceRootKey.value, `project:${current.id}`, true);
     current = projectById(current.parentId);
+  }
+}
+
+function clampExplorerWidth(width: number): number {
+  return Math.min(EXPLORER_MAX_WIDTH, Math.max(EXPLORER_MIN_WIDTH, width));
+}
+
+function resizeExplorer(event: PointerEvent): void {
+  if (!resizingExplorer.value) return;
+  explorerWidth.value = clampExplorerWidth(explorerResizeStartWidth.value + event.clientX - explorerResizeStartX.value);
+}
+
+function stopExplorerResize(): void {
+  if (!resizingExplorer.value) return;
+  document.removeEventListener('pointermove', resizeExplorer, true);
+  document.removeEventListener('pointerup', stopExplorerResize, true);
+  document.removeEventListener('pointercancel', stopExplorerResize, true);
+  document.body.style.cursor = previousBodyCursor;
+  document.body.style.userSelect = previousBodyUserSelect;
+  resizingExplorer.value = false;
+}
+
+function startExplorerResize(event: PointerEvent): void {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  explorerResizeStartX.value = event.clientX;
+  explorerResizeStartWidth.value = explorerWidth.value;
+  previousBodyCursor = document.body.style.cursor;
+  previousBodyUserSelect = document.body.style.userSelect;
+  document.body.style.cursor = 'col-resize';
+  document.body.style.userSelect = 'none';
+  resizingExplorer.value = true;
+  document.addEventListener('pointermove', resizeExplorer, true);
+  document.addEventListener('pointerup', stopExplorerResize, true);
+  document.addEventListener('pointercancel', stopExplorerResize, true);
+}
+
+function handleExplorerResizeKeydown(event: KeyboardEvent): void {
+  const step = event.shiftKey ? 40 : 16;
+  if (event.key === 'ArrowLeft') {
+    explorerWidth.value = clampExplorerWidth(explorerWidth.value - step);
+    event.preventDefault();
+  } else if (event.key === 'ArrowRight') {
+    explorerWidth.value = clampExplorerWidth(explorerWidth.value + step);
+    event.preventDefault();
+  } else if (event.key === 'Home') {
+    explorerWidth.value = EXPLORER_MIN_WIDTH;
+    event.preventDefault();
+  } else if (event.key === 'End') {
+    explorerWidth.value = EXPLORER_MAX_WIDTH;
+    event.preventDefault();
   }
 }
 
@@ -341,6 +400,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  stopExplorerResize();
   document.removeEventListener('mousedown', closeOnDocumentMouseDown, true);
   document.removeEventListener('click', closeContextMenu);
   document.removeEventListener('wheel', closeOnViewportChange, true);
@@ -351,7 +411,10 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <aside class="workspace-project-explorer flex h-full min-h-0 w-80 shrink-0 flex-col border-r">
+  <aside
+    class="workspace-project-explorer relative flex h-full min-h-0 shrink-0 flex-col border-r"
+    :style="{ width: `${explorerWidth}px` }"
+  >
     <div class="explorer-header flex shrink-0 items-center gap-2 border-b px-3 py-2">
       <span class="explorer-title">PROJECT EXPLORER</span>
       <button type="button" class="explorer-header-btn" title="显示选项" @click="showHidden = !showHidden">
@@ -382,6 +445,19 @@ onUnmounted(() => {
         @context-menu="showContextMenu"
       />
     </div>
+    <div
+      class="explorer-resize-handle"
+      :class="{ 'is-resizing': resizingExplorer }"
+      role="separator"
+      aria-label="调整项目浏览器宽度"
+      aria-orientation="vertical"
+      :aria-valuenow="explorerWidth"
+      aria-valuemin="240"
+      aria-valuemax="520"
+      tabindex="0"
+      @pointerdown="startExplorerResize"
+      @keydown="handleExplorerResizeKeydown"
+    />
   </aside>
 
   <Teleport to="body">
@@ -432,6 +508,35 @@ onUnmounted(() => {
   color: var(--app-text-secondary);
   user-select: none;
   -webkit-user-select: none;
+}
+.explorer-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  bottom: 0;
+  z-index: 2;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+}
+.explorer-resize-handle::after {
+  position: absolute;
+  top: 0;
+  right: 3px;
+  bottom: 0;
+  width: 2px;
+  background: transparent;
+  content: '';
+  transition: background-color 120ms ease;
+}
+.explorer-resize-handle:hover::after,
+.explorer-resize-handle.is-resizing::after,
+.explorer-resize-handle:focus-visible::after {
+  background: var(--app-primary);
+}
+.explorer-resize-handle:focus-visible {
+  outline: none;
 }
 .explorer-header {
   min-height: 38px;
