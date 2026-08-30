@@ -70,6 +70,7 @@ const status = computed(() => {
 function iconClass(): string {
   if (props.entry.isDirectory) return 'i-mdi-folder-outline text-amber-500';
   if (isImageFile(props.entry.name)) return 'i-mdi-file-image-outline text-pink-500';
+  if (/^\.env(?:\..*)?$/i.test(props.entry.name)) return 'i-mdi-key-variant text-amber-500';
   switch (fileExtension(props.entry.name)) {
     case 'vue': return 'i-mdi-vuejs text-green-500';
     case 'ts':
@@ -166,7 +167,15 @@ onMounted(() => {
       @dblclick="open"
       @contextmenu.prevent="emit('contextMenu', $event, { kind: 'file', project, relativePath, name: entry.name, isDirectory: entry.isDirectory })"
     >
-      <button v-if="entry.isDirectory" type="button" class="explorer-chevron" :title="expanded ? '收起' : '展开'" @click.stop="toggle">
+      <button
+        v-if="entry.isDirectory"
+        type="button"
+        class="explorer-chevron"
+        :title="expanded ? '收起' : '展开'"
+        :aria-label="expanded ? '收起' : '展开'"
+        :aria-expanded="expanded"
+        @click.stop="toggle"
+      >
         <div :class="expanded ? 'i-mdi-chevron-down' : 'i-mdi-chevron-right'" />
       </button>
       <span v-else class="explorer-chevron-spacer" />
@@ -229,12 +238,23 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 14px;
-  height: 20px;
-  flex: 0 0 14px;
+  width: 22px;
+  height: 24px;
+  flex: 0 0 22px;
   border: 0;
+  border-radius: 4px;
   background: transparent;
   color: var(--app-text-muted);
+  font-size: 16px;
+  line-height: 1;
+}
+.explorer-chevron:hover {
+  background: color-mix(in srgb, var(--app-primary) 10%, transparent);
+  color: var(--app-primary);
+}
+.explorer-chevron:focus-visible {
+  outline: 2px solid var(--app-primary);
+  outline-offset: -1px;
 }
 .explorer-file-icon {
   flex: 0 0 16px;

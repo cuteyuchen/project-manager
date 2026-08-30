@@ -200,20 +200,24 @@ pub fn runtime_status(root: &Path) -> &'static str {
 }
 
 fn path_escapes(root: &Path, candidate: &Path) -> bool {
-    let mut normalized = PathBuf::new();
-    for component in candidate.components() {
+    let Ok(relative) = candidate.strip_prefix(root) else {
+        return true;
+    };
+    let mut depth = 0_usize;
+    for component in relative.components() {
         match component {
             Component::Prefix(_) | Component::RootDir => return true,
             Component::CurDir => {}
             Component::ParentDir => {
-                if !normalized.pop() {
+                if depth == 0 {
                     return true;
                 }
+                depth -= 1;
             }
-            Component::Normal(part) => normalized.push(part),
+            Component::Normal(_) => depth += 1,
         }
     }
-    !normalized.starts_with(root) && candidate.is_absolute()
+    false
 }
 
 fn validate_entry_name(name: &str) -> Result<(), String> {
@@ -306,20 +310,8 @@ fn extract_tar_gz(archive_path: &Path, dest: &Path) -> Result<(), String> {
                     return Err(format!("Archive link escapes runtime root: {name}"));
                 }
                 let resolved = out_path.parent().unwrap_or(dest).join(target.as_ref());
-                let mut normalized = PathBuf::new();
-                for component in resolved.components() {
-                    match component {
-                        Component::Prefix(_) | Component::RootDir => {
-                            return Err(format!("Archive link escapes runtime root: {name}"));
-                        }
-                        Component::CurDir => {}
-                        Component::ParentDir => {
-                            if !normalized.pop() {
-                                return Err(format!("Archive link escapes runtime root: {name}"));
-                            }
-                        }
-                        Component::Normal(part) => normalized.push(part),
-                    }
+                if path_escapes(dest, &resolved) {
+                    return Err(format!("Archive link escapes runtime root: {name}"));
                 }
                 #[cfg(unix)]
                 {
@@ -331,7 +323,7 @@ fn extract_tar_gz(archive_path: &Path, dest: &Path) -> Result<(), String> {
                 }
                 #[cfg(not(unix))]
                 {
-                    let _ = normalized;
+                    let _ = resolved;
                 }
             }
             _ => {
@@ -356,6 +348,20 @@ fn extract_archive(archive_path: &Path, dest: &Path) -> Result<(), String> {
         return Err(format!("Unsupported archive: {name}"));
     }
     hoist_single_directory(dest)
+}
+
+fn checksum_matches(expected: &str, actual: &str) -> bool {
+    expected.trim().eq_ignore_ascii_case(actual.trim())
+}
+
+fn promote_downloaded_archive(part_path: &Path, archive_path: &Path) -> Result<(), String> {
+    fs::rename(part_path, archive_path).map_err(|error| format!("Failed to finalize archive: {error}"))
+}
+
+fn cleanup_install_temp(part_path: &Path, archive_path: &Path, extract_dir: &Path) {
+    let _ = fs::remove_file(part_path);
+    let _ = fs::remove_file(archive_path);
+    let _ = fs::remove_dir_all(extract_dir);
 }
 
 fn run_node_version(exe: &Path) -> Result<String, String> {
@@ -563,6 +569,11 @@ async fn install_managed_node_inner(
     }
 
     let artifact = current_artifact(version)?;
+    let part_path = root.join(format!("{artifact}.part"));
+    let archive_path = root.join(&artifact);
+    let extract_dir = root.join(format!("extract-{version}"));
+    cleanup_install_temp(&part_path, &archive_path, &extract_dir);
+
     let dist_base = format!("{NODE_DIST_HOST}/dist/{version}");
     let shasum_url = format!("{dist_base}/SHASUMS256.txt");
     let artifact_url = format!("{dist_base}/{artifact}");
@@ -604,16 +615,6 @@ async fn install_managed_node_inner(
         .cloned()
         .ok_or_else(|| format!("Checksum missing for {artifact}"))?;
 
-    let part_path = root.join(format!("{artifact}.part"));
-    let extract_dir = root.join(format!("extract-{version}"));
-    let _ = fs::remove_file(&part_path);
-    let _ = fs::remove_dir_all(&extract_dir);
-
-    let cleanup = |part: &Path, extract: &Path| {
-        let _ = fs::remove_file(part);
-        let _ = fs::remove_dir_all(extract);
-    };
-
     emit_progress(
         app,
         &NodeInstallProgress {
@@ -629,23 +630,23 @@ async fn install_managed_node_inner(
     let response = match client.get(&artifact_url).send().await {
         Ok(response) => response,
         Err(error) => {
-            cleanup(&part_path, &extract_dir);
+            cleanup_install_temp(&part_path, &archive_path, &extract_dir);
             return Err(format!("Download failed: {error}"));
         }
     };
     if response.status().as_u16() == 404 {
-        cleanup(&part_path, &extract_dir);
+        cleanup_install_temp(&part_path, &archive_path, &extract_dir);
         return Err(format!("Node artifact not found: {artifact}"));
     }
     if let Err(error) = response.error_for_status_ref() {
-        cleanup(&part_path, &extract_dir);
+        cleanup_install_temp(&part_path, &archive_path, &extract_dir);
         return Err(format!("Download failed: {error}"));
     }
     let total = response.content_length();
     let mut file = match File::create(&part_path) {
         Ok(file) => file,
         Err(error) => {
-            cleanup(&part_path, &extract_dir);
+            cleanup_install_temp(&part_path, &archive_path, &extract_dir);
             return Err(error.to_string());
         }
     };
@@ -655,18 +656,18 @@ async fn install_managed_node_inner(
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
         if cancel.load(Ordering::SeqCst) {
-            cleanup(&part_path, &extract_dir);
+            cleanup_install_temp(&part_path, &archive_path, &extract_dir);
             return Err("cancelled".to_string());
         }
         let chunk = match chunk {
             Ok(chunk) => chunk,
             Err(error) => {
-                cleanup(&part_path, &extract_dir);
+                cleanup_install_temp(&part_path, &archive_path, &extract_dir);
                 return Err(format!("Download failed: {error}"));
             }
         };
         if let Err(error) = file.write_all(&chunk) {
-            cleanup(&part_path, &extract_dir);
+            cleanup_install_temp(&part_path, &archive_path, &extract_dir);
             return Err(error.to_string());
         }
         hasher.update(&chunk);
@@ -688,7 +689,11 @@ async fn install_managed_node_inner(
         }
     }
     if let Err(error) = file.flush() {
-        cleanup(&part_path, &extract_dir);
+        cleanup_install_temp(&part_path, &archive_path, &extract_dir);
+        return Err(error.to_string());
+    }
+    if let Err(error) = file.sync_all() {
+        cleanup_install_temp(&part_path, &archive_path, &extract_dir);
         return Err(error.to_string());
     }
 
@@ -709,9 +714,14 @@ async fn install_managed_node_inner(
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect::<String>();
-    if actual != expected {
-        cleanup(&part_path, &extract_dir);
+    if !checksum_matches(&expected, &actual) {
+        cleanup_install_temp(&part_path, &archive_path, &extract_dir);
         return Err("Checksum mismatch".to_string());
+    }
+
+    if let Err(error) = promote_downloaded_archive(&part_path, &archive_path) {
+        cleanup_install_temp(&part_path, &archive_path, &extract_dir);
+        return Err(error);
     }
 
     emit_progress(
@@ -726,11 +736,14 @@ async fn install_managed_node_inner(
         },
     );
 
-    if let Err(error) = extract_archive(&part_path, &extract_dir) {
-        cleanup(&part_path, &extract_dir);
+    if let Err(error) = extract_archive(&archive_path, &extract_dir) {
+        cleanup_install_temp(&part_path, &archive_path, &extract_dir);
         return Err(error);
     }
-    let _ = fs::remove_file(&part_path);
+    if let Err(error) = fs::remove_file(&archive_path) {
+        cleanup_install_temp(&part_path, &archive_path, &extract_dir);
+        return Err(error.to_string());
+    }
 
     emit_progress(
         app,
@@ -747,18 +760,18 @@ async fn install_managed_node_inner(
     let exe = match node_executable(&extract_dir) {
         Some(exe) => exe,
         None => {
-            cleanup(&part_path, &extract_dir);
+            cleanup_install_temp(&part_path, &archive_path, &extract_dir);
             return Err("Extracted runtime is missing node executable".to_string());
         }
     };
     match run_node_version(&exe) {
         Ok(actual_version) if actual_version == version => {}
         Ok(actual_version) => {
-            cleanup(&part_path, &extract_dir);
+            cleanup_install_temp(&part_path, &archive_path, &extract_dir);
             return Err(format!("node -v mismatch: expected {version}, got {actual_version}"));
         }
         Err(error) => {
-            cleanup(&part_path, &extract_dir);
+            cleanup_install_temp(&part_path, &archive_path, &extract_dir);
             return Err(error);
         }
     }
@@ -767,7 +780,7 @@ async fn install_managed_node_inner(
         let _ = fs::remove_dir_all(&final_dir);
     }
     if let Err(error) = fs::rename(&extract_dir, &final_dir) {
-        cleanup(&part_path, &extract_dir);
+        cleanup_install_temp(&part_path, &archive_path, &extract_dir);
         return Err(error.to_string());
     }
 
@@ -924,6 +937,8 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *node-v20.11.1-
             "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
         );
         assert_ne!(sha256_hex(b"hello"), map["node-v20.11.1-win-x64.zip"]);
+        assert!(checksum_matches(&sha256_hex(b"hello"), &sha256_hex(b"hello")));
+        assert!(!checksum_matches(&sha256_hex(b"hello"), &sha256_hex(b"world")));
     }
 
     #[test]
@@ -986,5 +1001,98 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *node-v20.11.1-
         fs::create_dir_all(&dest).unwrap();
         assert!(extract_zip(&zip_path, &dest).is_err());
         assert!(!temp.path().join("escape.txt").exists());
+    }
+
+    #[test]
+    fn zip_part_is_promoted_before_extraction() {
+        let temp = tempfile::tempdir().unwrap();
+        let part_path = temp.path().join("node-v20.11.1-win-x64.zip.part");
+        let archive_path = temp.path().join("node-v20.11.1-win-x64.zip");
+        {
+            let file = File::create(&part_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let options = zip::write::SimpleFileOptions::default();
+            zip.start_file("node-v20.11.1-win-x64/node.exe", options).unwrap();
+            zip.write_all(b"node").unwrap();
+            zip.finish().unwrap();
+        }
+        let dest = temp.path().join("extract-v20.11.1");
+        promote_downloaded_archive(&part_path, &archive_path).unwrap();
+        extract_archive(&archive_path, &dest).unwrap();
+        assert!(!part_path.exists());
+        assert!(archive_path.exists());
+        assert!(dest.join("node.exe").exists());
+        cleanup_install_temp(&part_path, &archive_path, &dest);
+        assert!(!archive_path.exists());
+        assert!(!dest.exists());
+    }
+
+    #[test]
+    fn tar_gz_part_is_promoted_before_extraction() {
+        let temp = tempfile::tempdir().unwrap();
+        let part_path = temp.path().join("node-v20.11.1-linux-x64.tar.gz.part");
+        let archive_path = temp.path().join("node-v20.11.1-linux-x64.tar.gz");
+        {
+            let file = File::create(&part_path).unwrap();
+            let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+            let mut tar = tar::Builder::new(encoder);
+            let mut header = tar::Header::new_gnu();
+            header.set_path("node-v20.11.1-linux-x64/bin/node").unwrap();
+            header.set_size(4);
+            header.set_mode(0o755);
+            header.set_cksum();
+            tar.append(&header, &b"node"[..]).unwrap();
+            tar.into_inner().unwrap().finish().unwrap();
+        }
+        let dest = temp.path().join("extract-v20.11.1");
+        promote_downloaded_archive(&part_path, &archive_path).unwrap();
+        extract_archive(&archive_path, &dest).unwrap();
+        assert!(!part_path.exists());
+        assert!(dest.join("bin").join("node").exists());
+        cleanup_install_temp(&part_path, &archive_path, &dest);
+        assert!(!archive_path.exists());
+        assert!(!dest.exists());
+    }
+
+    #[test]
+    fn checksum_failure_does_not_promote_or_extract() {
+        let temp = tempfile::tempdir().unwrap();
+        let part_path = temp.path().join("node-v20.11.1-win-x64.zip.part");
+        let archive_path = temp.path().join("node-v20.11.1-win-x64.zip");
+        let extract_dir = temp.path().join("extract-v20.11.1");
+        fs::write(&part_path, b"bad archive").unwrap();
+        assert!(!checksum_matches(&sha256_hex(b"expected"), &sha256_hex(b"bad archive")));
+        assert!(part_path.exists());
+        assert!(!archive_path.exists());
+        assert!(!extract_dir.exists());
+        cleanup_install_temp(&part_path, &archive_path, &extract_dir);
+    }
+
+    #[test]
+    fn extract_failure_cleans_temp_and_retry_can_succeed() {
+        let temp = tempfile::tempdir().unwrap();
+        let part_path = temp.path().join("node-v20.11.1-win-x64.zip.part");
+        let archive_path = temp.path().join("node-v20.11.1-win-x64.zip");
+        let extract_dir = temp.path().join("extract-v20.11.1");
+        fs::write(&part_path, b"not a zip").unwrap();
+        promote_downloaded_archive(&part_path, &archive_path).unwrap();
+        assert!(extract_archive(&archive_path, &extract_dir).is_err());
+        cleanup_install_temp(&part_path, &archive_path, &extract_dir);
+        assert!(!part_path.exists());
+        assert!(!archive_path.exists());
+        assert!(!extract_dir.exists());
+
+        {
+            let file = File::create(&part_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let options = zip::write::SimpleFileOptions::default();
+            zip.start_file("node-v20.11.1-win-x64/node.exe", options).unwrap();
+            zip.write_all(b"node").unwrap();
+            zip.finish().unwrap();
+        }
+        promote_downloaded_archive(&part_path, &archive_path).unwrap();
+        extract_archive(&archive_path, &extract_dir).unwrap();
+        assert!(extract_dir.join("node.exe").exists());
+        cleanup_install_temp(&part_path, &archive_path, &extract_dir);
     }
 }

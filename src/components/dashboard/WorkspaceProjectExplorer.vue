@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
+import { useI18n } from 'vue-i18n';
 import type { GitFileStatus, Project } from '../../types';
 import { api } from '../../api';
 import { useGitStore } from '../../stores/git';
@@ -27,6 +28,7 @@ const emit = defineEmits<{
 const projectStore = useProjectStore();
 const editorStore = useWorkspaceEditorStore();
 const gitStore = useGitStore();
+const { t } = useI18n();
 const rootProject = computed(() => projectStore.projects.find(project => project.id === props.rootId) || null);
 const workspaceRootKey = computed(() => rootProject.value?.path || props.rootId);
 const showHidden = ref(false);
@@ -398,7 +400,7 @@ onUnmounted(() => {
         <button type="button" class="context-item" @click="handleContextProjectAction('folder')"><div class="i-mdi-folder-open-outline" />文件夹</button>
         <div class="context-separator" />
         <button type="button" class="context-item" @click="handleContextProjectAction('edit')"><div class="i-mdi-pencil-outline" />编辑项目</button>
-        <button type="button" class="context-item" @click="handleContextProjectAction('scan')"><div class="i-mdi-file-tree-outline" />扫描子项目</button>
+        <button type="button" class="context-item" @click="handleContextProjectAction('scan')"><div class="i-mdi-file-tree-outline" />{{ t('dashboard.manageSubProjects') }}</button>
         <button type="button" class="context-item" @click="handleContextProjectAction('pin')"><div :class="contextMenu.payload.project.pinned ? 'i-mdi-pin-off-outline' : 'i-mdi-pin-outline'" />{{ contextMenu.payload.project.pinned ? '取消置顶' : '置顶项目' }}</button>
         <button type="button" class="context-item danger" @click="handleContextProjectAction('delete')"><div class="i-mdi-delete-outline" />删除项目</button>
       </template>
@@ -424,14 +426,18 @@ onUnmounted(() => {
 <style scoped>
 .workspace-project-explorer {
   container-type: inline-size;
-  background: var(--app-surface-sidebar);
+  background: color-mix(in srgb, var(--app-surface-sidebar) 78%, transparent);
+  backdrop-filter: blur(14px) saturate(115%);
+  -webkit-backdrop-filter: blur(14px) saturate(115%);
   color: var(--app-text-secondary);
   user-select: none;
   -webkit-user-select: none;
 }
 .explorer-header {
   min-height: 38px;
-  background: var(--app-surface-soft);
+  background: color-mix(in srgb, var(--app-surface-soft) 86%, transparent);
+  backdrop-filter: blur(14px) saturate(115%);
+  -webkit-backdrop-filter: blur(14px) saturate(115%);
 }
 .explorer-title {
   flex: 1 1 auto;

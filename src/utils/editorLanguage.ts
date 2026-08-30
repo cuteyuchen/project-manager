@@ -18,6 +18,87 @@ import { dart } from '@codemirror/legacy-modes/mode/clike';
 import { shell } from '@codemirror/legacy-modes/mode/shell';
 import { toml } from '@codemirror/legacy-modes/mode/toml';
 
+interface DotenvState {
+  phase: 'key' | 'beforeValue' | 'value';
+  quote: 'single' | 'double' | null;
+}
+
+const dotenv = StreamLanguage.define<DotenvState>({
+  name: 'dotenv',
+  startState: () => ({ phase: 'key', quote: null }),
+  token(stream, state) {
+    if (stream.sol() && !state.quote) state.phase = 'key';
+
+    if (state.quote) {
+      const quote = state.quote === 'single' ? "'" : '"';
+      if (stream.peek() === quote) {
+        stream.next();
+        state.quote = null;
+        state.phase = 'value';
+        return 'string';
+      }
+      if (stream.match(/^\$\{[A-Za-z_][A-Za-z0-9_]*\}/)) return 'variableName';
+
+      const start = stream.pos;
+      while (!stream.eol()) {
+        const ch = stream.peek();
+        if (ch === quote || (ch === '$' && stream.string[stream.pos + 1] === '{')) break;
+        if (ch === '\\') {
+          stream.next();
+          if (!stream.eol()) stream.next();
+        } else {
+          stream.next();
+        }
+      }
+      if (stream.pos === start) stream.next();
+      return 'string';
+    }
+
+    if (stream.eatSpace()) return null;
+    if (stream.peek() === '#') {
+      stream.skipToEnd();
+      return 'comment';
+    }
+
+    if (state.phase === 'key') {
+      if (stream.match(/^export\b/)) return 'keyword';
+      if (stream.match(/^[A-Za-z_][A-Za-z0-9_.-]*/)) {
+        state.phase = 'beforeValue';
+        return 'variableName.definition';
+      }
+      stream.next();
+      return null;
+    }
+
+    if (state.phase === 'beforeValue') {
+      if (stream.match(/^=/)) {
+        state.phase = 'value';
+        return 'operator';
+      }
+      stream.next();
+      return null;
+    }
+
+    const quote = stream.peek();
+    if (quote === "'" || quote === '"') {
+      stream.next();
+      state.quote = quote === "'" ? 'single' : 'double';
+      return 'string';
+    }
+    const token = stream.match(/^[^\s#]+/) as RegExpMatchArray | null;
+    if (token) {
+      const value = token[0];
+      if (/^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/.test(value)) return 'variableName';
+      if (/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(value)) return 'number';
+      if (/^(?:true|false)$/i.test(value)) return 'bool';
+      if (/^null$/i.test(value)) return 'atom';
+      return 'string';
+    }
+    stream.next();
+    return null;
+  },
+});
+
 export type EditorLanguage =
   | 'javascript'
   | 'typescript'
@@ -39,12 +120,14 @@ export type EditorLanguage =
   | 'toml'
   | 'xml'
   | 'sql'
+  | 'dotenv'
   | 'plain';
 
 export function editorLanguageForPath(path: string): EditorLanguage {
   const name = path.replace(/\\/g, '/').split('/').pop()?.toLowerCase() || '';
   if (name === '.vue') return 'vue';
   if (name.endsWith('.vue')) return 'vue';
+  if (name === '.env' || name.startsWith('.env.')) return 'dotenv';
   if (/\.(tsx)$/.test(name)) return 'tsx';
   if (/\.(jsx)$/.test(name)) return 'jsx';
   if (/\.(ts|mts|cts)$/.test(name)) return 'typescript';
@@ -89,6 +172,7 @@ export function editorLanguageExtension(language: EditorLanguage): Extension {
     case 'toml': return StreamLanguage.define(toml);
     case 'xml': return xml();
     case 'sql': return sql();
+    case 'dotenv': return dotenv;
     default: return [];
   }
 }

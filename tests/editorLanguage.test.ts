@@ -18,6 +18,11 @@ const expectedLanguages: Record<string, string> = {
   'settings.toml': 'toml',
   'layout.xml': 'xml',
   'query.sql': 'sql',
+  '.env': 'dotenv',
+  '.env.local': 'dotenv',
+  '.env.example': 'dotenv',
+  '.env.production.local': 'dotenv',
+  'env.txt': 'plain',
   'output.log': 'plain',
 };
 
@@ -35,6 +40,20 @@ for (const dark of [true, false]) {
   assert.ok(highlightingFor(state, [tags.keyword]), 'TypeScript keyword 应产生高亮 token');
   assert.ok(highlightingFor(state, [tags.string]), 'TypeScript string 应产生高亮 token');
   assert.ok(highlightingFor(state, [tags.comment]), 'TypeScript comment 应产生高亮 token');
+}
+
+for (const dark of [true, false]) {
+  const state = EditorState.create({
+    doc: '# comment\nPOSTGRES_DB=pianlv_platform\nPORT=5432\nDEBUG=true\nEMPTY=\nSECRET="hello world"\nVALUE=${OTHER_VALUE}\nNULL_VALUE=null\n',
+    extensions: [editorLanguageExtension('dotenv'), editorHighlightExtension(dark)],
+  });
+  assert.ok(highlightingFor(state, [tags.comment]), 'dotenv comment 应产生高亮 token');
+  assert.ok(highlightingFor(state, [tags.variableName]), 'dotenv key/reference 应产生高亮 token');
+  assert.ok(highlightingFor(state, [tags.operator]), 'dotenv 等号应产生高亮 token');
+  assert.ok(highlightingFor(state, [tags.string]), 'dotenv value 应产生高亮 token');
+  assert.ok(highlightingFor(state, [tags.number]), 'dotenv number 应产生高亮 token');
+  assert.ok(highlightingFor(state, [tags.bool]), 'dotenv bool 应产生高亮 token');
+  assert.ok(highlightingFor(state, [tags.atom]), 'dotenv null 应产生高亮 token');
 }
 
 console.log('editor language tests passed');

@@ -225,4 +225,15 @@ assert(
   '无变更时应明确提示"层级没有变化"，而不是静默什么都不做',
 );
 
+assert(
+  /buildDefaultSelection\(merged, existingPaths\.value\)/.test(subProjectScanModal),
+  '层级管理默认只应勾选当前父级下已注册的项目，新扫描候选必须由用户主动选择',
+);
+
+assert(
+  /manageSubProjects/.test(subProjectScanModal)
+  && /subProjectManagementHint/.test(subProjectScanModal),
+  '子项目弹窗应明确表达管理语义，并说明扫描结果只是候选',
+);
+
 console.log('import workflow consistency tests passed');

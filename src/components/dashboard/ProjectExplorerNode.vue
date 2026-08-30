@@ -207,7 +207,14 @@ onBeforeUnmount(() => {
       @click="selectProject"
       @contextmenu.prevent="forwardContextMenu($event, { kind: 'project', project, relativePath: '', name: project.name, isDirectory: true })"
     >
-      <button type="button" class="explorer-chevron" :title="expanded ? '收起' : '展开'" @click.stop="toggle">
+      <button
+        type="button"
+        class="explorer-chevron"
+        :title="expanded ? '收起' : '展开'"
+        :aria-label="expanded ? '收起' : '展开'"
+        :aria-expanded="expanded"
+        @click.stop="toggle"
+      >
         <div :class="expanded ? 'i-mdi-chevron-down' : 'i-mdi-chevron-right'" />
       </button>
       <button type="button" class="explorer-project-name flex min-w-0 flex-1 items-center gap-2" @click.stop="selectProject">
@@ -255,7 +262,7 @@ onBeforeUnmount(() => {
         </button>
         <div v-if="moreOpen" class="explorer-action-menu explorer-more-menu" @click.stop>
           <button type="button" class="explorer-menu-item" @click.stop="emitProjectAction('edit')"><div class="i-mdi-pencil-outline" /><span>编辑项目</span></button>
-          <button type="button" class="explorer-menu-item" @click.stop="emitProjectAction('scan')"><div class="i-mdi-file-tree-outline" /><span>扫描子项目</span></button>
+          <button type="button" class="explorer-menu-item" @click.stop="emitProjectAction('scan')"><div class="i-mdi-file-tree-outline" /><span>{{ t('dashboard.manageSubProjects') }}</span></button>
           <button type="button" class="explorer-menu-item" @click.stop="emitProjectAction('pin')"><div :class="project.pinned ? 'i-mdi-pin-off-outline' : 'i-mdi-pin-outline'" /><span>{{ project.pinned ? '取消置顶' : '置顶项目' }}</span></button>
           <button type="button" class="explorer-menu-item danger" @click.stop="emitProjectAction('delete')"><div class="i-mdi-delete-outline" /><span>删除项目</span></button>
         </div>
@@ -358,12 +365,23 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 22px;
-  flex: 0 0 16px;
+  width: 22px;
+  height: 24px;
+  flex: 0 0 22px;
   border: 0;
+  border-radius: 4px;
   background: transparent;
   color: var(--app-text-muted);
+  font-size: 16px;
+  line-height: 1;
+}
+.explorer-chevron:hover {
+  background: color-mix(in srgb, var(--app-primary) 10%, transparent);
+  color: var(--app-primary);
+}
+.explorer-chevron:focus-visible {
+  outline: 2px solid var(--app-primary);
+  outline-offset: -1px;
 }
 .explorer-project-name {
   min-width: 0;

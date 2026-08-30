@@ -133,12 +133,17 @@ assert(
 );
 
 const existingPaths = new Set([normalizeProjectPath('F:/ws/MyApp/packages/api')]);
-const defaultSelection = buildDefaultSelection([myApp]);
-assert.equal(defaultSelection.size, 4, '默认全选：已导入的项目也勾上');
+const defaultSelection = buildDefaultSelection([myApp], existingPaths);
+assert.equal(defaultSelection.size, 1, '层级管理默认只勾选已存在的项目');
 assert(
   defaultSelection.has(normalizeProjectPath('F:/ws/MyApp/packages/api')),
-  '已导入的项目默认应为勾选态——勾选表达"该项目应存在"，取消才表示要移除它',
+  '已导入的项目默认应为勾选态',
 );
+assert(
+  !defaultSelection.has(normalizeProjectPath('F:/ws/MyApp/packages/web')),
+  '新扫描候选默认不应自动成为子项目',
+);
+assert.equal(buildDefaultSelection([myApp]).size, 4, '批量导入无 existingPaths 时仍保留全选语义');
 
 /***********************合并已入库的子树*********************/
 

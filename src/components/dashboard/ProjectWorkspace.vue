@@ -94,6 +94,10 @@ function openScan(project: Project): void {
   showScanModal.value = true;
 }
 
+function handleScanClosed(): void {
+  scanTarget.value = null;
+}
+
 function openHeaderScan(): void {
   const project = selectedProject.value || rootProject.value;
   if (project) openScan(project);
@@ -171,7 +175,7 @@ useAppShortcuts([
       <button
         type="button"
         class="toolbar-icon-btn shrink-0"
-        :title="t('dashboard.scanSubProjects')"
+        :title="t('dashboard.manageSubProjects')"
         :disabled="!selectedProject"
         @click="openHeaderScan"
       >
@@ -194,6 +198,7 @@ useAppShortcuts([
       v-if="scanTarget"
       v-model="showScanModal"
       :parent-project="scanTarget"
+      @closed="handleScanClosed"
     />
   </div>
 </template>
