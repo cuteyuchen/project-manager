@@ -20,6 +20,12 @@ assert.match(projectNode, /@project-action="forwardProjectAction"/);
 assert.match(projectNode, /explorer-project-actions/);
 assert.match(projectNode, /explorer-action-menu/);
 assert.match(projectNode, /user-select: none/);
+assert.match(
+  projectNode,
+  /class="min-w-0 flex-1 truncate">\{\{ project\.name \}\}<\/span>/,
+  '项目名称应占据可收缩区域，不能被右侧 Git 信息挤到不可见',
+);
+assert.doesNotMatch(projectNode, /explorer-project-boundary/, 'Explorer 不应显示子项目标识徽标');
 
 assert.match(fileNode, /@dblclick="open"/);
 assert.match(fileNode, /event\?\.preventDefault\(\)/);

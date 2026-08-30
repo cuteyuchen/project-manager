@@ -219,8 +219,7 @@ onBeforeUnmount(() => {
       </button>
       <button type="button" class="explorer-project-name flex min-w-0 flex-1 items-center gap-2" @click.stop="selectProject">
         <div :class="depth === 0 ? 'i-mdi-folder-home-outline' : 'i-mdi-folder-star-outline'" class="explorer-project-icon" />
-        <span class="truncate">{{ project.name }}</span>
-        <span v-if="depth > 0" class="explorer-project-boundary">子项目</span>
+        <span class="min-w-0 flex-1 truncate">{{ project.name }}</span>
         <span v-if="moduleKindLabel" class="explorer-module-kind">{{ moduleKindLabel }}</span>
       </button>
       <div class="explorer-project-meta">
@@ -404,21 +403,12 @@ onBeforeUnmount(() => {
 .is-child-project .explorer-project-icon {
   color: color-mix(in srgb, var(--app-primary) 76%, var(--app-text-secondary));
 }
-.explorer-project-boundary,
 .explorer-module-kind,
 .explorer-project-branch {
   flex: 0 0 auto;
   color: var(--app-text-muted);
   font-size: 9px;
   font-weight: 500;
-}
-.explorer-project-boundary {
-  padding: 1px 4px;
-  border: 1px solid color-mix(in srgb, var(--app-primary) 26%, transparent);
-  border-radius: 3px;
-  background: color-mix(in srgb, var(--app-primary) 8%, transparent);
-  color: var(--app-primary);
-  font-weight: 700;
 }
 .explorer-project-meta {
   display: flex;
