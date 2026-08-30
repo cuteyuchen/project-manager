@@ -1,5 +1,7 @@
 import type {
     NodeVersion,
+    NodeInstallProgress,
+    NodeReleaseInfo,
     GitStatusResult,
     GitBranch,
     GitCommit,
@@ -31,7 +33,10 @@ export interface ProjectInfo {
     scripts: string[];
     path: string;
     packageManager?: 'npm' | 'yarn' | 'pnpm' | 'cnpm';
+    /** @deprecated 兼容旧字段，请优先读 nodeVersionHint */
     nvmVersion?: string;
+    /** .nvmrc / .node-version 提示，不是 NVM 实现绑定 */
+    nodeVersionHint?: string;
     projectType: string;
     /** Java 构建工具；非 Java 项目为空 */
     buildTool?: 'maven' | 'gradle';
@@ -123,13 +128,25 @@ export interface EditorWriteResult {
 }
 
 export interface PlatformAPI {
-    // NVM
-    getNvmList(): Promise<NodeVersion[]>;
-    installNode(version: string): Promise<string>;
-    uninstallNode(version: string): Promise<string>;
-    useNode(version: string): Promise<string>;
+    // Node runtime
+    listInstalledNodeRuntimes(): Promise<NodeVersion[]>;
+    listAvailableNodeReleases(): Promise<NodeReleaseInfo[]>;
+    installManagedNode(version: string, operationId?: string): Promise<string>;
+    cancelManagedNodeInstall(operationId: string): Promise<void>;
+    uninstallManagedNode(version: string): Promise<void>;
     getSystemNodePath(): Promise<string>;
     getNodeVersion(path: string): Promise<string>;
+    managedNodeRuntimeSupported(): Promise<boolean>;
+    onNodeRuntimeProgress?(callback: (payload: NodeInstallProgress) => void): Promise<() => void>;
+
+    /** @deprecated 使用 listInstalledNodeRuntimes */
+    getNvmList(): Promise<NodeVersion[]>;
+    /** @deprecated 使用 installManagedNode */
+    installNode(version: string): Promise<string>;
+    /** @deprecated 使用 uninstallManagedNode */
+    uninstallNode(version: string): Promise<string>;
+    /** @deprecated 不再调用 nvm use */
+    useNode(version: string): Promise<string>;
 
     // Project
     scanProject(path: string): Promise<ProjectInfo>;
@@ -146,6 +163,8 @@ export interface PlatformAPI {
     runProjectCommand(id: string, path: string, script: string, packageManager: string, nodePath: string, commandPath?: string, pmNodePath?: string): Promise<void>;
     runCustomCommand(id: string, path: string, command: string): Promise<void>;
     stopProjectCommand(id: string): Promise<void>;
+    sendProjectInput(runId: string, input: string): Promise<void>;
+    closeProjectInput(runId: string): Promise<void>;
     installPm(nodePath: string, pmName: string): Promise<void>;
 
     /**
@@ -207,7 +226,7 @@ export interface PlatformAPI {
     }): Promise<string | null>;
 
     // Events
-    onProjectOutput(callback: (payload: { id: string; data: string }) => void): Promise<() => void>;
+    onProjectOutput(callback: (payload: { id: string; data: string; partial?: boolean }) => void): Promise<() => void>;
     onProjectExit(callback: (payload: { id: string }) => void): Promise<() => void>;
 
     // Window

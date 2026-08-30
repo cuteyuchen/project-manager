@@ -14,8 +14,8 @@ import {
   getProjectCommandRunId,
   type ProjectCommandType,
 } from '../utils/projectCommands';
-import { resolveNodePathFromVersion, resolveProjectNodePath, isExplicitNodeVersion } from '../utils/nodeRuntime';
-import { normalizeNvmVersion } from '../utils/nvm';
+import { resolveNodePathFromVersion, resolveProjectNodePath, isExplicitNodeVersion, resolveAppDefaultNodePath } from '../utils/nodeRuntime';
+import { normalizeNodeVersion, projectNodeVersionHint } from '../utils/nvm';
 import { scanFrontendEnvProject } from '../utils/frontendEnvSwitcher';
 import { normalizeProjectTags } from '../utils/projectTags';
 import { createProjectId } from '../utils/projectId';
@@ -29,6 +29,7 @@ export const useProjectStore = defineStore('project', () => {
   const runningStatus = ref<Record<string, boolean>>({});
   const runningProjectCount = ref<Record<string, number>>({});
   const logs = ref<Record<string, string[]>>({});
+  const partialOutput = ref<Record<string, string>>({});
   // activeProjectId 语义为「当前叶子/子项目」：命令运行、git、环境切换绑定它（ConsoleView/GitView 读取此值）
   const activeProjectId = ref<string | null>(null);
   // activeRootId 语义为「当前钻取进入的一级项目」：文件、备忘录绑定它
@@ -98,18 +99,30 @@ export const useProjectStore = defineStore('project', () => {
   }
 
   // Setup listeners
-  api.onProjectOutput(({ id, data }) => {
+  api.onProjectOutput(({ id, data, partial }) => {
+    if (partial) {
+      partialOutput.value[id] = data;
+      return;
+    }
+    if (partialOutput.value[id]) {
+      const next = { ...partialOutput.value };
+      delete next[id];
+      partialOutput.value = next;
+    }
     if (!logBuffer[id]) logBuffer[id] = [];
     logBuffer[id].push(data);
 
     if (!logFlushTimer) {
-      // Use requestAnimationFrame for smooth UI updates, or setTimeout for throttling
-      // requestAnimationFrame might pause in background tabs, but that's usually fine
       logFlushTimer = requestAnimationFrame(flushLogs);
     }
   });
 
   api.onProjectExit(({ id }) => {
+    if (partialOutput.value[id]) {
+      const next = { ...partialOutput.value };
+      delete next[id];
+      partialOutput.value = next;
+    }
     setRunningState(id, false);
     // Ensure any buffered logs are flushed first
     if (logBuffer[id] && logBuffer[id].length > 0) {
@@ -340,14 +353,11 @@ export const useProjectStore = defineStore('project', () => {
 
     const nodeStore = useNodeStore();
     if (!nodeStore.versions.length) {
-      await nodeStore.loadNvmNodes();
+      await nodeStore.loadRuntimes();
     }
 
-    const nodePath = resolveProjectNodePath(project, nodeStore.versions);
-    let defaultNodePath = '';
-    try {
-      defaultNodePath = await api.getSystemNodePath();
-    } catch (_) {}
+    const nodePath = resolveProjectNodePath(project, nodeStore.versions, nodeStore.appDefault);
+    const defaultNodePath = resolveAppDefaultNodePath(nodeStore.versions, nodeStore.appDefault);
 
     const source = project.packageManagerSource || 'project';
 
@@ -367,19 +377,19 @@ export const useProjectStore = defineStore('project', () => {
 
     // Ensure node versions are loaded
     if (project.type === 'node') {
-      await nodeStore.loadNvmNodes();
+      await nodeStore.loadRuntimes();
     }
 
-    let nodePath = resolveProjectNodePath(project, nodeStore.versions);
+    let nodePath = resolveProjectNodePath(project, nodeStore.versions, nodeStore.appDefault);
 
-    // If a specific version is configured but not installed, auto-install it
-    if (!nodePath && isExplicitNodeVersion(project.nodeVersion)) {
-      const version = normalizeNvmVersion(project.nodeVersion!)!;
+    // If a specific version is configured but not installed, auto-install managed runtime
+    if (!nodePath && isExplicitNodeVersion(project.nodeVersion) && nodeStore.managedSupported) {
+      const version = normalizeNodeVersion(project.nodeVersion!)!;
       try {
         ElMessage.info({ message: `正在自动安装 Node ${version}...`, duration: 3000 });
-        await nodeStore.installNode(version);
+        await nodeStore.installManagedNode(version);
         ElMessage.success({ message: `Node ${version} 自动安装完成`, duration: 3000 });
-        nodePath = resolveProjectNodePath(project, nodeStore.versions);
+        nodePath = resolveProjectNodePath(project, nodeStore.versions, nodeStore.appDefault);
       } catch (installError) {
         ElMessage.error(`Node ${version} 自动安装失败: ${String(installError)}`);
         console.error('Failed to auto-install node version for project run', installError);
@@ -388,10 +398,11 @@ export const useProjectStore = defineStore('project', () => {
 
     if (!nodePath && project.type === 'node') {
       try {
-        const info: any = await api.scanProject(project.path);
-        nodePath = resolveNodePathFromVersion(info.nvmVersion, nodeStore.versions);
-        if (nodePath && info.nvmVersion) {
-          project.nodeVersion = info.nvmVersion;
+        const info = await api.scanProject(project.path);
+        const hint = projectNodeVersionHint(info);
+        nodePath = resolveNodePathFromVersion(hint, nodeStore.versions, nodeStore.appDefault);
+        if (nodePath && hint) {
+          project.nodeVersion = hint;
         }
       } catch (error) {
         console.warn('Failed to rescan project node version before running project', error);
@@ -413,12 +424,7 @@ export const useProjectStore = defineStore('project', () => {
       // 当来源为 default 时，需要将默认 Node 目录传给后端加入 PATH
       const source = project.packageManagerSource || 'project';
       if (source === 'default') {
-        try {
-          const defaultNodePath = await api.getSystemNodePath();
-          if (defaultNodePath) {
-            pmNodePath = defaultNodePath;
-          }
-        } catch (_) {}
+        pmNodePath = resolveAppDefaultNodePath(nodeStore.versions, nodeStore.appDefault) || undefined;
       }
     }
 
@@ -743,6 +749,7 @@ export const useProjectStore = defineStore('project', () => {
     runningProjectCount,
     runningSubtreeCount,
     logs,
+    partialOutput,
     activeProjectId,
     activeRootId,
     pendingWorkspaceRootId,

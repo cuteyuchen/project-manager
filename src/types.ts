@@ -127,6 +127,12 @@ export interface Project {
   frontendEnvGroups?: FrontendEnvGroup[];
   /** 前端环境扫描时间 */
   frontendEnvScannedAt?: number;
+  /**
+   * 打开外部终端时是否注入项目 Node。
+   * true / undefined：注入；false：只 cd，不解析/安装 Node。
+   * 仅影响外部终端，不影响 Console 内命令运行。
+   */
+  terminalInjectNode?: boolean;
 }
 
 // ─── Project Group Types ────────────────────────────────────────────────────
@@ -338,10 +344,37 @@ export interface ProjectHealthSnapshot {
   updatedAt: number;
 }
 
+export type NodeRuntimeSource = 'managed' | 'system' | 'custom';
+
+export type NodeRuntimeStatus = 'available' | 'broken' | 'installing';
+
 export interface NodeVersion {
   version: string;
   path: string;
-  source: 'nvm' | 'custom' | 'system';
+  source: NodeRuntimeSource;
+  status?: NodeRuntimeStatus;
+  isDefault?: boolean;
+}
+
+export interface NodeInstallProgress {
+  operationId: string;
+  version: string;
+  phase: 'resolving' | 'downloading' | 'verifying' | 'extracting' | 'validating' | 'complete' | string;
+  downloadedBytes?: number;
+  totalBytes?: number;
+  percent?: number;
+}
+
+export interface NodeReleaseInfo {
+  version: string;
+  date: string;
+  lts?: string | boolean;
+}
+
+export interface AppDefaultNode {
+  source: NodeRuntimeSource;
+  version: string;
+  path: string;
 }
 
 // ─── Usage Weight Types ──────────────────────────────────────────────────────

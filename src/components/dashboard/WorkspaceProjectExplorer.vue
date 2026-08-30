@@ -11,7 +11,7 @@ import { fileKind } from '../../utils/fileTypes';
 import { clampContextMenuPosition } from '../../utils/contextMenuPosition';
 import { joinAbsolutePath, joinWorkspacePath, normalizeWorkspaceRelativePath, parentWorkspacePath } from '../../utils/workspacePath';
 import { cleanupRemovedExplorerProjects, setExplorerExpanded } from '../../utils/workspaceExplorerState';
-import ProjectExplorerNode, { type ExplorerContextPayload } from './ProjectExplorerNode.vue';
+import ProjectExplorerNode, { type ExplorerContextPayload, type ExplorerProjectAction } from './ProjectExplorerNode.vue';
 
 const props = defineProps<{
   rootId: string;
@@ -36,8 +36,8 @@ const selectedFileKey = ref<string | null>(null);
 const contextMenuRef = ref<HTMLElement | null>(null);
 const contextMenu = ref<{ x: number; y: number; payload: ExplorerContextPayload } | null>(null);
 const contextMenuStyle = ref({ left: '0px', top: '0px' });
-const contextProject = computed(() => contextMenu.value?.payload.project || null);
-const { openEditor, openTerminal, openFolder } = useProjectExternalActions(contextProject);
+const actionProject = ref<Project | null>(null);
+const { openEditor, openTerminal, openFolder } = useProjectExternalActions(() => actionProject.value);
 const gitStatusMaps = computed<Record<string, ReadonlyMap<string, GitFileStatus>>>(() => {
   const maps: Record<string, ReadonlyMap<string, GitFileStatus>> = {};
   for (const project of projectStore.projects) {
@@ -94,13 +94,15 @@ function selectFile(project: Project, relativePath: string): void {
 
 async function openFile(project: Project, relativePath: string): Promise<void> {
   selectProject(project);
+  selectFile(project, relativePath);
   if (fileKind(relativePath) === 'binary') {
     await api.openPath(joinAbsolutePath(project.path, relativePath));
     return;
   }
   try {
-    await editorStore.openFile(project, relativePath);
+    const opening = editorStore.openFile(project, relativePath);
     projectStore.requestRightTab('editor', project.id);
+    await opening;
   } catch (error) {
     ElMessage.error(String(error));
   }
@@ -186,7 +188,7 @@ async function renameItem(): Promise<void> {
     const from = normalizeWorkspaceRelativePath(payload.relativePath, false);
     const to = joinWorkspacePath(parentWorkspacePath(from), name);
     await api.workspaceRename(payload.project.path, from, to);
-    editorStore.renamePath(payload.project.id, from, to, payload.project.path);
+    await editorStore.renamePath(payload.project.id, from, to, payload.project.path);
     refreshToken.value += 1;
     ElMessage.success('已重命名');
   } catch (error) {
@@ -256,15 +258,61 @@ async function editorOpen(): Promise<void> {
   await openFile(payload.project, payload.relativePath);
 }
 
-async function projectAction(action: 'terminal' | 'editor' | 'folder' | 'edit' | 'scan'): Promise<void> {
+async function handleProjectAction(project: Project, action: ExplorerProjectAction): Promise<void> {
+  actionProject.value = project;
+  if (action === 'git') {
+    selectProject(project);
+    projectStore.requestRightTab('git', project.id);
+    return;
+  }
+  if (action === 'pin') {
+    if (project.pinned) projectStore.unpinProject(project.id);
+    else projectStore.pinProject(project.id);
+    return;
+  }
+  if (action === 'delete') {
+    const hasChildren = projectStore.getChildren(project.id).length > 0;
+    const projectIds = [project.id, ...projectStore.collectDescendantIds(project.id)];
+    const dirtyWarning = editorStore.hasDirtyDocuments(projectIds)
+      ? '\n\n该项目有未保存的编辑器内容，删除后这些文档会关闭。'
+      : '';
+    try {
+      await ElMessageBox.confirm(
+        `${hasChildren ? `项目「${project.name}」及其子项目将被删除。` : `确定删除项目「${project.name}」吗？`}${dirtyWarning}`,
+        '删除项目',
+        { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+      );
+      projectStore.removeProject(project.id);
+      ElMessage.success('项目已删除');
+    } catch {
+      // 用户取消确认时不打断 Explorer。
+    }
+    return;
+  }
+  if (action === 'edit') {
+    emit('editProject', project);
+    return;
+  }
+  if (action === 'scan') {
+    emit('scanProject', project);
+    return;
+  }
+  if (action === 'terminal') {
+    await openTerminal();
+    return;
+  }
+  if (action === 'editor') {
+    await openEditor();
+    return;
+  }
+  await openFolder();
+}
+
+async function handleContextProjectAction(action: ExplorerProjectAction): Promise<void> {
   const project = contextMenu.value?.payload.project;
   if (!project) return;
   closeContextMenu();
-  if (action === 'terminal') return openTerminal();
-  if (action === 'editor') return openEditor();
-  if (action === 'folder') return openFolder();
-  if (action === 'edit') return emit('editProject', project);
-  emit('scanProject', project);
+  await handleProjectAction(project, action);
 }
 
 function handleKeydown(event: KeyboardEvent): void {
@@ -328,6 +376,7 @@ onUnmounted(() => {
         @scan-project="emit('scanProject', $event)"
         @select-file="selectFile"
         @open-file="openFile"
+        @project-action="handleProjectAction"
         @context-menu="showContextMenu"
       />
     </div>
@@ -343,12 +392,15 @@ onUnmounted(() => {
       @click.stop
     >
       <template v-if="contextMenu.payload.kind === 'project'">
-        <button type="button" class="context-item" @click="projectAction('terminal')"><div class="i-mdi-console-line" />终端</button>
-        <button type="button" class="context-item" @click="projectAction('editor')"><div class="i-mdi-code-tags" />外部编辑器</button>
-        <button type="button" class="context-item" @click="projectAction('folder')"><div class="i-mdi-folder-open-outline" />文件夹</button>
+        <button type="button" class="context-item" @click="handleContextProjectAction('git')"><div class="i-mdi-source-branch" />Git</button>
+        <button type="button" class="context-item" @click="handleContextProjectAction('terminal')"><div class="i-mdi-console-line" />终端</button>
+        <button type="button" class="context-item" @click="handleContextProjectAction('editor')"><div class="i-mdi-code-tags" />外部编辑器</button>
+        <button type="button" class="context-item" @click="handleContextProjectAction('folder')"><div class="i-mdi-folder-open-outline" />文件夹</button>
         <div class="context-separator" />
-        <button type="button" class="context-item" @click="projectAction('edit')"><div class="i-mdi-pencil-outline" />编辑项目</button>
-        <button type="button" class="context-item" @click="projectAction('scan')"><div class="i-mdi-file-tree-outline" />扫描子项目</button>
+        <button type="button" class="context-item" @click="handleContextProjectAction('edit')"><div class="i-mdi-pencil-outline" />编辑项目</button>
+        <button type="button" class="context-item" @click="handleContextProjectAction('scan')"><div class="i-mdi-file-tree-outline" />扫描子项目</button>
+        <button type="button" class="context-item" @click="handleContextProjectAction('pin')"><div :class="contextMenu.payload.project.pinned ? 'i-mdi-pin-off-outline' : 'i-mdi-pin-outline'" />{{ contextMenu.payload.project.pinned ? '取消置顶' : '置顶项目' }}</button>
+        <button type="button" class="context-item danger" @click="handleContextProjectAction('delete')"><div class="i-mdi-delete-outline" />删除项目</button>
       </template>
       <template v-else>
         <button type="button" class="context-item" @click="contextMenu.payload.isDirectory ? externalOpen() : editorOpen()"><div class="i-mdi-folder-open-outline" />打开</button>
@@ -371,8 +423,11 @@ onUnmounted(() => {
 
 <style scoped>
 .workspace-project-explorer {
+  container-type: inline-size;
   background: var(--app-surface-sidebar);
   color: var(--app-text-secondary);
+  user-select: none;
+  -webkit-user-select: none;
 }
 .explorer-header {
   min-height: 38px;

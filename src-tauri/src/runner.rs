@@ -1,9 +1,10 @@
 use std::collections::{HashMap, VecDeque};
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
-use std::process::{Command, Stdio};
+use std::io::{BufReader, Read, Seek, SeekFrom, Write};
+use std::process::{ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 /// 包管理器解析结果
@@ -96,8 +97,13 @@ impl Drop for WindowsJobObject {
     }
 }
 
+pub struct RunningProcess {
+    pub pid: u32,
+    pub stdin: Option<Arc<Mutex<ChildStdin>>>,
+}
+
 pub struct ProcessState {
-    pub processes: Arc<Mutex<HashMap<String, u32>>>,
+    pub processes: Arc<Mutex<HashMap<String, RunningProcess>>>,
     #[cfg(target_os = "windows")]
     job_object: Option<WindowsJobObject>,
 }
@@ -115,6 +121,127 @@ impl ProcessState {
                 }),
         }
     }
+}
+
+struct StreamDecoder {
+    pending: Vec<u8>,
+}
+
+impl StreamDecoder {
+    fn new() -> Self {
+        Self { pending: Vec::new() }
+    }
+
+    fn push(&mut self, chunk: &[u8]) -> (Vec<String>, Option<String>) {
+        self.pending.extend_from_slice(chunk);
+        let mut lines = Vec::new();
+        while let Some(pos) = self.pending.iter().position(|&b| b == b'\n') {
+            let raw: Vec<u8> = self.pending.drain(..=pos).collect();
+            let text = String::from_utf8_lossy(&raw);
+            lines.push(text.trim_end_matches(['\r', '\n']).to_string());
+        }
+        let partial = pending_utf8_prefix(&self.pending);
+        (lines, partial)
+    }
+
+    fn finish(&mut self) -> Option<String> {
+        let leftover = std::mem::take(&mut self.pending);
+        pending_utf8_prefix(&leftover)
+    }
+}
+
+fn pending_utf8_prefix(bytes: &[u8]) -> Option<String> {
+    if bytes.is_empty() {
+        return None;
+    }
+    let valid = match std::str::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(error) => std::str::from_utf8(&bytes[..error.valid_up_to()]).unwrap_or(""),
+    };
+    if valid.is_empty() {
+        None
+    } else {
+        Some(valid.to_string())
+    }
+}
+
+fn spawn_output_reader<R: Read + Send + 'static>(
+    app: AppHandle,
+    id: String,
+    stream_type: &'static str,
+    reader: R,
+    log_manager: Arc<Mutex<LogManager>>,
+    log_prefix: Option<&'static str>,
+) {
+    thread::spawn(move || {
+        let mut reader = BufReader::new(reader);
+        let mut decoder = StreamDecoder::new();
+        let mut last_partial = String::new();
+        let mut last_partial_emit = Instant::now() - Duration::from_secs(1);
+        let mut chunk = [0u8; 4096];
+        loop {
+            let n = match reader.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(_) => break,
+            };
+            let (lines, partial) = decoder.push(&chunk[..n]);
+            for line in lines {
+                last_partial.clear();
+                let payload = line.clone();
+                let _ = app.emit(
+                    "project-output",
+                    serde_json::json!({
+                        "id": id,
+                        "type": stream_type,
+                        "data": payload,
+                        "partial": false
+                    }),
+                );
+                if let Ok(mut manager) = log_manager.lock() {
+                    let stored = match log_prefix {
+                        Some(prefix) => format!("{prefix}{line}"),
+                        None => line,
+                    };
+                    manager.append(stored);
+                }
+            }
+            if let Some(partial) = partial {
+                let now = Instant::now();
+                if partial != last_partial || now.duration_since(last_partial_emit) >= Duration::from_millis(80) {
+                    last_partial = partial.clone();
+                    last_partial_emit = now;
+                    let _ = app.emit(
+                        "project-output",
+                        serde_json::json!({
+                            "id": id,
+                            "type": stream_type,
+                            "data": partial,
+                            "partial": true
+                        }),
+                    );
+                }
+            }
+        }
+        if let Some(partial) = decoder.finish() {
+            let _ = app.emit(
+                "project-output",
+                serde_json::json!({
+                    "id": id,
+                    "type": stream_type,
+                    "data": partial,
+                    "partial": false
+                }),
+            );
+            if let Ok(mut manager) = log_manager.lock() {
+                let stored = match log_prefix {
+                    Some(prefix) => format!("{prefix}{partial}"),
+                    None => partial.clone(),
+                };
+                manager.append(stored);
+            }
+        }
+    });
 }
 
 #[cfg(unix)]
@@ -161,18 +288,18 @@ pub fn cleanup_processes(state: &ProcessState) {
     // Assign lock result to a variable to ensure correct drop order and avoid "borrowed value does not live long enough" error
     let lock_result = processes.lock();
     if let Ok(mut lock) = lock_result {
-        for (id, pid) in lock.iter() {
-            println!("Killing process {} (PID: {})", id, pid);
+        for (id, process) in lock.iter() {
+            println!("Killing process {} (PID: {})", id, process.pid);
             #[cfg(target_os = "windows")]
             {
                 let _ = Command::new("taskkill")
-                    .args(&["/PID", &pid.to_string(), "/F", "/T"])
+                    .args(&["/PID", &process.pid.to_string(), "/F", "/T"])
                     .creation_flags(CREATE_NO_WINDOW)
                     .spawn();
             }
             #[cfg(not(target_os = "windows"))]
             {
-                terminate_process_tree(*pid);
+                terminate_process_tree(process.pid);
             }
         }
         lock.clear();
@@ -554,6 +681,7 @@ pub fn run_project_command(
 
     command_builder
         .current_dir(&path)
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -588,65 +716,14 @@ pub fn run_project_command(
     #[cfg(unix)]
     spawn_parent_watchdog(pid);
 
-    processes_lock.insert(id.clone(), pid);
+    let stdin = child.stdin.take().map(|stdin| Arc::new(Mutex::new(stdin)));
+    processes_lock.insert(id.clone(), RunningProcess { pid, stdin });
     drop(processes_lock);
 
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
-
-    let id_clone1 = id.clone();
-    let app_clone1 = app.clone();
-    let log_manager1 = log_manager.clone();
-    thread::spawn(move || {
-        let mut reader = BufReader::new(stdout);
-        let mut buf = Vec::new();
-        while let Ok(n) = reader.read_until(b'\n', &mut buf) {
-            if n == 0 { break; }
-            let line = String::from_utf8_lossy(&buf);
-            let line_str = line.trim_end();
-
-            let _ = app_clone1.emit(
-                "project-output",
-                serde_json::json!({
-                    "id": id_clone1,
-                    "type": "stdout",
-                    "data": line_str
-                }),
-            );
-
-            if let Ok(mut manager) = log_manager1.lock() {
-                manager.append(line_str.to_string());
-            }
-            buf.clear();
-        }
-    });
-
-    let id_clone2 = id.clone();
-    let app_clone2 = app.clone();
-    let log_manager2 = log_manager.clone();
-    thread::spawn(move || {
-        let mut reader = BufReader::new(stderr);
-        let mut buf = Vec::new();
-        while let Ok(n) = reader.read_until(b'\n', &mut buf) {
-            if n == 0 { break; }
-            let line = String::from_utf8_lossy(&buf);
-            let line_str = line.trim_end();
-
-            let _ = app_clone2.emit(
-                "project-output",
-                serde_json::json!({
-                    "id": id_clone2,
-                    "type": "stderr",
-                    "data": line_str
-                }),
-            );
-
-            if let Ok(mut manager) = log_manager2.lock() {
-                manager.append(format!("ERR: {}", line_str));
-            }
-            buf.clear();
-        }
-    });
+    spawn_output_reader(app.clone(), id.clone(), "stdout", stdout, log_manager.clone(), None);
+    spawn_output_reader(app.clone(), id.clone(), "stderr", stderr, log_manager.clone(), Some("ERR: "));
 
     let id_clone3 = id.clone();
     let app_clone3 = app.clone();
@@ -657,8 +734,7 @@ pub fn run_project_command(
         if let Ok(mut lock) = processes_clone.lock() {
             lock.remove(&id_clone3);
         }
-        
-        // Final rewrite to ensure exact 500 lines at end
+
         if let Ok(mut manager) = log_manager3.lock() {
             manager.rewrite_file();
         }
@@ -677,19 +753,62 @@ pub fn stop_project_command(state: State<'_, ProcessState>, id: String) -> Resul
     let processes = state.processes.clone();
     let lock = processes.lock().map_err(|e| e.to_string())?;
 
-    if let Some(pid) = lock.get(&id) {
+    if let Some(process) = lock.get(&id) {
         #[cfg(target_os = "windows")]
         {
             let _ = Command::new("taskkill")
-                .args(&["/PID", &pid.to_string(), "/F", "/T"])
+                .args(&["/PID", &process.pid.to_string(), "/F", "/T"])
                 .creation_flags(CREATE_NO_WINDOW)
                 .spawn();
         }
         #[cfg(not(target_os = "windows"))]
         {
-            terminate_process_tree(*pid);
+            terminate_process_tree(process.pid);
         }
     }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn send_project_input(
+    state: State<'_, ProcessState>,
+    run_id: String,
+    input: String,
+) -> Result<(), String> {
+    let processes = state.processes.lock().map_err(|e| e.to_string())?;
+    let Some(process) = processes.get(&run_id) else {
+        return Err("runId 不存在".to_string());
+    };
+    let Some(stdin) = process.stdin.clone() else {
+        return Err("stdin closed".to_string());
+    };
+    drop(processes);
+    let mut stdin = stdin.lock().map_err(|e| e.to_string())?;
+    stdin
+        .write_all(input.as_bytes())
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::BrokenPipe {
+                "broken pipe".to_string()
+            } else {
+                e.to_string()
+            }
+        })?;
+    stdin.flush().map_err(|e| {
+        if e.kind() == std::io::ErrorKind::BrokenPipe {
+            "broken pipe".to_string()
+        } else {
+            e.to_string()
+        }
+    })
+}
+
+#[tauri::command]
+pub fn close_project_input(state: State<'_, ProcessState>, run_id: String) -> Result<(), String> {
+    let mut processes = state.processes.lock().map_err(|e| e.to_string())?;
+    let Some(process) = processes.get_mut(&run_id) else {
+        return Err("runId 不存在".to_string());
+    };
+    process.stdin = None;
     Ok(())
 }
 
@@ -762,6 +881,7 @@ pub fn run_custom_command(
 
     command_builder
         .current_dir(&path)
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -796,65 +916,14 @@ pub fn run_custom_command(
     #[cfg(unix)]
     spawn_parent_watchdog(pid);
 
-    processes_lock.insert(id.clone(), pid);
+    let stdin = child.stdin.take().map(|stdin| Arc::new(Mutex::new(stdin)));
+    processes_lock.insert(id.clone(), RunningProcess { pid, stdin });
     drop(processes_lock);
 
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
-
-    let id_clone1 = id.clone();
-    let app_clone1 = app.clone();
-    let log_manager1 = log_manager.clone();
-    thread::spawn(move || {
-        let mut reader = BufReader::new(stdout);
-        let mut buf = Vec::new();
-        while let Ok(n) = reader.read_until(b'\n', &mut buf) {
-            if n == 0 { break; }
-            let line = String::from_utf8_lossy(&buf);
-            let line_str = line.trim_end();
-
-            let _ = app_clone1.emit(
-                "project-output",
-                serde_json::json!({
-                    "id": id_clone1,
-                    "type": "stdout",
-                    "data": line_str
-                }),
-            );
-
-            if let Ok(mut manager) = log_manager1.lock() {
-                manager.append(line_str.to_string());
-            }
-            buf.clear();
-        }
-    });
-
-    let id_clone2 = id.clone();
-    let app_clone2 = app.clone();
-    let log_manager2 = log_manager.clone();
-    thread::spawn(move || {
-        let mut reader = BufReader::new(stderr);
-        let mut buf = Vec::new();
-        while let Ok(n) = reader.read_until(b'\n', &mut buf) {
-            if n == 0 { break; }
-            let line = String::from_utf8_lossy(&buf);
-            let line_str = line.trim_end();
-
-            let _ = app_clone2.emit(
-                "project-output",
-                serde_json::json!({
-                    "id": id_clone2,
-                    "type": "stderr",
-                    "data": line_str
-                }),
-            );
-
-            if let Ok(mut manager) = log_manager2.lock() {
-                manager.append(format!("ERR: {}", line_str));
-            }
-            buf.clear();
-        }
-    });
+    spawn_output_reader(app.clone(), id.clone(), "stdout", stdout, log_manager.clone(), None);
+    spawn_output_reader(app.clone(), id.clone(), "stderr", stderr, log_manager.clone(), Some("ERR: "));
 
     let id_clone3 = id.clone();
     let app_clone3 = app.clone();
@@ -1847,5 +1916,27 @@ mod tests {
             build_startup_script("", "yarn", StartupShell::Bash),
             "node -v && yarn -v"
         );
+    }
+
+    #[test]
+    fn stream_decoder_emits_partial_prompt_without_newline() {
+        let mut decoder = StreamDecoder::new();
+        let (lines, partial) = decoder.push(b"Your name: ");
+        assert!(lines.is_empty());
+        assert_eq!(partial.as_deref(), Some("Your name: "));
+        let (lines, _) = decoder.push(b"ignored\nHello Tom\n");
+        assert_eq!(lines, vec!["Your name: ignored", "Hello Tom"]);
+        assert!(decoder.finish().is_none());
+    }
+
+    #[test]
+    fn stream_decoder_keeps_incomplete_utf8() {
+        let mut decoder = StreamDecoder::new();
+        let (lines, partial) = decoder.push(&[0xe4, 0xbd]);
+        assert!(lines.is_empty());
+        assert!(partial.is_none());
+        let (lines, partial) = decoder.push(&[0xa0, b'\n']);
+        assert_eq!(lines, vec!["你"]);
+        assert!(partial.is_none());
     }
 }

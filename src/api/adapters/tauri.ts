@@ -17,6 +17,8 @@ import type {
 } from '../types';
 import type {
     NodeVersion,
+    NodeInstallProgress,
+    NodeReleaseInfo,
     GitStatusResult,
     GitBranch,
     GitCommit,
@@ -38,21 +40,24 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 export class TauriAdapter implements PlatformAPI {
     private appWindow = getCurrentWindow();
 
-    // NVM
-    async getNvmList(): Promise<NodeVersion[]> {
-        return invoke('get_nvm_list');
+    async listInstalledNodeRuntimes(): Promise<NodeVersion[]> {
+        return invoke('list_installed_node_runtimes');
     }
 
-    async installNode(version: string): Promise<string> {
-        return invoke('install_node', { version });
+    async listAvailableNodeReleases(): Promise<NodeReleaseInfo[]> {
+        return invoke('list_available_node_releases');
     }
 
-    async uninstallNode(version: string): Promise<string> {
-        return invoke('uninstall_node', { version });
+    async installManagedNode(version: string, operationId?: string): Promise<string> {
+        return invoke('install_managed_node', { version, operationId: operationId || null });
     }
 
-    async useNode(version: string): Promise<string> {
-        return invoke('use_node', { version });
+    async cancelManagedNodeInstall(operationId: string): Promise<void> {
+        return invoke('cancel_managed_node_install', { operationId });
+    }
+
+    async uninstallManagedNode(version: string): Promise<void> {
+        return invoke('uninstall_managed_node', { version });
     }
 
     async getSystemNodePath(): Promise<string> {
@@ -61,6 +66,37 @@ export class TauriAdapter implements PlatformAPI {
 
     async getNodeVersion(path: string): Promise<string> {
         return invoke('get_node_version', { path });
+    }
+
+    async managedNodeRuntimeSupported(): Promise<boolean> {
+        return invoke('managed_node_runtime_supported');
+    }
+
+    async onNodeRuntimeProgress(callback: (payload: NodeInstallProgress) => void): Promise<() => void> {
+        return listen<NodeInstallProgress>('node-runtime-progress', (event) => {
+            callback(event.payload);
+        });
+    }
+
+    /** @deprecated */
+    async getNvmList(): Promise<NodeVersion[]> {
+        return this.listInstalledNodeRuntimes();
+    }
+
+    /** @deprecated */
+    async installNode(version: string): Promise<string> {
+        return this.installManagedNode(version);
+    }
+
+    /** @deprecated */
+    async uninstallNode(version: string): Promise<string> {
+        await this.uninstallManagedNode(version);
+        return 'ok';
+    }
+
+    /** @deprecated */
+    async useNode(_version: string): Promise<string> {
+        throw new Error('use_node is deprecated; set the Project Manager default Node instead');
     }
 
     // Project
@@ -99,6 +135,14 @@ export class TauriAdapter implements PlatformAPI {
 
     async stopProjectCommand(id: string): Promise<void> {
         return invoke('stop_project_command', { id });
+    }
+
+    async sendProjectInput(runId: string, input: string): Promise<void> {
+        return invoke('send_project_input', { runId, input });
+    }
+
+    async closeProjectInput(runId: string): Promise<void> {
+        return invoke('close_project_input', { runId });
     }
 
     async installPm(nodePath: string, pmName: string): Promise<void> {
@@ -238,7 +282,7 @@ export class TauriAdapter implements PlatformAPI {
     }
 
     // Events
-    async onProjectOutput(callback: (payload: { id: string; data: string }) => void): Promise<() => void> {
+    async onProjectOutput(callback: (payload: { id: string; data: string; partial?: boolean }) => void): Promise<() => void> {
         return listen<any>('project-output', (event) => {
             callback(event.payload);
         });

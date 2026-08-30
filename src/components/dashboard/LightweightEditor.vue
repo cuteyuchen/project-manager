@@ -3,15 +3,10 @@ import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { EditorState, Compartment, type Extension } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
-import { bracketMatching, defaultHighlightStyle, foldGutter, foldKeymap, indentOnInput, syntaxHighlighting } from '@codemirror/language';
+import { bracketMatching, foldGutter, foldKeymap, indentOnInput } from '@codemirror/language';
 import { search, searchKeymap, highlightSelectionMatches } from '@codemirror/search';
-import { javascript } from '@codemirror/lang-javascript';
-import { json } from '@codemirror/lang-json';
-import { html } from '@codemirror/lang-html';
-import { css } from '@codemirror/lang-css';
-import { markdown } from '@codemirror/lang-markdown';
-import { vue } from '@codemirror/lang-vue';
-import type { EditorLanguage } from '../../utils/editorLanguage';
+import { editorLanguageExtension, type EditorLanguage } from '../../utils/editorLanguage';
+import { editorHighlightExtension } from '../../utils/editorHighlight';
 
 const props = withDefaults(defineProps<{
   modelValue: string;
@@ -33,20 +28,10 @@ let view: EditorView | null = null;
 const languageCompartment = new Compartment();
 const themeCompartment = new Compartment();
 const readOnlyCompartment = new Compartment();
+const highlightCompartment = new Compartment();
 
-function languageExtension(language: EditorLanguage): Extension {
-  switch (language) {
-    case 'typescript': return javascript({ typescript: true });
-    case 'javascript': return javascript();
-    case 'jsx': return javascript({ jsx: true });
-    case 'tsx': return javascript({ jsx: true, typescript: true });
-    case 'json': return json();
-    case 'html': return html();
-    case 'css': return css();
-    case 'markdown': return markdown();
-    case 'vue': return vue({ base: html() });
-    default: return [];
-  }
+function highlightExtension(dark: boolean): Extension {
+  return editorHighlightExtension(dark);
 }
 
 function themeExtension(dark: boolean): Extension {
@@ -91,7 +76,6 @@ function createView(): void {
       bracketMatching(),
       indentOnInput(),
       foldGutter(),
-      syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
       search({ top: true }),
       highlightSelectionMatches(),
       keymap.of([
@@ -106,8 +90,9 @@ function createView(): void {
         EditorState.readOnly.of(props.readOnly),
         EditorView.editable.of(!props.readOnly),
       ]),
-      languageCompartment.of(languageExtension(props.language)),
+      languageCompartment.of(editorLanguageExtension(props.language)),
       themeCompartment.of(themeExtension(props.dark)),
+      highlightCompartment.of(highlightExtension(props.dark)),
       EditorView.updateListener.of(update => {
         if (update.docChanged) emit('update:modelValue', update.state.doc.toString());
       }),
@@ -122,11 +107,16 @@ watch(() => props.modelValue, value => {
 });
 
 watch(() => props.language, language => {
-  view?.dispatch({ effects: languageCompartment.reconfigure(languageExtension(language)) });
+  view?.dispatch({ effects: languageCompartment.reconfigure(editorLanguageExtension(language)) });
 });
 
 watch(() => props.dark, dark => {
-  view?.dispatch({ effects: themeCompartment.reconfigure(themeExtension(dark)) });
+  view?.dispatch({
+    effects: [
+      themeCompartment.reconfigure(themeExtension(dark)),
+      highlightCompartment.reconfigure(highlightExtension(dark)),
+    ],
+  });
 });
 
 watch(() => props.readOnly, readOnly => {

@@ -1,4 +1,10 @@
-import type { NodeVersion } from '../types';
+import type { NodeVersion, NodeRuntimeSource } from '../types';
+
+export function migrateLegacyNodeSource(source: string | undefined): NodeRuntimeSource {
+  if (source === 'managed' || source === 'system' || source === 'custom') return source;
+  if (source === 'nvm') return 'custom';
+  return 'custom';
+}
 
 /***********************Node 版本排序*********************/
 
@@ -6,10 +12,19 @@ function parseVersion(version: string): number[] {
   return version.replace(/^v/i, '').split('.').map(Number);
 }
 
+const SOURCE_ORDER: Record<NodeRuntimeSource, number> = {
+  system: 0,
+  managed: 1,
+  custom: 2,
+};
+
 export function sortNodeVersions(versions: NodeVersion[]): NodeVersion[] {
   return [...versions].sort((a, b) => {
-    if (a.source === 'system') return -1;
-    if (b.source === 'system') return 1;
+    if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
+
+    const sourceA = SOURCE_ORDER[a.source] ?? 9;
+    const sourceB = SOURCE_ORDER[b.source] ?? 9;
+    if (sourceA !== sourceB) return sourceA - sourceB;
 
     const versionA = parseVersion(a.version);
     const versionB = parseVersion(b.version);
@@ -24,18 +39,42 @@ export function sortNodeVersions(versions: NodeVersion[]): NodeVersion[] {
   });
 }
 
-/***********************默认 Node 行更新*********************/
+/***********************系统 Node 行更新*********************/
 
 export function upsertSystemNodeVersion(
   versions: NodeVersion[],
-  systemNode: Pick<NodeVersion, 'version' | 'path'>,
+  systemNode: Pick<NodeVersion, 'version' | 'path' | 'status'>,
 ): NodeVersion[] {
   const nextVersions = versions.filter(item => item.source !== 'system');
   nextVersions.unshift({
     version: systemNode.version,
     path: systemNode.path,
     source: 'system',
+    status: systemNode.status || (systemNode.path && systemNode.path !== 'System Default' ? 'available' : 'broken'),
   });
 
   return sortNodeVersions(nextVersions);
+}
+
+export function mergeNodeRuntimes(parts: {
+  system?: NodeVersion | null;
+  managed?: NodeVersion[];
+  custom?: NodeVersion[];
+}): NodeVersion[] {
+  const seen = new Set<string>();
+  const result: NodeVersion[] = [];
+
+  const push = (node: NodeVersion | null | undefined) => {
+    if (!node) return;
+    const key = `${node.source}:${node.path}:${node.version}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    result.push(node);
+  };
+
+  push(parts.system || null);
+  for (const node of parts.managed || []) push(node);
+  for (const node of parts.custom || []) push({ ...node, source: 'custom' });
+
+  return sortNodeVersions(result);
 }

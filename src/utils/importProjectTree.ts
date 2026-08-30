@@ -62,6 +62,7 @@ export function buildImportRootProject(
     root.nodeVersion = options.nodeVersion;
     root.packageManager = info?.packageManager || 'npm';
     root.scripts = info?.scripts || [];
+    root.terminalInjectNode = true;
   }
 
   return root;
@@ -120,8 +121,8 @@ export function flattenImportNodeTree(
       project.scripts = node.scripts;
     }
     if (node.kind === 'node' || node.kind === 'frontend' || node.kind === 'static') {
-      // 嵌套扫描未携带 nvm 版本信息，统一使用 Default
       project.nodeVersion = 'Default';
+      project.terminalInjectNode = true;
     }
     // Java 模块：预置构建命令。
     // 不预置的话「命令」页签整个不渲染（它要求有脚本或自定义命令），

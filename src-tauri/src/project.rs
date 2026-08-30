@@ -24,6 +24,8 @@ pub struct ProjectInfo {
     package_manager: Option<String>,
     #[serde(rename = "nvmVersion")]
     nvm_version: Option<String>,
+    #[serde(rename = "nodeVersionHint")]
+    node_version_hint: Option<String>,
     #[serde(rename = "projectType")]
     project_type: String,
     /// Java 构建工具："maven" | "gradle"；非 Java 项目为 None
@@ -50,7 +52,8 @@ impl ProjectInfo {
             scripts,
             path,
             package_manager,
-            nvm_version,
+            nvm_version: nvm_version.clone(),
+            node_version_hint: nvm_version,
             project_type,
             build_tool: None,
             has_wrapper: None,
@@ -215,6 +218,7 @@ pub async fn scan_project(path: String) -> Result<ProjectInfo, String> {
                     path,
                     package_manager: None,
                     nvm_version: None,
+                    node_version_hint: None,
                     project_type: "java".to_string(),
                     build_tool: Some(build_tool.to_string()),
                     has_wrapper: Some(has_wrapper),
@@ -249,12 +253,15 @@ pub async fn scan_project(path: String) -> Result<ProjectInfo, String> {
         }
 
         let mut nvm_version = None;
-        let nvmrc_path = project_path.join(".nvmrc");
-        if nvmrc_path.exists() {
-            if let Ok(content) = fs::read_to_string(nvmrc_path) {
-                let trimmed = content.trim();
-                if !trimmed.is_empty() {
-                    nvm_version = Some(trimmed.to_string());
+        for hint_name in [".nvmrc", ".node-version"] {
+            let hint_path = project_path.join(hint_name);
+            if hint_path.exists() {
+                if let Ok(content) = fs::read_to_string(hint_path) {
+                    let trimmed = content.trim();
+                    if !trimmed.is_empty() {
+                        nvm_version = Some(trimmed.to_string());
+                        break;
+                    }
                 }
             }
         }

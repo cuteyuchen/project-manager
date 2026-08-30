@@ -12,6 +12,8 @@ import type {
 } from '../types';
 import type {
   NodeVersion,
+  NodeInstallProgress,
+  NodeReleaseInfo,
   GitStatusResult,
   GitBranch,
   GitCommit,
@@ -46,12 +48,47 @@ export class UToolsAdapter implements PlatformAPI {
     return window.services;
   }
 
-  getNvmList(): Promise<NodeVersion[]> { return this.service.getNvmList(); }
-  installNode(version: string): Promise<string> { return this.service.installNode(version); }
-  uninstallNode(version: string): Promise<string> { return this.service.uninstallNode(version); }
-  useNode(version: string): Promise<string> { return this.service.useNode(version); }
+  listInstalledNodeRuntimes(): Promise<NodeVersion[]> {
+    return this.service.listInstalledNodeRuntimes
+      ? this.service.listInstalledNodeRuntimes()
+      : this.service.getNvmList();
+  }
+  listAvailableNodeReleases(): Promise<NodeReleaseInfo[]> {
+    return this.service.listAvailableNodeReleases
+      ? this.service.listAvailableNodeReleases()
+      : Promise.resolve([]);
+  }
+  installManagedNode(version: string, operationId?: string): Promise<string> {
+    if (this.service.installManagedNode) return this.service.installManagedNode(version, operationId);
+    return Promise.reject(new Error('Managed Node runtime is not supported in this plugin'));
+  }
+  cancelManagedNodeInstall(operationId: string): Promise<void> {
+    if (this.service.cancelManagedNodeInstall) return this.service.cancelManagedNodeInstall(operationId);
+    return Promise.reject(new Error('Managed Node runtime is not supported in this plugin'));
+  }
+  uninstallManagedNode(version: string): Promise<void> {
+    if (this.service.uninstallManagedNode) return this.service.uninstallManagedNode(version);
+    return Promise.reject(new Error('Managed Node runtime is not supported in this plugin'));
+  }
   getSystemNodePath(): Promise<string> { return this.service.getSystemNodePath(); }
   getNodeVersion(path: string): Promise<string> { return this.service.getNodeVersion(path); }
+  managedNodeRuntimeSupported(): Promise<boolean> {
+    return this.service.managedNodeRuntimeSupported
+      ? this.service.managedNodeRuntimeSupported()
+      : Promise.resolve(false);
+  }
+  onNodeRuntimeProgress(callback: (payload: NodeInstallProgress) => void): Promise<() => void> {
+    if (this.service.onNodeRuntimeProgress) return this.service.onNodeRuntimeProgress(callback);
+    return Promise.resolve(() => undefined);
+  }
+  getNvmList(): Promise<NodeVersion[]> { return this.listInstalledNodeRuntimes(); }
+  installNode(version: string): Promise<string> { return this.installManagedNode(version); }
+  uninstallNode(version: string): Promise<string> {
+    return this.uninstallManagedNode(version).then(() => 'ok');
+  }
+  useNode(_version: string): Promise<string> {
+    return Promise.reject(new Error('use_node is deprecated; set the Project Manager default Node instead'));
+  }
 
   scanProject(path: string): Promise<ProjectInfo> { return this.service.scanProject(path); }
   scanSubProjects(path: string, maxDepth?: number): Promise<import('../types').ImportNode[]> {
@@ -77,6 +114,12 @@ export class UToolsAdapter implements PlatformAPI {
     return this.service.runCustomCommand(id, path, command);
   }
   stopProjectCommand(id: string): Promise<void> { return this.service.stopProjectCommand(id); }
+  sendProjectInput(runId: string, input: string): Promise<void> {
+    return this.service.sendProjectInput(runId, input);
+  }
+  closeProjectInput(runId: string): Promise<void> {
+    return this.service.closeProjectInput(runId);
+  }
   installPm(nodePath: string, pmName: string): Promise<void> {
       if ((this.service as any).installPm) {
           return (this.service as any).installPm(nodePath, pmName);
@@ -167,7 +210,7 @@ export class UToolsAdapter implements PlatformAPI {
   openDialog(options: any): Promise<string | string[] | null> { return this.service.openDialog(options); }
   saveDialog(options: any): Promise<string | null> { return this.service.saveDialog(options); }
 
-  onProjectOutput(callback: (payload: { id: string; data: string }) => void): Promise<() => void> {
+  onProjectOutput(callback: (payload: { id: string; data: string; partial?: boolean }) => void): Promise<() => void> {
     return this.service.onProjectOutput(callback);
   }
  async onProjectExit(callback: (payload: { id: string }) => void): Promise<() => void> {

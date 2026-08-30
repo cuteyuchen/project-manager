@@ -1,5 +1,5 @@
-import type { NodeVersion, Project } from '../types';
-import { findInstalledNodeVersion, normalizeNvmVersion } from './nvm';
+import type { AppDefaultNode, NodeVersion, Project } from '../types';
+import { findInstalledNodeVersion, normalizeNodeVersion } from './nvm';
 
 const DEFAULT_NODE_VERSION_LABELS = new Set([
   'default',
@@ -7,67 +7,81 @@ const DEFAULT_NODE_VERSION_LABELS = new Set([
   '\u9ed8\u8ba4',
 ]);
 
+const SOURCE_PRIORITY: Record<NodeVersion['source'], number> = {
+  managed: 0,
+  custom: 1,
+  system: 2,
+};
+
 function normalizeNodeVersionLabel(value?: string) {
   return (value || '').trim().toLowerCase();
 }
 
-function shouldUseSystemNode(projectNodeVersion?: string) {
+function shouldUseDefaultNode(projectNodeVersion?: string) {
   const normalizedVersion = normalizeNodeVersionLabel(projectNodeVersion);
   if (!normalizedVersion) return false;
   if (DEFAULT_NODE_VERSION_LABELS.has(normalizedVersion)) return true;
-
-  // Older data may contain mojibake labels instead of a real semantic version.
   return !/\d/.test(normalizedVersion);
 }
 
-/**
- * Returns true when the project has a specific (non-default) node version configured.
- */
 export function isExplicitNodeVersion(nodeVersion?: string): boolean {
   if (!nodeVersion) return false;
-  if (shouldUseSystemNode(nodeVersion)) return false;
-  return normalizeNvmVersion(nodeVersion) !== null;
+  if (shouldUseDefaultNode(nodeVersion)) return false;
+  return normalizeNodeVersion(nodeVersion) !== null;
 }
 
-/**
- * Find a version entry preferring nvm/custom sources over system.
- * The system node path is typically an NVM symlink that changes when switching
- * global versions, so we prefer the pinned NVM directory path.
- */
-function findVersionPreferNvm(versions: NodeVersion[], predicate: (v: NodeVersion) => boolean): NodeVersion | undefined {
-  let systemFallback: NodeVersion | undefined;
-  for (const v of versions) {
-    if (!predicate(v)) continue;
-    if (v.source !== 'system') return v;
-    if (!systemFallback) systemFallback = v;
-  }
-  return systemFallback;
+function isUsablePath(path: string | undefined) {
+  return !!path && path !== 'System Default';
 }
 
-export function resolveProjectNodePath(project: Project, versions: NodeVersion[]) {
+function findVersionByPriority(versions: NodeVersion[], predicate: (v: NodeVersion) => boolean): NodeVersion | undefined {
+  const matches = versions.filter(predicate);
+  matches.sort((a, b) => SOURCE_PRIORITY[a.source] - SOURCE_PRIORITY[b.source]);
+  return matches[0];
+}
+
+function appDefaultPath(appDefault: AppDefaultNode | null | undefined, versions: NodeVersion[]) {
+  if (!appDefault) return '';
+  const matched = versions.find(version =>
+    version.source === appDefault.source
+    && (version.path === appDefault.path || version.version === appDefault.version),
+  );
+  if (matched && isUsablePath(matched.path)) return matched.path;
+  if (isUsablePath(appDefault.path)) return appDefault.path;
+  return '';
+}
+
+function systemNodePath(versions: NodeVersion[]) {
+  const systemNode = versions.find(version => version.source === 'system');
+  return isUsablePath(systemNode?.path) ? systemNode!.path : '';
+}
+
+export function resolveProjectNodePath(
+  project: Project,
+  versions: NodeVersion[],
+  appDefault?: AppDefaultNode | null,
+) {
   if (!project.nodeVersion) return '';
 
-  if (shouldUseSystemNode(project.nodeVersion)) {
-    const systemNode = versions.find((version) => version.source === 'system');
-    if (!systemNode || systemNode.path === 'System Default') return '';
-    return systemNode.path;
+  if (shouldUseDefaultNode(project.nodeVersion)) {
+    return appDefaultPath(appDefault, versions) || systemNodePath(versions);
   }
 
-  const exactMatch = findVersionPreferNvm(versions, (v) => v.version === project.nodeVersion);
+  const exactMatch = findVersionByPriority(versions, v => v.version === project.nodeVersion);
   if (exactMatch) {
-    return exactMatch.path === 'System Default' ? '' : exactMatch.path;
+    return isUsablePath(exactMatch.path) ? exactMatch.path : '';
   }
 
-  const normalizedTargetVersion = normalizeNvmVersion(project.nodeVersion);
+  const normalizedTargetVersion = normalizeNodeVersion(project.nodeVersion);
   if (normalizedTargetVersion) {
     const matchedVersion = findInstalledNodeVersion(
-      versions.map((version) => version.version),
-      normalizedTargetVersion
+      versions.map(version => version.version),
+      normalizedTargetVersion,
     );
     if (matchedVersion) {
-      const normalizedMatch = findVersionPreferNvm(versions, (v) => v.version === matchedVersion);
+      const normalizedMatch = findVersionByPriority(versions, v => v.version === matchedVersion);
       if (normalizedMatch) {
-        return normalizedMatch.path === 'System Default' ? '' : normalizedMatch.path;
+        return isUsablePath(normalizedMatch.path) ? normalizedMatch.path : '';
       }
     }
   }
@@ -75,33 +89,47 @@ export function resolveProjectNodePath(project: Project, versions: NodeVersion[]
   return '';
 }
 
-export function resolveNodePathFromVersion(versionLabel: string | null | undefined, versions: NodeVersion[]) {
+export function resolveNodePathFromVersion(
+  versionLabel: string | null | undefined,
+  versions: NodeVersion[],
+  appDefault?: AppDefaultNode | null,
+) {
   if (!versionLabel) return '';
 
-  if (shouldUseSystemNode(versionLabel)) {
-    const systemNode = versions.find((version) => version.source === 'system');
-    if (!systemNode || systemNode.path === 'System Default') return '';
-    return systemNode.path;
+  if (shouldUseDefaultNode(versionLabel)) {
+    return appDefaultPath(appDefault, versions) || systemNodePath(versions);
   }
 
-  const exactMatch = findVersionPreferNvm(versions, (v) => v.version === versionLabel);
+  const exactMatch = findVersionByPriority(versions, v => v.version === versionLabel);
   if (exactMatch) {
-    return exactMatch.path === 'System Default' ? '' : exactMatch.path;
+    return isUsablePath(exactMatch.path) ? exactMatch.path : '';
   }
 
-  const normalizedTargetVersion = normalizeNvmVersion(versionLabel);
+  const normalizedTargetVersion = normalizeNodeVersion(versionLabel);
   if (normalizedTargetVersion) {
     const matchedVersion = findInstalledNodeVersion(
-      versions.map((version) => version.version),
-      normalizedTargetVersion
+      versions.map(version => version.version),
+      normalizedTargetVersion,
     );
     if (matchedVersion) {
-      const normalizedMatch = findVersionPreferNvm(versions, (v) => v.version === matchedVersion);
+      const normalizedMatch = findVersionByPriority(versions, v => v.version === matchedVersion);
       if (normalizedMatch) {
-        return normalizedMatch.path === 'System Default' ? '' : normalizedMatch.path;
+        return isUsablePath(normalizedMatch.path) ? normalizedMatch.path : '';
       }
     }
   }
 
   return '';
+}
+
+export function shouldInjectTerminalNode(project: Project): boolean {
+  return project.type === 'node' && project.terminalInjectNode !== false;
+}
+
+/** 项目管理器默认 Node：app default，没有则回退 System。 */
+export function resolveAppDefaultNodePath(
+  versions: NodeVersion[],
+  appDefault?: AppDefaultNode | null,
+): string {
+  return appDefaultPath(appDefault, versions) || systemNodePath(versions);
 }

@@ -13,6 +13,7 @@ import { buildAiAttempts } from '../utils/aiFallback.ts';
 import { mergeDetectedEditors } from '../utils/editorDetection';
 import { isAbortError } from '../utils/network';
 import { ensureNodeInstallCommand } from '../utils/projectCommands';
+import { sortNodeVersions } from '../utils/nodeDefaultState';
 import { createTerminalConfig, getTerminalDuplicateKey, normalizeTerminalConfigs } from '../utils/terminalConfig';
 import {
   DEFAULT_QUICK_SEARCH_APP_SHORTCUT,
@@ -702,17 +703,7 @@ function buildDiffs<T extends Record<string, any>>(
 }
 
 function sortNodes(nodes: NodeVersion[]) {
-  return [...nodes].sort((a, b) => {
-    if (a.source === 'system') return -1;
-    if (b.source === 'system') return 1;
-    const parse = (version: string) => version.replace(/^v/, '').split('.').map(Number);
-    const aParts = parse(a.version);
-    const bParts = parse(b.version);
-    for (let index = 0; index < 3; index += 1) {
-      if (aParts[index] !== bParts[index]) return (bParts[index] || 0) - (aParts[index] || 0);
-    }
-    return a.path.localeCompare(b.path);
-  });
+  return sortNodeVersions(nodes);
 }
 
 function normalizeDefaultEditorId(settings: Settings): Settings {
@@ -895,7 +886,9 @@ function applyImportPlan() {
   const systemNodes = nodeStore.versions.filter(item => item.source !== 'custom');
   const customNodes = deepClone(toRaw(nodeStore.versions.filter(item => item.source === 'custom')));
   plan.nodeAdds.forEach(node => {
-    if (!customNodes.some(item => item.path === node.path)) customNodes.push(node);
+    if (!customNodes.some(item => item.path === node.path)) {
+      customNodes.push({ ...node, source: 'custom' });
+    }
   });
   plan.nodeConflicts.forEach((conflict) => {
     if (conflict.choice === 'incoming') customNodes[conflict.existingIndex] = deepClone(conflict.incoming);

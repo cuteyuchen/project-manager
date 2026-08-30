@@ -73,9 +73,17 @@ function resolveWorkspacePath(root, relative, allowMissing = false) {
         return realPath;
     }
     if (!allowMissing) throw new Error(`Workspace path does not exist: ${relative}`);
-    const parent = fs.realpathSync(path.dirname(candidate));
-    assertWorkspaceWithin(rootPath, parent);
-    return path.join(parent, path.basename(candidate));
+    let cursor = candidate;
+    while (true) {
+        const parent = path.dirname(cursor);
+        if (parent === cursor) throw new Error(`Failed to resolve missing workspace path: ${relative}`);
+        if (fs.existsSync(parent)) {
+            const realParent = fs.realpathSync(parent);
+            assertWorkspaceWithin(rootPath, realParent);
+            return candidate;
+        }
+        cursor = parent;
+    }
 }
 
 function workspaceDiskVersion(filePath, stat = fs.statSync(filePath)) {
@@ -121,10 +129,18 @@ function editorBytes(content, eol = 'lf', bom = false) {
 
 function atomicWriteEditorBytes(target, bytes) {
     const parent = path.dirname(target);
+    let mode;
+    try { mode = fs.statSync(target).mode; } catch (_) {}
     const temp = path.join(parent, `.${path.basename(target)}.${process.pid}.${Date.now()}.editor.tmp`);
     fs.writeFileSync(temp, bytes);
+    if (mode != null) {
+        try { fs.chmodSync(temp, mode); } catch (_) {}
+    }
     try {
         fs.renameSync(temp, target);
+        if (mode != null) {
+            try { fs.chmodSync(target, mode); } catch (_) {}
+        }
     } catch (error) {
         if (!fs.existsSync(target) || !fs.statSync(target).isFile()) {
             try { fs.rmSync(temp, { force: true }); } catch (_) {}
@@ -135,6 +151,9 @@ function atomicWriteEditorBytes(target, bytes) {
             fs.renameSync(target, backup);
             try {
                 fs.renameSync(temp, target);
+                if (mode != null) {
+                    try { fs.chmodSync(target, mode); } catch (_) {}
+                }
                 try { fs.rmSync(backup, { force: true }); } catch (_) {}
             } catch (replaceError) {
                 try { fs.renameSync(backup, target); } catch (restoreError) {
@@ -1018,59 +1037,96 @@ process.once('unhandledRejection', (reason) => {
     process.exit(1);
 });
 
+function createStreamDecoder() {
+    let pending = Buffer.alloc(0);
+    return {
+        push(chunk) {
+            pending = Buffer.concat([pending, Buffer.from(chunk)]);
+            const lines = [];
+            let index;
+            while ((index = pending.indexOf(0x0a)) >= 0) {
+                const raw = pending.subarray(0, index);
+                pending = pending.subarray(index + 1);
+                lines.push(raw.toString('utf8').replace(/\r$/, ''));
+            }
+            let partial = null;
+            if (pending.length) {
+                try {
+                    partial = pending.toString('utf8');
+                } catch (_) {
+                    partial = null;
+                }
+            }
+            return { lines, partial };
+        },
+        finish() {
+            if (!pending.length) return null;
+            const leftover = pending.toString('utf8');
+            pending = Buffer.alloc(0);
+            return leftover || null;
+        },
+    };
+}
+
+function emitProcessOutput(id, type, data, partial, logFn) {
+    if (outputCallback) outputCallback({ id, type, data, partial: !!partial });
+    if (!partial && logFn) logFn(type === 'stderr' ? `ERR: ${data}` : data);
+}
+
+function attachProcessIo(id, child, logFn) {
+    const stdoutDecoder = createStreamDecoder();
+    const stderrDecoder = createStreamDecoder();
+    const handleChunk = (decoder, type, chunk) => {
+        const { lines, partial } = decoder.push(chunk);
+        for (const line of lines) emitProcessOutput(id, type, line, false, logFn);
+        if (partial) emitProcessOutput(id, type, partial, true, null);
+    };
+    if (child.stdout) child.stdout.on('data', (data) => handleChunk(stdoutDecoder, 'stdout', data));
+    if (child.stderr) child.stderr.on('data', (data) => handleChunk(stderrDecoder, 'stderr', data));
+    child.on('exit', () => {
+        const leftoverOut = stdoutDecoder.finish();
+        if (leftoverOut) emitProcessOutput(id, 'stdout', leftoverOut, false, logFn);
+        const leftoverErr = stderrDecoder.finish();
+        if (leftoverErr) emitProcessOutput(id, 'stderr', leftoverErr, false, logFn);
+    });
+}
+
+function writeChildStdin(id, input) {
+    const child = processes.get(id);
+    if (!child) return Promise.reject(new Error('runId 不存在'));
+    if (!child.stdin || child.stdin.destroyed || !child.stdin.writable) {
+        return Promise.reject(new Error('stdin closed'));
+    }
+    return new Promise((resolve, reject) => {
+        child.stdin.write(input, (error) => {
+            if (error) {
+                reject(new Error(error.code === 'EPIPE' ? 'broken pipe' : error.message));
+                return;
+            }
+            resolve();
+        });
+    });
+}
+
 window.services = {
-    getNvmList: async () => {
-        // Windows
-        if (process.platform === 'win32') {
-            const nvmHome = process.env.NVM_HOME;
-            if (!nvmHome) return [];
-
-            try {
-                const dirs = fs.readdirSync(nvmHome);
-                const versions = [];
-
-                for (const dir of dirs) {
-                    if (dir.startsWith('v')) {
-                        versions.push({
-                            version: dir,
-                            path: path.join(nvmHome, dir),
-                            source: 'nvm'
-                        });
-                    }
-                }
-                return versions;
-            } catch (e) {
-                console.error(e);
-                return [];
-            }
-        }
-        // macOS / Linux
-        else {
-            const home = process.env.HOME;
-            const nvmDir = process.env.NVM_DIR || path.join(home, '.nvm');
-            const versionsDir = path.join(nvmDir, 'versions', 'node');
-
-            if (!fs.existsSync(versionsDir)) return [];
-
-            try {
-                const dirs = fs.readdirSync(versionsDir);
-                const versions = [];
-
-                for (const dir of dirs) {
-                    if (dir.startsWith('v')) {
-                        versions.push({
-                            version: dir,
-                            path: path.join(versionsDir, dir),
-                            source: 'nvm'
-                        });
-                    }
-                }
-                return versions;
-            } catch (e) {
-                console.error(e);
-                return [];
-            }
-        }
+    managedNodeRuntimeSupported: async () => false,
+    listInstalledNodeRuntimes: async () => [],
+    listAvailableNodeReleases: async () => [],
+    installManagedNode: async () => {
+        throw new Error('Managed Node runtime is not supported in this plugin. Use the desktop app.');
+    },
+    cancelManagedNodeInstall: async () => {
+        throw new Error('Managed Node runtime is not supported in this plugin');
+    },
+    uninstallManagedNode: async () => {
+        throw new Error('Managed Node runtime is not supported in this plugin');
+    },
+    getNvmList: async () => [],
+    sendProjectInput: async (runId, input) => writeChildStdin(runId, input),
+    closeProjectInput: async (runId) => {
+        const child = processes.get(runId);
+        if (!child) throw new Error('runId 不存在');
+        if (child.stdin && !child.stdin.destroyed) child.stdin.end();
     },
 
     getSystemNodePath: async () => {
@@ -1087,169 +1143,33 @@ window.services = {
                 if (err) return resolve('');
                 resolve(stdout.trim());
             };
-            if (nodePath) {
-                execFile(nodePath, ['-v'], cb);
+            if (nodePath && nodePath !== 'System Default') {
+                let exe = nodePath;
+                try {
+                    if (fs.existsSync(nodePath) && fs.statSync(nodePath).isDirectory()) {
+                        const win = path.join(nodePath, 'node.exe');
+                        const unix = path.join(nodePath, 'bin', 'node');
+                        if (fs.existsSync(win)) exe = win;
+                        else if (fs.existsSync(unix)) exe = unix;
+                    }
+                } catch (_) {}
+                execFile(exe, ['-v'], cb);
             } else {
                 exec('node -v', cb);
             }
         });
     },
 
-    installNode: async (version) => {
-        return new Promise((resolve, reject) => {
-            if (!isValidVersion(version)) {
-                return reject(new Error('Invalid version string.'));
-            }
-            if (process.platform === 'win32') {
-                // Use PowerShell to start a new elevated window that runs nvm install
-                // /c executes and terminates, but we add pause so user can see the result
-                // Start-Process -Wait ensures we wait for that window to close
-                const psCommand = `Start-Process cmd -ArgumentList '/c nvm install ${version} & pause' -Verb RunAs -Wait`;
-                exec(`powershell -Command "${psCommand}"`, (error) => {
-                    if (error) {
-                        reject(error);
-                        return;
-                    }
-
-                    // Best-effort verify installation for numeric versions only.
-                    // For aliases (e.g. lts), nvm may install a resolved semver folder.
-                    const nvmHome = process.env.NVM_HOME;
-                    const normalizedVersion = String(version || '').trim().replace(/^v/i, '');
-                    const isNumericVersion = /^\d+(\.\d+){0,2}$/.test(normalizedVersion);
-                    if (nvmHome && isNumericVersion) {
-                        try {
-                            const dirs = fs.readdirSync(nvmHome);
-                            const installed = dirs.some((dir) => {
-                                if (!dir.startsWith('v')) return false;
-                                const normalizedDir = dir.replace(/^v/i, '');
-                                return (
-                                    normalizedDir === normalizedVersion ||
-                                    normalizedDir.startsWith(`${normalizedVersion}.`)
-                                );
-                            });
-
-                            if (installed) {
-                                resolve("Success");
-                                return;
-                            }
-                        } catch (e) {
-                            // Ignore verification errors and trust command result.
-                        }
-                    }
-
-                    resolve("Success");
-                });
-            } else if (process.platform === 'darwin') {
-                // macOS: Use AppleScript to open Terminal
-                const script = `source ~/.nvm/nvm.sh && nvm install ${version}`;
-                const appleScript = `tell application "Terminal" to do script "${script}"`;
-                exec(`osascript -e '${appleScript}'`, (error) => {
-                    if (error) reject(error);
-                    else resolve("Started in Terminal");
-                });
-            } else {
-                // Linux: Try common terminal emulators or fallback to background
-                const script = `source ~/.nvm/nvm.sh && nvm install ${version} && read -p "Press enter to close"`;
-                const terminals = [
-                    { cmd: 'gnome-terminal', args: ['--', 'bash', '-c', script] },
-                    { cmd: 'x-terminal-emulator', args: ['-e', `bash -c "${script}"`] },
-                    { cmd: 'konsole', args: ['-e', 'bash', '-c', script] },
-                    { cmd: 'xfce4-terminal', args: ['-e', `bash -c "${script}"`] },
-                    { cmd: 'xterm', args: ['-e', `bash -c "${script}"`] }
-                ];
-
-                let started = false;
-                for (const t of terminals) {
-                    try {
-                        spawn(t.cmd, t.args, { detached: true, stdio: 'ignore' });
-                        started = true;
-                        break;
-                    } catch (e) {}
-                }
-
-                if (started) {
-                    resolve("Started in Terminal");
-                } else {
-                    // Fallback: run in background and capture output
-                    exec(`bash -c "source ~/.nvm/nvm.sh && nvm install ${version}"`, (error, stdout, stderr) => {
-                         if (error) reject(new Error(stderr || error.message));
-                         else resolve("Success");
-                    });
-                }
-            }
-        });
+    installNode: async () => {
+        throw new Error('Managed Node runtime is not supported in this plugin. Use the desktop app.');
     },
 
-    uninstallNode: async (version) => {
-        return new Promise((resolve, reject) => {
-            if (!isValidVersion(version)) {
-                return reject(new Error('Invalid version string.'));
-            }
-            if (process.platform === 'win32') {
-                const psCommand = `Start-Process cmd -ArgumentList '/c nvm uninstall ${version} & pause' -Verb RunAs -Wait`;
-                exec(`powershell -Command "${psCommand}"`, (error) => {
-                    if (error) {
-                        reject(error);
-                        return;
-                    }
-
-                    // Verify uninstallation
-                    const nvmHome = process.env.NVM_HOME;
-                    if (nvmHome) {
-                        const versionPath = path.join(nvmHome, version);
-                        if (!fs.existsSync(versionPath)) {
-                            resolve("Success");
-                        } else {
-                            reject(new Error("Uninstallation failed or cancelled"));
-                        }
-                    } else {
-                        resolve("Done");
-                    }
-                });
-            } else if (process.platform === 'darwin') {
-                const script = `source ~/.nvm/nvm.sh && nvm uninstall ${version}`;
-                const appleScript = `tell application "Terminal" to do script "${script}"`;
-                exec(`osascript -e '${appleScript}'`, (error) => {
-                    if (error) reject(error);
-                    else resolve("Started in Terminal");
-                });
-            } else {
-                // Linux
-                 exec(`bash -c "source ~/.nvm/nvm.sh && nvm uninstall ${version}"`, (error, stdout, stderr) => {
-                     if (error) reject(new Error(stderr || error.message));
-                     else resolve("Success");
-                 });
-            }
-        });
+    uninstallNode: async () => {
+        throw new Error('Managed Node runtime is not supported in this plugin');
     },
 
-    useNode: async (version) => {
-        return new Promise((resolve, reject) => {
-            if (!isValidVersion(version)) {
-                return reject(new Error('Invalid version string.'));
-            }
-            if (process.platform === 'win32') {
-                const psCommand = `Start-Process cmd -ArgumentList '/c nvm use ${version} & pause' -Verb RunAs -Wait`;
-                exec(`powershell -Command "${psCommand}"`, (error) => {
-                    if (error) reject(error);
-                    else resolve("Done");
-                });
-            } else if (process.platform === 'darwin') {
-                 const script = `source ~/.nvm/nvm.sh && nvm use ${version}`;
-                 const appleScript = `tell application "Terminal" to do script "${script}"`;
-                 exec(`osascript -e '${appleScript}'`, (error) => {
-                     if (error) reject(error);
-                     else resolve("Done");
-                 });
-            } else {
-                 // Linux: nvm use affects current shell only, usually useless for future commands
-                 // But we can run it to set default if alias default is used
-                 exec(`bash -c "source ~/.nvm/nvm.sh && nvm alias default ${version}"`, (error) => {
-                     if (error) reject(error);
-                     else resolve("Done (Set as default)");
-                 });
-            }
-        });
+    useNode: async () => {
+        throw new Error('use_node is deprecated; set the Project Manager default Node instead');
     },
 
     scanProject: async (projectPath) => {
@@ -1274,6 +1194,7 @@ window.services = {
                         path: projectPath,
                         packageManager: undefined,
                         nvmVersion: undefined,
+                        nodeVersionHint: undefined,
                         projectType: 'java',
                         buildTool,
                         hasWrapper
@@ -1287,6 +1208,7 @@ window.services = {
                     path: projectPath,
                     packageManager: undefined,
                     nvmVersion: undefined,
+                    nodeVersionHint: undefined,
                     projectType: 'other'
                 };
             }
@@ -1309,11 +1231,14 @@ window.services = {
             }
 
             let nvmVersion = undefined;
-            const nvmrcPath = path.join(projectPath, '.nvmrc');
-            if (fs.existsSync(nvmrcPath)) {
-                const rawNvmVersion = fs.readFileSync(nvmrcPath, 'utf-8').trim();
-                if (rawNvmVersion) {
-                    nvmVersion = rawNvmVersion;
+            for (const hintName of ['.nvmrc', '.node-version']) {
+                const hintPath = path.join(projectPath, hintName);
+                if (fs.existsSync(hintPath)) {
+                    const rawHint = fs.readFileSync(hintPath, 'utf-8').trim();
+                    if (rawHint) {
+                        nvmVersion = rawHint;
+                        break;
+                    }
                 }
             }
 
@@ -1323,6 +1248,7 @@ window.services = {
                 path: projectPath,
                 packageManager,
                 nvmVersion,
+                nodeVersionHint: nvmVersion,
                 projectType: 'node'
             };
         } catch (e) {
@@ -1554,18 +1480,7 @@ window.services = {
             spawnParentDeathWatch(child);
 
             processes.set(id, child);
-
-            child.stdout.on('data', (data) => {
-                const str = data.toString();
-                if (outputCallback) outputCallback({ id, data: str });
-                appendLog(str);
-            });
-
-            child.stderr.on('data', (data) => {
-                const str = data.toString();
-                if (outputCallback) outputCallback({ id, data: str });
-                appendLog(`ERR: ${str}`);
-            });
+            attachProcessIo(id, child, (text) => appendLog(typeof text === 'string' && text.endsWith('\n') ? text : `${text}\n`));
 
             child.on('exit', () => {
                 processes.delete(id);
@@ -1615,16 +1530,7 @@ window.services = {
         spawnParentDeathWatch(child);
 
         processes.set(id, child);
-
-        child.stdout.on('data', (data) => {
-            const str = data.toString();
-            if (outputCallback) outputCallback({ id, data: str });
-        });
-
-        child.stderr.on('data', (data) => {
-            const str = data.toString();
-            if (outputCallback) outputCallback({ id, data: str });
-        });
+        attachProcessIo(id, child);
 
         child.on('exit', () => {
             processes.delete(id);
@@ -3342,18 +3248,7 @@ $result | ConvertTo-Json -Compress`;
 
             spawnParentDeathWatch(child);
             processes.set(id, child);
-
-            child.stdout.on('data', (data) => {
-                const str = data.toString();
-                if (outputCallback) outputCallback({ id, data: str });
-                appendLog(str);
-            });
-
-            child.stderr.on('data', (data) => {
-                const str = data.toString();
-                if (outputCallback) outputCallback({ id, data: str });
-                appendLog(`ERR: ${str}`);
-            });
+            attachProcessIo(id, child, (text) => appendLog(typeof text === 'string' && text.endsWith('\n') ? text : `${text}\n`));
 
             child.on('exit', () => {
                 processes.delete(id);

@@ -5,8 +5,8 @@ import type { Project } from '../types';
 import { api } from '../api';
 import { useNodeStore } from '../stores/node';
 import { useSettingsStore } from '../stores/settings';
-import { resolveNodePathFromVersion, resolveProjectNodePath, isExplicitNodeVersion } from '../utils/nodeRuntime';
-import { normalizeNvmVersion } from '../utils/nvm';
+import { resolveNodePathFromVersion, resolveProjectNodePath, isExplicitNodeVersion, shouldInjectTerminalNode } from '../utils/nodeRuntime';
+import { normalizeNodeVersion, projectNodeVersionHint } from '../utils/nvm';
 import { resolveTerminalCommand } from '../utils/terminalConfig';
 
 /***********************项目外部打开操作*********************/
@@ -55,34 +55,40 @@ export function useProjectExternalActions(projectSource: MaybeRefOrGetter<Projec
     nodePath: string;
     packageManager: string;
   }> {
-    if (project.type === 'node') {
-      await nodeStore.loadNvmNodes();
+    if (!shouldInjectTerminalNode(project)) {
+      return {
+        terminalCommand: resolveTerminalCommand(
+          settingsStore.settings.defaultTerminal,
+          settingsStore.settings.customTerminals,
+        ),
+        nodePath: '',
+        packageManager: '',
+      };
     }
 
-    let nodePath = '';
-    if (project.type === 'node') {
-      nodePath = resolveProjectNodePath(project, nodeStore.versions);
+    await nodeStore.loadRuntimes();
 
-      if (!nodePath && isExplicitNodeVersion(project.nodeVersion)) {
-        const version = normalizeNvmVersion(project.nodeVersion!)!;
-        try {
-          ElMessage.info(t('project.autoInstallStart', { version }));
-          await nodeStore.installNode(version);
-          ElMessage.success(t('project.autoInstallSuccess', { version }));
-          nodePath = resolveProjectNodePath(project, nodeStore.versions);
-        } catch (installError) {
-          ElMessage.error(`${t('project.autoInstallFailed', { version })}: ${String(installError)}`);
-          console.error('Failed to auto-install node version for terminal', installError);
-        }
+    let nodePath = resolveProjectNodePath(project, nodeStore.versions, nodeStore.appDefault);
+
+    if (!nodePath && isExplicitNodeVersion(project.nodeVersion) && nodeStore.managedSupported) {
+      const version = normalizeNodeVersion(project.nodeVersion!)!;
+      try {
+        ElMessage.info(t('project.autoInstallStart', { version }));
+        await nodeStore.installManagedNode(version);
+        ElMessage.success(t('project.autoInstallSuccess', { version }));
+        nodePath = resolveProjectNodePath(project, nodeStore.versions, nodeStore.appDefault);
+      } catch (installError) {
+        ElMessage.error(`${t('project.autoInstallFailed', { version })}: ${String(installError)}`);
+        console.error('Failed to auto-install node version for terminal', installError);
       }
+    }
 
-      if (!nodePath) {
-        try {
-          const info = await api.scanProject(project.path);
-          nodePath = resolveNodePathFromVersion(info.nvmVersion, nodeStore.versions);
-        } catch (scanError) {
-          console.warn('Failed to scan project for terminal node version', scanError);
-        }
+    if (!nodePath) {
+      try {
+        const info = await api.scanProject(project.path);
+        nodePath = resolveNodePathFromVersion(projectNodeVersionHint(info), nodeStore.versions, nodeStore.appDefault);
+      } catch (scanError) {
+        console.warn('Failed to scan project for terminal node version', scanError);
       }
     }
 
@@ -92,8 +98,7 @@ export function useProjectExternalActions(projectSource: MaybeRefOrGetter<Projec
         settingsStore.settings.customTerminals,
       ),
       nodePath,
-      // 非 node 项目不注入 Node/包管理器版本，只做 cd。
-      packageManager: project.type === 'node' ? (project.packageManager || 'npm') : '',
+      packageManager: project.packageManager || 'npm',
     };
   }
 

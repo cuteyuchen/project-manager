@@ -27,7 +27,7 @@ import { useNodeStore } from './stores/node';
 import { useGitStore } from './stores/git';
 import { useUsageStore } from './stores/usage';
 import type { Project } from './types';
-import { normalizeNvmVersion, findInstalledNodeVersion } from './utils/nvm';
+import { normalizeNodeVersion, findInstalledNodeVersion, projectNodeVersionHint } from './utils/nvm';
 import { buildJavaPresetCommands, ensureNodeInstallCommand, isWindowsPlatform } from './utils/projectCommands';
 import ProjectQuickSearch from './components/ProjectQuickSearch.vue';
 import {
@@ -97,26 +97,27 @@ async function handleImportProject(path: string) {
     const info = await api.scanProject(path);
     let nodeVersion = '';
 
-    const normalizedNvmVersion = normalizeNvmVersion(info.nvmVersion);
+    const hint = projectNodeVersionHint(info);
+    const normalizedNvmVersion = normalizeNodeVersion(hint);
     if (normalizedNvmVersion) {
       let currentNodeVersions: string[] = [];
       try {
-        const nvmList = await api.getNvmList();
-        currentNodeVersions = nvmList.map(v => v.version);
+        const runtimeList = await api.listInstalledNodeRuntimes();
+        currentNodeVersions = runtimeList.map(v => v.version);
       } catch (nvmErr) {
         console.error('Failed to load node versions for import', nvmErr);
       }
 
       let installed = findInstalledNodeVersion(currentNodeVersions, normalizedNvmVersion);
 
-      if (!installed && !processedImportInstallVersions.has(normalizedNvmVersion)) {
+      if (!installed && !processedImportInstallVersions.has(normalizedNvmVersion) && nodeStore.managedSupported) {
         processedImportInstallVersions.add(normalizedNvmVersion);
         try {
           ElMessage.info(t('project.autoInstallStart', { version: normalizedNvmVersion }));
-          await api.installNode(normalizedNvmVersion);
+          await api.installManagedNode(normalizedNvmVersion);
           ElMessage.success(t('project.autoInstallSuccess', { version: normalizedNvmVersion }));
 
-          const latestList = await api.getNvmList();
+          const latestList = await api.listInstalledNodeRuntimes();
           currentNodeVersions = latestList.map(v => v.version);
           installed = findInstalledNodeVersion(currentNodeVersions, normalizedNvmVersion);
         } catch (installErr) {
@@ -132,9 +133,9 @@ async function handleImportProject(path: string) {
       if (installed) {
         nodeVersion = installed;
       }
-    } else if (info.nvmVersion) {
+    } else if (hint) {
       ElMessage.warning(t('project.invalidNvmrc'));
-      console.warn('Invalid .nvmrc version while importing project', info.nvmVersion);
+      console.warn('Invalid Node version hint while importing project', hint);
     }
 
     const project: Project = {

@@ -13,7 +13,16 @@ const height = ref<number | null>(null);
 
 const imageStyle = computed<CSSProperties>(() => {
   if (fit.value) return { maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' };
-  return { width: `${zoom.value * 100}%`, maxWidth: 'none', maxHeight: 'none' };
+  // 非 Fit：100% = 图片 natural 像素，而不是相对容器宽度。
+  if (width.value && height.value) {
+    return {
+      width: `${Math.round(width.value * zoom.value)}px`,
+      height: `${Math.round(height.value * zoom.value)}px`,
+      maxWidth: 'none',
+      maxHeight: 'none',
+    };
+  }
+  return { maxWidth: 'none', maxHeight: 'none' };
 });
 
 function formatBytes(size: number): string {
@@ -50,7 +59,10 @@ function onImageLoad(event: Event): void {
         <template v-if="width && height"> · {{ width }} × {{ height }}</template>
       </span>
     </div>
-    <div class="image-document-canvas flex min-h-0 flex-1 items-center justify-center overflow-auto p-4">
+    <div
+      class="image-document-canvas min-h-0 flex-1 overflow-auto p-4"
+      :class="fit ? 'is-fit' : 'is-zoom'"
+    >
       <div v-if="document.loading" class="text-sm text-slate-400">Loading...</div>
       <div v-else-if="document.error" class="text-sm text-red-400">{{ document.error }}</div>
       <img v-else :src="document.imageData" :alt="document.name" :style="imageStyle" @load="onImageLoad">
@@ -90,5 +102,13 @@ function onImageLoad(event: Event): void {
 }
 .image-document-canvas {
   background: color-mix(in srgb, var(--app-surface-soft) 62%, transparent);
+}
+.image-document-canvas.is-fit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.image-document-canvas.is-zoom {
+  display: block;
 }
 </style>

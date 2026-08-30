@@ -19,8 +19,8 @@ const ztoolsPreload = readFileSync(resolve(root, 'ztools/preload.js'), 'utf8');
 /***********************前端：非 node 项目传空包管理器*********************/
 
 assert(
-  /packageManager: project\.type === 'node'\s*\?\s*\(project\.packageManager \|\| 'npm'\)\s*:\s*''/.test(externalActions),
-  '非 node 项目打开终端时应传空包管理器，不注入 node/npm 版本',
+  /shouldInjectTerminalNode/.test(externalActions),
+  '非 node 项目与 terminalInjectNode=false 都必须走同一套注入开关，不得各自拼 PATH',
 );
 
 // nodePath 的解析本就包在 type === 'node' 分支里，非 node 项目自然拿到空串
@@ -29,8 +29,12 @@ const openTerminalBody = externalActions.slice(
   externalActions.indexOf('async function openTerminal'),
 );
 assert(
-  /if \(project\.type === 'node'\) \{[\s\S]*nodePath = resolveProjectNodePath/.test(openTerminalBody),
-  '非 node 项目不应解析 nodePath，否则仍会往 PATH 里注入 Node 目录',
+  /shouldInjectTerminalNode\(project\)/.test(openTerminalBody),
+  '打开终端必须尊重 terminalInjectNode；false 时不得解析/安装 Node',
+);
+assert(
+  /nodePath: ''/.test(openTerminalBody) && /packageManager: ''/.test(openTerminalBody),
+  'terminalInjectNode === false 必须返回空 nodePath/packageManager',
 );
 
 assert(projectListItem.includes('useProjectExternalActions'), '项目行应复用共享外部打开能力');

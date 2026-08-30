@@ -236,6 +236,7 @@ fn atomic_replace(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path
         .parent()
         .ok_or_else(|| format!("Path has no parent: {}", path.display()))?;
+    let original_permissions = fs::metadata(path).ok().map(|metadata| metadata.permissions());
     let mut temp = NamedTempFile::new_in(parent)
         .map_err(|e| format!("Failed to create editor temporary file: {e}"))?;
     temp.write_all(bytes)
@@ -243,6 +244,10 @@ fn atomic_replace(path: &Path, bytes: &[u8]) -> Result<(), String> {
     temp.as_file()
         .sync_all()
         .map_err(|e| format!("Failed to sync editor temporary file: {e}"))?;
+    if let Some(permissions) = original_permissions.as_ref() {
+        fs::set_permissions(temp.path(), permissions.clone())
+            .map_err(|e| format!("Failed to preserve editor file permissions: {e}"))?;
+    }
 
     #[cfg(target_os = "windows")]
     {
@@ -255,7 +260,10 @@ fn atomic_replace(path: &Path, bytes: &[u8]) -> Result<(), String> {
                 .map_err(|e| format!("Failed to move existing editor file: {e}"))?;
             return match temp.persist(path) {
                 Ok(_) => {
-                    let _ = fs::remove_file(backup_path);
+                    let _ = fs::remove_file(&backup_path);
+                    if let Some(permissions) = original_permissions {
+                        let _ = fs::set_permissions(path, permissions);
+                    }
                     Ok(())
                 }
                 Err(error) => {
@@ -274,6 +282,9 @@ fn atomic_replace(path: &Path, bytes: &[u8]) -> Result<(), String> {
 
     temp.persist(path)
         .map_err(|e| format!("Failed to replace editor file: {}", e.error))?;
+    if let Some(permissions) = original_permissions {
+        let _ = fs::set_permissions(path, permissions);
+    }
     Ok(())
 }
 
@@ -313,16 +324,25 @@ fn workspace_stat_sync(root: &str, relative: &str) -> Result<WorkspaceStat, Stri
     let workspace_root = canonical_root(root)?;
     let relative_path = validate_relative_path(relative, true)?;
     let candidate = workspace_root.join(relative_path);
-    if !candidate.exists() {
-        let parent = candidate
-            .parent()
-            .ok_or_else(|| "Workspace path has no parent".to_string())?;
-        let canonical_parent = fs::canonicalize(parent).map_err(|e| e.to_string())?;
-        ensure_within(&workspace_root, &canonical_parent)?;
-        return Ok(missing_stat(&candidate));
+    if candidate.exists() {
+        let path = secure_existing_path(&workspace_root, relative)?;
+        return stat_path(&path);
     }
-    let path = secure_existing_path(&workspace_root, relative)?;
-    stat_path(&path)
+
+    // 文件缺失时不能只 canonicalize 直接父目录：父目录也被删时会 error。
+    // 向上找最近存在的祖先，canonicalize 后确认仍在 workspace root 内，再返回 exists=false。
+    let mut cursor = candidate.as_path();
+    loop {
+        let Some(parent) = cursor.parent() else {
+            return Err(format!("Failed to resolve missing workspace path: {relative}"));
+        };
+        if parent.exists() {
+            let canonical_parent = fs::canonicalize(parent).map_err(|e| e.to_string())?;
+            ensure_within(&workspace_root, &canonical_parent)?;
+            return Ok(missing_stat(&candidate));
+        }
+        cursor = parent;
+    }
 }
 
 fn workspace_read_editor_file_sync(root: &str, relative: &str) -> Result<EditorFileSnapshot, String> {
@@ -594,5 +614,81 @@ mod tests {
             true,
         )
         .expect("force save should work");
+    }
+
+    #[test]
+    fn missing_nested_parent_returns_exists_false() {
+        let temp = tempdir().expect("temp directory");
+        let root = temp.path().to_string_lossy().to_string();
+        workspace_create_directory_sync(&root, "src").expect("directory should be created");
+        workspace_create_directory_sync(&root, "src/nested").expect("nested directory");
+        workspace_create_file_sync(&root, "src/nested/file.ts").expect("file");
+        fs::remove_dir_all(temp.path().join("src")).expect("remove parent tree");
+        let stat = workspace_stat_sync(&root, "src/nested/file.ts").expect("missing ancestor should still stat");
+        assert!(!stat.exists);
+        assert!(stat.disk_version.starts_with("missing:"));
+    }
+
+    #[test]
+    fn rename_updates_disk_version_path() {
+        let temp = tempdir().expect("temp directory");
+        let root = temp.path().to_string_lossy().to_string();
+        workspace_create_file_sync(&root, "old.ts").expect("file");
+        let before = workspace_stat_sync(&root, "old.ts").expect("stat");
+        workspace_rename_sync(&root, "old.ts", "new.ts").expect("rename");
+        let after = workspace_stat_sync(&root, "new.ts").expect("new stat");
+        assert!(after.exists);
+        assert_ne!(before.disk_version, after.disk_version);
+        assert!(after.disk_version.contains("new.ts") || after.disk_version.to_lowercase().contains("new.ts"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_save_preserves_unix_executable_bit() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempdir().expect("temp directory");
+        let root = temp.path().to_string_lossy().to_string();
+        workspace_create_file_sync(&root, "run.sh").expect("file");
+        let path = temp.path().join("run.sh");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("chmod");
+        let first = workspace_read_editor_file_sync(&root, "run.sh").expect("snapshot");
+        workspace_write_editor_file_sync(
+            &root,
+            "run.sh",
+            "#!/bin/sh\necho hi\n",
+            Some(&first.disk_version),
+            Some("lf"),
+            Some(false),
+            false,
+        )
+        .expect("save");
+        let mode = fs::metadata(&path).expect("meta").permissions().mode() & 0o777;
+        assert_eq!(mode, 0o755);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn atomic_save_preserves_windows_readonly() {
+        let temp = tempdir().expect("temp directory");
+        let root = temp.path().to_string_lossy().to_string();
+        workspace_create_file_sync(&root, "locked.txt").expect("file");
+        let path = temp.path().join("locked.txt");
+        let mut permissions = fs::metadata(&path).expect("meta").permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(&path, permissions).expect("readonly");
+        // 只读文件在 Windows 上可能无法直接替换；这里验证保存失败或保存后仍只读。
+        let first = workspace_read_editor_file_sync(&root, "locked.txt").expect("snapshot");
+        let result = workspace_write_editor_file_sync(
+            &root,
+            "locked.txt",
+            "changed\n",
+            Some(&first.disk_version),
+            Some("lf"),
+            Some(false),
+            false,
+        );
+        if result.is_ok() {
+            assert!(fs::metadata(&path).expect("meta").permissions().readonly());
+        }
     }
 }

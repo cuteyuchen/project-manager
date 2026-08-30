@@ -1,4 +1,5 @@
 mod git;
+mod node_runtime;
 mod nvm;
 mod project;
 mod runner;
@@ -187,11 +188,18 @@ pub fn run() {
             }
         }))
         .manage(runner::ProcessState::new())
+        .manage(node_runtime::NodeRuntimeState::new())
         .manage(git::GitOperationState::new())
         .invoke_handler(tauri::generate_handler![
+            node_runtime::list_installed_node_runtimes,
+            node_runtime::list_available_node_releases,
+            node_runtime::install_managed_node,
+            node_runtime::cancel_managed_node_install,
+            node_runtime::uninstall_managed_node,
+            node_runtime::get_system_node_path,
+            node_runtime::get_node_version,
+            node_runtime::managed_node_runtime_supported,
             nvm::get_nvm_list,
-            nvm::get_node_version,
-            nvm::get_system_node_path,
             nvm::install_node,
             nvm::uninstall_node,
             nvm::use_node,
@@ -215,6 +223,8 @@ pub fn run() {
             runner::run_project_command,
             runner::run_custom_command,
             runner::stop_project_command,
+            runner::send_project_input,
+            runner::close_project_input,
             runner::open_in_editor,
             runner::open_in_terminal,
             runner::install_pm,

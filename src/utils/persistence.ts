@@ -3,7 +3,7 @@ import { useProjectStore } from '../stores/project';
 import { useSettingsStore } from '../stores/settings';
 import { useNodeStore } from '../stores/node';
 import { useUsageStore } from '../stores/usage';
-import type { NodeVersion, Project, ProjectGroup, Settings, UsageData } from '../types';
+import type { AppDefaultNode, NodeVersion, Project, ProjectGroup, Settings, UsageData } from '../types';
 import { ensureNodeInstallCommand } from './projectCommands';
 import { createPersistenceSaveQueue } from './persistenceQueue';
 
@@ -15,6 +15,7 @@ type PersistedData = {
   projects: Project[];
   settings: Settings;
   customNodes: NodeVersion[];
+  appDefaultNode?: AppDefaultNode | null;
   usageData?: UsageData;
   projectGroups?: ProjectGroup[];
 };
@@ -49,6 +50,7 @@ function buildPersistedData(): PersistedData {
     projects: projectStore.projects,
     settings: settingsStore.settings,
     customNodes: nodeStore.versions.filter(v => v.source === 'custom'),
+    appDefaultNode: nodeStore.appDefault,
     usageData: usageStore.usageData,
     projectGroups: projectStore.projectGroups,
   };
@@ -209,6 +211,7 @@ export async function loadData(): Promise<PersistenceLoadResult> {
         codeModules: Array.isArray(p.codeModules) ? p.codeModules : undefined,
         frontendEnvGroups: Array.isArray(p.frontendEnvGroups) ? p.frontendEnvGroups : undefined,
         frontendEnvScannedAt: typeof p.frontendEnvScannedAt === 'number' ? p.frontendEnvScannedAt : undefined,
+        terminalInjectNode: typeof p.terminalInjectNode === 'boolean' ? p.terminalInjectNode : undefined,
       }, installCommandName));
 
       normalizedDataChanged = projectStore.projects.some((project: Project, index: number) => {
@@ -228,8 +231,23 @@ export async function loadData(): Promise<PersistenceLoadResult> {
       const existing = new Set(nodeStore.versions.map(v => v.path));
       data.customNodes.forEach((n: any) => {
         if (!existing.has(n.path)) {
-          nodeStore.versions.push(n);
+          nodeStore.addCustomNode({
+            version: n.version,
+            path: n.path,
+            source: 'custom',
+            status: n.status || 'available',
+          });
         }
+      });
+    }
+    if (data.appDefaultNode && data.appDefaultNode.path) {
+      const nodeStore = useNodeStore();
+      await nodeStore.setAppDefaultNode({
+        version: data.appDefaultNode.version,
+        path: data.appDefaultNode.path,
+        source: data.appDefaultNode.source === 'managed' || data.appDefaultNode.source === 'custom'
+          ? data.appDefaultNode.source
+          : 'system',
       });
     }
     if (data.usageData) {

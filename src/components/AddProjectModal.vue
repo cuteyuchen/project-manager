@@ -5,7 +5,9 @@ import { useI18n } from 'vue-i18n';
 import { api } from '../api';
 import type { Project, CustomCommand, ProjectQuickCommand } from '../types';
 import type { ProjectInfo, ImportNode } from '../api/types';
-import { normalizeNvmVersion, findInstalledNodeVersion } from '../utils/nvm';
+import { useNodeStore } from '../stores/node';
+import { normalizeNodeVersion, findInstalledNodeVersion, projectNodeVersionHint } from '../utils/nvm';
+import { resolveAppDefaultNodePath, resolveProjectNodePath } from '../utils/nodeRuntime';
 import { ensureNodeInstallCommand, getInstallDependenciesCommand, buildJavaPresetCommands, isWindowsPlatform } from '../utils/projectCommands';
 import { getCustomCommandDisplayName } from '../utils/projectCommands';
 import { useSettingsStore } from '../stores/settings';
@@ -54,11 +56,13 @@ type ProjectForm = {
   description: string;
   tags: string[];
   groupId: string;
+  terminalInjectNode: boolean;
 };
 
 const { t } = useI18n();
 const settingsStore = useSettingsStore();
 const projectStore = useProjectStore();
+const nodeStore = useNodeStore();
 const props = defineProps<{
   modelValue: boolean;
   editProject?: Project | null;
@@ -187,6 +191,7 @@ const form = ref<ProjectForm>({
   description: '',
   tags: [],
   groupId: '',
+  terminalInjectNode: true,
 });
 
 /***********************标签输入处理*********************/
@@ -217,6 +222,7 @@ function buildEmptyForm(): ProjectForm {
     description: '',
     tags: [],
     groupId: '',
+    terminalInjectNode: true,
   };
 }
 
@@ -237,8 +243,8 @@ function setNodeVersionOptions(list: string[], preserveCurrent = true) {
 
 async function refreshNodeVersions() {
   try {
-    const list = await api.getNvmList();
-    setNodeVersionOptions(list.map((item) => item.version));
+    await nodeStore.loadRuntimes();
+    setNodeVersionOptions(nodeStore.versions.map((item) => item.version));
   } catch (error) {
     console.error('Failed to load node versions', error);
     setNodeVersionOptions([]);
@@ -260,7 +266,7 @@ function resetPathScanState() {
 }
 
 async function applyDetectedNodeVersion(rawVersion?: string | null) {
-  const normalizedNvmVersion = normalizeNvmVersion(rawVersion);
+  const normalizedNvmVersion = normalizeNodeVersion(rawVersion);
   if (!normalizedNvmVersion) {
     if (rawVersion) {
       console.warn('Invalid .nvmrc version, skipping auto install', rawVersion);
@@ -271,10 +277,10 @@ async function applyDetectedNodeVersion(rawVersion?: string | null) {
 
   let installed = findInstalledNodeVersion(nodeVersions.value, normalizedNvmVersion);
 
-  if (!installed) {
+  if (!installed && nodeStore.managedSupported) {
     try {
       ElMessage.info(t('project.autoInstallStart', { version: normalizedNvmVersion }));
-      await api.installNode(normalizedNvmVersion);
+      await nodeStore.installManagedNode(normalizedNvmVersion);
       ElMessage.success(t('project.autoInstallSuccess', { version: normalizedNvmVersion }));
       await refreshNodeVersions();
       installed = findInstalledNodeVersion(nodeVersions.value, normalizedNvmVersion);
@@ -303,7 +309,7 @@ async function applyScanResult(info: ProjectInfo, options: { preferDetectedName?
     form.value.scripts = info.scripts || [];
     form.value.visibleScripts = [...(info.scripts || [])];
     syncQuickCommands(true);
-    await applyDetectedNodeVersion(info.nvmVersion);
+    await applyDetectedNodeVersion(projectNodeVersionHint(info));
     return;
   }
 
@@ -365,6 +371,7 @@ function hydrateFormFromProject(project: Project) {
     description: project.description || '',
     tags: project.tags ? [...project.tags] : [],
     groupId: project.groupId || '',
+    terminalInjectNode: project.terminalInjectNode !== false,
   };
 }
 
@@ -434,15 +441,15 @@ async function refreshPmAvailability() {
 
   try {
     // 解析项目 Node 路径
-    const nvmList = await api.getNvmList().catch(() => []);
-    const projectNodeEntry = nvmList.find((v) => v.version === form.value.nodeVersion);
-    const nodePath = projectNodeEntry?.path || '';
-
-    // 解析默认 Node 路径
-    let defaultNodePath = '';
-    try {
-      defaultNodePath = await api.getSystemNodePath();
-    } catch (_) {}
+    if (!nodeStore.versions.length) {
+      await nodeStore.loadRuntimes();
+    }
+    const nodePath = resolveProjectNodePath(
+      { id: '', name: '', path: form.value.path, type: 'node', nodeVersion: form.value.nodeVersion },
+      nodeStore.versions,
+      nodeStore.appDefault,
+    );
+    const defaultNodePath = resolveAppDefaultNodePath(nodeStore.versions, nodeStore.appDefault);
 
     const allPms: Array<'npm' | 'yarn' | 'pnpm' | 'cnpm'> = ['npm', 'yarn', 'pnpm', 'cnpm'];
     const results: Record<string, PackageManagerResolveResult> = {};
@@ -499,7 +506,7 @@ async function installPMForNode(pm: string, nodeVersion: string, nodePath: strin
     console.error('Failed to install PM for selected node:', error);
     // Fallback: try to install using default node version's npm
     try {
-      const defaultNodePath = await api.getSystemNodePath();
+      const defaultNodePath = resolveAppDefaultNodePath(nodeStore.versions, nodeStore.appDefault);
       if (defaultNodePath) {
         await api.installPm(defaultNodePath, pm);
         ElMessage.warning(t('project.pmInstallFallback', { pm, version: nodeVersion }));
@@ -636,6 +643,7 @@ function buildProjectPayload(): Project {
     project.packageManagerSource = form.value.packageManagerSource;
     project.scripts = form.value.scripts;
     project.visibleScripts = form.value.visibleScripts;
+    project.terminalInjectNode = form.value.terminalInjectNode;
   }
 
   if (form.value.type === 'java') {
@@ -931,6 +939,13 @@ async function cancelClone() {
             </el-form-item>
           </div>
         </div>
+
+        <el-form-item :label="t('project.terminalInjectNode')">
+          <el-switch v-model="form.terminalInjectNode" />
+          <div class="mt-2 text-xs text-slate-500 dark:text-slate-400">
+            {{ t('project.terminalInjectNodeHint') }}
+          </div>
+        </el-form-item>
 
         <el-form-item v-if="form.scripts.length > 0" :label="t('project.scripts')">
           <div class="w-full rounded-xl border border-slate-200/70 dark:border-slate-700/60 bg-slate-50/80 dark:bg-slate-900/40 p-3">

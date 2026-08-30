@@ -4,10 +4,10 @@ import type { GitFileStatus, Project } from '../../types';
 import { api } from '../../api';
 import { useProjectStore } from '../../stores/project';
 import { fileExtension, isImageFile, isTextFile } from '../../utils/fileTypes';
-import { joinWorkspacePath } from '../../utils/workspacePath';
+import { joinAbsolutePath, joinWorkspacePath, pathsEqual } from '../../utils/workspacePath';
 import { explorerStateVersion, isExplorerExpanded, setExplorerExpanded } from '../../utils/workspaceExplorerState';
 import ProjectExplorerNode from './ProjectExplorerNode.vue';
-import type { ExplorerContextPayload } from './ProjectExplorerNode.vue';
+import type { ExplorerContextPayload, ExplorerProjectAction } from './ProjectExplorerNode.vue';
 
 const HIDDEN_DIRS = new Set([
   'node_modules', 'dist', 'build', 'out', 'target', 'coverage', 'vendor', '.next', '.nuxt',
@@ -32,6 +32,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   selectFile: [project: Project, relativePath: string];
   openFile: [project: Project, relativePath: string];
+  projectAction: [project: Project, action: ExplorerProjectAction];
   contextMenu: [event: MouseEvent, payload: ExplorerContextPayload];
   selectProject: [project: Project];
   editProject: [project: Project];
@@ -50,10 +51,9 @@ const expanded = computed(() => {
   return isExplorerExpanded(props.workspaceRootId, nodeKey.value);
 });
 const registeredProject = computed(() => {
-  const target = props.project.path.replace(/[\\/]+$/, '').toLowerCase().replace(/\\/g, '/');
+  const target = joinAbsolutePath(props.project.path, props.relativePath);
   return projectStore.projects.find(project => {
-    const candidate = project.path.replace(/[\\/]+$/, '').toLowerCase().replace(/\\/g, '/');
-    return project.parentId === props.project.id && candidate === `${target}/${props.relativePath}`;
+    return project.parentId === props.project.id && pathsEqual(project.path, target);
   }) || null;
 });
 const visibleChildren = computed(() => children.value.filter(entry => {
@@ -106,7 +106,9 @@ function select(): void {
   if (!props.entry.isDirectory) emit('selectFile', props.project, props.relativePath);
 }
 
-function open(): void {
+function open(event?: MouseEvent): void {
+  event?.preventDefault();
+  event?.stopPropagation();
   if (props.entry.isDirectory) void toggle();
   else emit('openFile', props.project, props.relativePath);
 }
@@ -121,6 +123,10 @@ function forwardSelectFile(project: Project, relativePath: string): void {
 
 function forwardOpenFile(project: Project, relativePath: string): void {
   emit('openFile', project, relativePath);
+}
+
+function forwardProjectAction(project: Project, action: ExplorerProjectAction): void {
+  emit('projectAction', project, action);
 }
 
 function forwardContextMenu(event: MouseEvent, payload: ExplorerContextPayload): void {
@@ -139,6 +145,7 @@ onMounted(() => {
     :workspace-root-id="workspaceRootId"
     :depth="depth"
     :selected-project-id="selectedProjectId"
+    :selected-file-key="selectedFileKey"
     :show-hidden="showHidden"
     :show-heavy="showHeavy"
     :git-status-maps="gitStatusMaps"
@@ -147,6 +154,7 @@ onMounted(() => {
     @scan-project="emit('scanProject', $event)"
     @select-file="forwardSelectFile"
     @open-file="forwardOpenFile"
+    @project-action="forwardProjectAction"
     @context-menu="forwardContextMenu"
   />
   <div v-else class="explorer-file-group">
@@ -184,6 +192,7 @@ onMounted(() => {
         :git-status-maps="gitStatusMaps"
         @select-file="forwardSelectFile"
         @open-file="forwardOpenFile"
+        @project-action="forwardProjectAction"
         @context-menu="forwardContextMenu"
         @select-project="emit('selectProject', $event)"
         @edit-project="emit('editProject', $event)"
@@ -195,6 +204,7 @@ onMounted(() => {
 
 <style scoped>
 .explorer-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 5px;
@@ -203,10 +213,16 @@ onMounted(() => {
   color: var(--app-text-secondary);
   font-size: 11px;
   cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .explorer-row:hover {
   background: var(--app-primary-soft);
   color: var(--app-text);
+}
+.explorer-file-row.is-selected {
+  background: color-mix(in srgb, var(--app-primary) 9%, var(--app-surface));
+  color: var(--app-primary);
 }
 .explorer-chevron,
 .explorer-chevron-spacer {
@@ -226,6 +242,8 @@ onMounted(() => {
 }
 .explorer-file-name {
   min-width: 0;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .explorer-git-status {
   margin-left: auto;
@@ -245,5 +263,10 @@ onMounted(() => {
   min-height: 24px;
   color: var(--app-text-muted);
   font-size: 10px;
+}
+.explorer-children {
+  margin-left: 12px;
+  padding-left: 5px;
+  border-left: 1px solid var(--app-border);
 }
 </style>

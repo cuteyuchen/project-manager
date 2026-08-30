@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch, nextTick } from 'vue';
+import { ElMessage } from 'element-plus';
 import { useProjectStore } from '../stores/project';
 import type { CustomCommand, Project } from '../types';
 import { useI18n } from 'vue-i18n';
@@ -86,6 +87,8 @@ function handleLogClick(event: MouseEvent) {
 const activeProject = computed(() => props.project);
 
 const activeScript = ref<string | null>(null);
+const stdinInput = ref('');
+const sendingInput = ref(false);
 const logContainer = ref<HTMLElement | null>(null);
 const parsedLogCache = new Map<string, string>();
 const MAX_PARSED_LOG_CACHE_SIZE = 2000;
@@ -232,14 +235,24 @@ function getTabLabel(tabId: string): string {
     return command.id;
 }
 
-const logs = computed(() => {
-    if (!activeProject.value || !activeScript.value) return [];
+function activeRunId(): string | null {
+    if (!activeProject.value || !activeScript.value) return null;
     const command = parseProjectCommandKey(activeScript.value);
-    if (!command) return [];
-    // Use Object.freeze to avoid deep reactivity overhead on large arrays
-    const allLogs = projectStore.logs[getProjectCommandRunId(activeProject.value.id, command.type, command.id)] || [];
-    // Return a frozen slice
+    if (!command) return null;
+    return getProjectCommandRunId(activeProject.value.id, command.type, command.id);
+}
+
+const logs = computed(() => {
+    const runId = activeRunId();
+    if (!runId) return [];
+    const allLogs = projectStore.logs[runId] || [];
     return allLogs.slice(-500);
+});
+
+const promptPreview = computed(() => {
+    const runId = activeRunId();
+    if (!runId || !isRunning.value) return '';
+    return projectStore.partialOutput[runId] || '';
 });
 
 const renderedLogs = computed(() => {
@@ -385,6 +398,35 @@ function toggleRun(commandKey: string) {
     }
 }
 
+async function sendStdin(event?: KeyboardEvent): Promise<void> {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    const runId = activeRunId();
+    if (!runId || !isRunning.value || sendingInput.value) return;
+    sendingInput.value = true;
+    try {
+        await api.sendProjectInput(runId, `${stdinInput.value}\n`);
+        stdinInput.value = '';
+    } catch (error) {
+        ElMessage.error(String(error));
+    } finally {
+        sendingInput.value = false;
+    }
+}
+
+function handleStdinKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+    }
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+        void sendStdin(event);
+    }
+}
+
 function handleCloseTab(commandKey: string) {
     // Stop the script if running
     const command = parseProjectCommandKey(commandKey);
@@ -495,6 +537,7 @@ function handleCloseTab(commandKey: string) {
                     class="console-log-row break-all border-l-2 border-transparent pl-2 -ml-2 transition-colors duration-100 py-px"
                     v-html="item.html">
                 </div>
+                <div v-if="promptPreview" class="console-log-row break-all border-l-2 border-transparent pl-2 -ml-2 py-px text-amber-500" v-html="getCachedParsedAnsi(promptPreview)" />
             </div>
 
             <div v-if="logs.length === 0"
@@ -509,6 +552,19 @@ function handleCloseTab(commandKey: string) {
                 class="app-primary-action absolute right-4 bottom-4 z-10 !min-h-0 rounded-full px-3 py-1.5 text-[11px]">
                 <div class="i-mdi-arrow-down-circle text-sm" />
                 <span>{{ t('dashboard.scrollToBottom') }}</span>
+            </button>
+        </div>
+
+        <div v-if="activeScript && isRunning" class="console-stdin-bar shrink-0 flex items-center gap-2 border-t px-3 py-2">
+            <input
+                v-model="stdinInput"
+                class="console-stdin-input min-w-0 flex-1"
+                :placeholder="t('dashboard.stdinPlaceholder')"
+                :title="t('dashboard.stdinHint')"
+                @keydown="handleStdinKeydown"
+            >
+            <button type="button" class="console-stdin-send" :disabled="sendingInput" @click="sendStdin()">
+                {{ t('dashboard.stdinSend') }}
             </button>
         </div>
 
@@ -605,6 +661,30 @@ function handleCloseTab(commandKey: string) {
   background: color-mix(in srgb, var(--app-danger, #ef4444) 12%, transparent);
   color: var(--app-danger, #ef4444);
   border-color: color-mix(in srgb, var(--app-danger, #ef4444) 22%, transparent);
+}
+
+.console-stdin-bar {
+  background: var(--app-surface);
+}
+.console-stdin-input {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-md);
+  background: var(--app-surface-soft);
+  color: var(--app-text);
+  font-size: 12px;
+  font-family: inherit;
+}
+.console-stdin-send {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: var(--app-radius-md);
+  border: 1px solid color-mix(in srgb, var(--app-primary) 30%, transparent);
+  background: color-mix(in srgb, var(--app-primary) 10%, transparent);
+  color: var(--app-primary);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 /* 可运行命令 chip */

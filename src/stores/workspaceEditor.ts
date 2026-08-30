@@ -5,7 +5,7 @@ import type { EditorFileSnapshot, EditorWriteResult } from '../api/types';
 import type { Project } from '../types';
 import { editorLanguageForPath, type EditorLanguage } from '../utils/editorLanguage';
 import { fileKind, mimeForFile } from '../utils/fileTypes';
-import { normalizeWorkspaceRelativePath } from '../utils/workspacePath';
+import { editorDocumentKey, normalizeWorkspaceRelativePath, remapWorkspaceRelativePath } from '../utils/workspacePath';
 
 export type WorkspaceDocumentKind = 'text' | 'image';
 
@@ -49,7 +49,7 @@ const CODEMIRROR_READONLY_BYTES = 2 * 1024 * 1024;
 const CODEMIRROR_MAX_BYTES = 5 * 1024 * 1024;
 
 function documentKey(relativePath: string): string {
-  return relativePath.replace(/\\/g, '/').toLowerCase();
+  return editorDocumentKey(relativePath);
 }
 
 function isSameOrDescendantPath(relativePath: string, ancestorPath: string): boolean {
@@ -103,9 +103,18 @@ function applySnapshot(document: WorkspaceDocument, snapshot: EditorFileSnapshot
   document.size = snapshot.size;
   document.loading = false;
   document.error = '';
+  document.largeFile = false;
   document.missing = false;
   document.externalConflict = false;
   document.externalVersion = undefined;
+}
+
+function applyLoadError(document: WorkspaceDocument, error: unknown): void {
+  const message = String(error);
+  document.loading = false;
+  document.readOnly = true;
+  document.missing = message.includes('file_missing');
+  document.error = message;
 }
 
 export const useWorkspaceEditorStore = defineStore('workspaceEditor', () => {
@@ -177,8 +186,9 @@ export const useWorkspaceEditorStore = defineStore('workspaceEditor', () => {
     }
     ensureCapacity(session, key);
 
-    const document = emptyDocument(project, relativePath, 'text');
-    session.documents[key] = document;
+    session.documents[key] = emptyDocument(project, relativePath, 'text');
+    // Ref 深层代理会在赋值时包装文档；异步写回必须使用包装后的对象。
+    const document = session.documents[key]!;
     activate(session, key);
 
     try {
@@ -196,9 +206,7 @@ export const useWorkspaceEditorStore = defineStore('workspaceEditor', () => {
       const snapshot = await api.workspaceReadEditorFile(project.path, relativePath);
       applySnapshot(document, snapshot);
     } catch (error) {
-      document.loading = false;
-      document.readOnly = true;
-      document.error = String(error);
+      applyLoadError(document, error);
     }
     return document;
   }
@@ -214,9 +222,9 @@ export const useWorkspaceEditorStore = defineStore('workspaceEditor', () => {
     }
     ensureCapacity(session, key);
 
-    const document = emptyDocument(project, relativePath, 'image');
+    session.documents[key] = emptyDocument(project, relativePath, 'image');
+    const document = session.documents[key]!;
     document.mime = mimeForFile(relativePath);
-    session.documents[key] = document;
     activate(session, key);
     try {
       const [stat, base64] = await Promise.all([
@@ -231,8 +239,7 @@ export const useWorkspaceEditorStore = defineStore('workspaceEditor', () => {
       document.error = '';
       document.missing = false;
     } catch (error) {
-      document.loading = false;
-      document.error = String(error);
+      applyLoadError(document, error);
     }
     return document;
   }
@@ -287,12 +294,66 @@ export const useWorkspaceEditorStore = defineStore('workspaceEditor', () => {
     }
   }
 
+  async function reloadImageDocument(project: Project, relativePath: string): Promise<WorkspaceDocument> {
+    const normalized = normalizeWorkspaceRelativePath(relativePath, false);
+    const session = getSession(project.id);
+    const key = documentKey(normalized);
+    const document = session.documents[key];
+    if (!document || document.kind !== 'image') return openImage(project, normalized);
+    document.loading = true;
+    document.error = '';
+    document.missing = false;
+    try {
+      const [stat, base64] = await Promise.all([
+        api.workspaceStat(project.path, document.relativePath),
+        api.workspaceReadBinaryFileBase64(project.path, document.relativePath),
+      ]);
+      if (!stat.exists || stat.isDirectory) throw new Error('file_missing');
+      document.size = stat.size;
+      document.diskVersion = stat.diskVersion;
+      document.mime = document.mime || mimeForFile(document.relativePath);
+      document.imageData = `data:${document.mime};base64,${base64}`;
+      document.loading = false;
+      document.error = '';
+      document.missing = false;
+    } catch (error) {
+      document.loading = false;
+      const message = String(error);
+      if (message.includes('file_missing')) {
+        document.missing = true;
+        document.readOnly = true;
+        document.error = 'file_missing';
+      } else {
+        document.error = message;
+      }
+    }
+    return document;
+  }
+
   async function reloadDocument(project: Project, relativePath: string): Promise<WorkspaceDocument> {
     const document = getDocument(project.id, relativePath);
-    if (!document) return openText(project, relativePath);
-    if (document.kind === 'image') return openImage(project, relativePath);
-    const snapshot = await api.workspaceReadEditorFile(project.path, document.relativePath);
-    applySnapshot(document, snapshot);
+    if (!document) return openFile(project, relativePath);
+    if (document.kind === 'image') return reloadImageDocument(project, relativePath);
+    document.loading = true;
+    document.error = '';
+    document.missing = false;
+    try {
+      const stat = await api.workspaceStat(project.path, document.relativePath);
+      if (!stat.exists || stat.isDirectory) throw new Error('file_missing');
+      document.size = stat.size;
+      if (stat.size > CODEMIRROR_MAX_BYTES) {
+        document.loading = false;
+        document.readOnly = true;
+        document.largeFile = true;
+        document.protectedFile = false;
+        document.error = 'file_too_large';
+        return document;
+      }
+      const snapshot = await api.workspaceReadEditorFile(project.path, document.relativePath);
+      applySnapshot(document, snapshot);
+    } catch (error) {
+      applyLoadError(document, error);
+    }
     return document;
   }
 
@@ -304,12 +365,13 @@ export const useWorkspaceEditorStore = defineStore('workspaceEditor', () => {
     const reloaded: WorkspaceDocument[] = [];
     const conflicts: WorkspaceDocument[] = [];
     for (const document of Object.values(session.documents)) {
-      if (document.kind !== 'text' || document.largeFile || document.loading) continue;
+      if (document.largeFile || document.loading) continue;
+      if (document.kind !== 'text' && document.kind !== 'image') continue;
       try {
         const stat = await api.workspaceStat(project.path, document.relativePath);
-        const nextVersion = stat.exists ? stat.diskVersion : stat.diskVersion;
+        const nextVersion = stat.diskVersion;
         if (nextVersion === document.diskVersion) continue;
-        if (document.dirty) {
+        if (document.kind === 'text' && document.dirty) {
           document.externalConflict = true;
           document.externalVersion = nextVersion;
           conflicts.push(document);
@@ -323,7 +385,8 @@ export const useWorkspaceEditorStore = defineStore('workspaceEditor', () => {
           reloaded.push(document);
           continue;
         }
-        await reloadDocument(project, document.relativePath);
+        if (document.kind === 'image') await reloadImageDocument(project, document.relativePath);
+        else await reloadDocument(project, document.relativePath);
         reloaded.push(document);
       } catch (error) {
         document.error = String(error);
@@ -359,7 +422,25 @@ export const useWorkspaceEditorStore = defineStore('workspaceEditor', () => {
     }
   }
 
-  function renamePath(projectId: string, fromRaw: string, toRaw: string, projectRoot?: string): void {
+  async function refreshDocumentDiskVersion(projectRoot: string, document: WorkspaceDocument): Promise<void> {
+    try {
+      const stat = await api.workspaceStat(projectRoot, document.relativePath);
+      document.diskVersion = stat.diskVersion;
+      document.size = stat.size;
+      if (!stat.exists) {
+        document.missing = true;
+        document.readOnly = document.kind === 'text' ? true : document.readOnly;
+        document.error = 'file_missing';
+      } else if (document.error === 'file_missing') {
+        document.missing = false;
+        document.error = '';
+      }
+    } catch (error) {
+      document.error = String(error);
+    }
+  }
+
+  async function renamePath(projectId: string, fromRaw: string, toRaw: string, projectRoot?: string): Promise<void> {
     const from = normalizeWorkspaceRelativePath(fromRaw, false);
     const to = normalizeWorkspaceRelativePath(toRaw, false);
     const session = getSession(projectId);
@@ -368,9 +449,8 @@ export const useWorkspaceEditorStore = defineStore('workspaceEditor', () => {
     );
     for (const document of changes) {
       const oldKey = documentKey(document.relativePath);
-      const nextRelativePath = oldKey === documentKey(from)
-        ? to
-        : `${to}/${document.relativePath.slice(from.length + 1)}`;
+      const nextRelativePath = remapWorkspaceRelativePath(from, to, document.relativePath);
+      if (!nextRelativePath) continue;
       const nextKey = documentKey(nextRelativePath);
       delete session.documents[oldKey];
       document.relativePath = nextRelativePath;
@@ -379,6 +459,9 @@ export const useWorkspaceEditorStore = defineStore('workspaceEditor', () => {
       session.documents[nextKey] = document;
       session.tabs = session.tabs.map(key => key === oldKey ? nextKey : key);
       if (session.activePath === oldKey) session.activePath = nextKey;
+    }
+    if (projectRoot) {
+      await Promise.all(changes.map(document => refreshDocumentDiskVersion(projectRoot, document)));
     }
   }
 
@@ -418,6 +501,7 @@ export const useWorkspaceEditorStore = defineStore('workspaceEditor', () => {
     saveDocument,
     saveAll,
     reloadDocument,
+    reloadImageDocument,
     checkExternalChanges,
     setExternalConflictHandled,
     closeDocument,
