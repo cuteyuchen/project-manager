@@ -1,15 +1,24 @@
 import assert from 'node:assert/strict';
 import type { NodeVersion, Project } from '../src/types';
-import { isExplicitNodeVersion, resolveProjectNodePath, shouldInjectTerminalNode } from '../src/utils/nodeRuntime';
+import {
+  buildNodeRuntimeId,
+  getRuntimesByVersion,
+  isExplicitNodeVersion,
+  resolveAppDefaultRuntime,
+  resolveProjectNodePath,
+  resolveProjectRuntime,
+  shouldInjectTerminalNode,
+} from '../src/utils/nodeRuntime';
 import { projectNodeVersionHint } from '../src/utils/nvm';
 
 function node(version: string, path: string, source: NodeVersion['source']): NodeVersion {
-  return { version, path, source, status: 'available' };
+  return { runtimeId: buildNodeRuntimeId(source, version, path), version, path, source, status: 'available' };
 }
 
 const versions: NodeVersion[] = [
   node('v22.11.0', 'C:/system/node', 'system'),
   node('v20.11.1', 'C:/app/runtimes/node/v20.11.1', 'managed'),
+  node('v20.11.1', 'C:/Users/test/AppData/Roaming/nvm/v20.11.1', 'nvm'),
   node('v20.11.1', 'D:/custom/node20', 'custom'),
   node('v18.19.0', 'D:/custom/node18', 'custom'),
 ];
@@ -30,7 +39,27 @@ assert.equal(
 );
 
 assert.equal(
+  resolveProjectNodePath(
+    project({ nodeRuntimeId: 'nvm:c:/users/test/appdata/roaming/nvm/v20.11.1' }),
+    versions,
+  ),
+  'C:/Users/test/AppData/Roaming/nvm/v20.11.1',
+  'exact runtimeId must win over a same-version Managed runtime',
+);
+
+assert.equal(getRuntimesByVersion(versions, 'v20.11.1').map(runtime => runtime.source).join(','), 'managed,nvm,custom');
+
+const unavailable = resolveProjectRuntime(
+  project({ nodeRuntimeId: 'nvm:c:/missing/v20.11.1' }),
+  versions,
+);
+assert.equal(unavailable.runtime, null);
+assert.equal(unavailable.unavailable, true);
+assert.equal(resolveProjectNodePath(project({ nodeRuntimeId: 'nvm:c:/missing/v20.11.1' }), versions), '');
+
+assert.equal(
   resolveProjectNodePath(project({ nodeVersion: 'Default' }), versions, {
+    runtimeId: 'managed:v20.11.1',
     source: 'managed',
     version: 'v20.11.1',
     path: 'C:/app/runtimes/node/v20.11.1',
@@ -38,6 +67,13 @@ assert.equal(
   'C:/app/runtimes/node/v20.11.1',
   'default label uses app default, not system PATH',
 );
+
+const defaultAfterMigration = resolveAppDefaultRuntime(versions, {
+  source: 'managed',
+  version: 'v20.11.1',
+  path: 'D:/old-location/v20.11.1',
+});
+assert.equal(defaultAfterMigration.runtime?.path, 'C:/app/runtimes/node/v20.11.1');
 
 assert.equal(
   resolveProjectNodePath(project({ nodeVersion: 'v18.19.0' }), versions),

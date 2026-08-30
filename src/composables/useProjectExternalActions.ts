@@ -5,7 +5,7 @@ import type { Project } from '../types';
 import { api } from '../api';
 import { useNodeStore } from '../stores/node';
 import { useSettingsStore } from '../stores/settings';
-import { resolveNodePathFromVersion, resolveProjectNodePath, isExplicitNodeVersion, shouldInjectTerminalNode } from '../utils/nodeRuntime';
+import { resolveNodePathFromVersion, resolveProjectNodePath, resolveProjectRuntime, isExplicitNodeVersion, shouldInjectTerminalNode } from '../utils/nodeRuntime';
 import { normalizeNodeVersion, projectNodeVersionHint } from '../utils/nvm';
 import { resolveTerminalCommand } from '../utils/terminalConfig';
 
@@ -68,7 +68,12 @@ export function useProjectExternalActions(projectSource: MaybeRefOrGetter<Projec
 
     await nodeStore.loadRuntimes();
 
-    let nodePath = resolveProjectNodePath(project, nodeStore.versions, nodeStore.appDefault);
+    const initialResolution = resolveProjectRuntime(project, nodeStore.versions, nodeStore.appDefault);
+    let nodePath = initialResolution.runtime?.path || '';
+
+    if (initialResolution.unavailable && project.nodeRuntimeId) {
+      throw new Error('项目绑定的 Node Runtime 不可用，请重新选择 Runtime 后再打开终端。');
+    }
 
     if (!nodePath && isExplicitNodeVersion(project.nodeVersion) && nodeStore.managedSupported) {
       const version = normalizeNodeVersion(project.nodeVersion!)!;
@@ -87,6 +92,13 @@ export function useProjectExternalActions(projectSource: MaybeRefOrGetter<Projec
       try {
         const info = await api.scanProject(project.path);
         nodePath = resolveNodePathFromVersion(projectNodeVersionHint(info), nodeStore.versions, nodeStore.appDefault);
+        if (nodePath) {
+          const runtime = nodeStore.versions.find(item => item.path === nodePath);
+          if (runtime) {
+            project.nodeRuntimeId = runtime.runtimeId;
+            project.nodeVersion = runtime.version;
+          }
+        }
       } catch (scanError) {
         console.warn('Failed to scan project for terminal node version', scanError);
       }

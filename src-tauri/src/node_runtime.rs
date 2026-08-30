@@ -1,14 +1,15 @@
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 const NODE_DIST_HOST: &str = "https://nodejs.org";
@@ -33,10 +34,42 @@ struct NodeArtifact {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeRuntimeInfo {
+    pub runtime_id: String,
     pub version: String,
     pub path: String,
     pub source: String,
     pub status: String,
+    pub runtime_root: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct ManagedRuntimeLocationSetting {
+    mode: String,
+    #[serde(default)]
+    custom_path: Option<String>,
+}
+
+impl Default for ManagedRuntimeLocationSetting {
+    fn default() -> Self {
+        Self {
+            mode: "app-data".to_string(),
+            custom_path: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedRuntimeLocationInfo {
+    pub mode: String,
+    pub custom_path: Option<String>,
+    pub root_path: String,
+    pub writable: bool,
+    pub portable_available: bool,
+    pub installed_count: usize,
+    pub size_bytes: u64,
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,11 +198,217 @@ fn current_artifact(version: &str) -> Result<NodeArtifact, String> {
     Ok(NodeArtifact { file_name, kind })
 }
 
-fn managed_root(app: &AppHandle) -> Result<PathBuf, String> {
+fn default_managed_root(app: &AppHandle) -> Result<PathBuf, String> {
     let mut dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     dir.push("runtimes");
     dir.push("node");
     Ok(dir)
+}
+
+fn read_managed_location(app: &AppHandle) -> Result<ManagedRuntimeLocationSetting, String> {
+    let content = crate::read_config_file_contents(app, "data.json")?;
+    if content.trim().is_empty() {
+        return Ok(ManagedRuntimeLocationSetting::default());
+    }
+
+    let data: Value = serde_json::from_str(&content)
+        .map_err(|error| format!("Failed to parse data.json while resolving Node runtime location: {error}"))?;
+    let Some(raw) = data
+        .get("settings")
+        .and_then(|settings| settings.get("managedNodeRuntimeLocation"))
+    else {
+        return Ok(ManagedRuntimeLocationSetting::default());
+    };
+
+    let setting: ManagedRuntimeLocationSetting = serde_json::from_value(raw.clone())
+        .map_err(|error| format!("Invalid managed Node runtime location setting: {error}"))?;
+    match setting.mode.as_str() {
+        "app-data" => Ok(ManagedRuntimeLocationSetting::default()),
+        "custom" if setting.custom_path.as_deref().unwrap_or_default().trim().is_empty() => {
+            Err("Custom Managed Node runtime location is empty".to_string())
+        }
+        "custom" | "portable" => Ok(setting),
+        other => Err(format!("Unsupported Managed Node runtime location mode: {other}")),
+    }
+}
+
+fn resolve_managed_runtime_root_for_setting(
+    app: &AppHandle,
+    setting: &ManagedRuntimeLocationSetting,
+) -> Result<PathBuf, String> {
+    match setting.mode.as_str() {
+        "app-data" => default_managed_root(app),
+        "custom" => Ok(PathBuf::from(
+            setting
+                .custom_path
+                .as_deref()
+                .ok_or_else(|| "Custom Managed Node runtime location is empty".to_string())?,
+        )),
+        "portable" => Ok(app
+            .path()
+            .executable_dir()
+            .map_err(|e| format!("Failed to resolve application directory: {e}"))?
+            .join("data")
+            .join("runtimes")
+            .join("node")),
+        other => Err(format!("Unsupported Managed Node runtime location mode: {other}")),
+    }
+}
+
+fn managed_root(app: &AppHandle) -> Result<PathBuf, String> {
+    let setting = read_managed_location(app)?;
+    resolve_managed_runtime_root_for_setting(app, &setting)
+}
+
+fn normalized_path_key(path: &Path) -> String {
+    let value = path.to_string_lossy().replace('\\', "/");
+    #[cfg(target_os = "windows")]
+    {
+        value.trim_end_matches('/').to_ascii_lowercase()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        value.trim_end_matches('/').to_string()
+    }
+}
+
+fn paths_equal(left: &Path, right: &Path) -> bool {
+    normalized_path_key(left) == normalized_path_key(right)
+}
+
+fn path_is_within(path: &Path, parent: &Path) -> bool {
+    let path_key = normalized_path_key(path);
+    let parent_key = normalized_path_key(parent);
+    path_key == parent_key || path_key.starts_with(&(parent_key + "/"))
+}
+
+fn writable_probe(path: &Path) -> bool {
+    let mut probe_dir = path.to_path_buf();
+    while !probe_dir.exists() {
+        let Some(parent) = probe_dir.parent() else {
+            return false;
+        };
+        if parent == probe_dir {
+            return false;
+        }
+        probe_dir = parent.to_path_buf();
+    }
+    if !probe_dir.is_dir() {
+        return false;
+    }
+
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let probe = probe_dir.join(format!(".project-manager-write-test-{stamp}"));
+    match File::create(&probe) {
+        Ok(_) => {
+            let _ = fs::remove_file(probe);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+fn ensure_writable_directory(path: &Path) -> Result<(), String> {
+    if path.exists() && !path.is_dir() {
+        return Err(format!("Managed Node runtime path is not a directory: {}", path.display()));
+    }
+    fs::create_dir_all(path)
+        .map_err(|error| format!("Failed to create Managed Node runtime directory {}: {error}", path.display()))?;
+    if !writable_probe(path) {
+        return Err(format!("Managed Node runtime directory is not writable: {}", path.display()));
+    }
+    Ok(())
+}
+
+fn runtime_directory_entries(root: &Path) -> Vec<(String, PathBuf)> {
+    let Ok(entries) = fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut result = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            if !path.is_dir() {
+                return None;
+            }
+            let version = entry.file_name().to_string_lossy().to_string();
+            validate_node_version(&version).ok().map(|version| (version, path))
+        })
+        .collect::<Vec<_>>();
+    result.sort_by(|left, right| left.0.cmp(&right.0));
+    result
+}
+
+fn directory_size(path: &Path) -> u64 {
+    if path.is_file() {
+        return fs::metadata(path).map(|meta| meta.len()).unwrap_or_default();
+    }
+    if !path.is_dir() {
+        return 0;
+    }
+    fs::read_dir(path)
+        .map(|entries| entries.flatten().map(|entry| directory_size(&entry.path())).sum())
+        .unwrap_or_default()
+}
+
+fn portable_root(app: &AppHandle) -> Result<PathBuf, String> {
+    resolve_managed_runtime_root_for_setting(
+        app,
+        &ManagedRuntimeLocationSetting {
+            mode: "portable".to_string(),
+            custom_path: None,
+        },
+    )
+}
+
+fn managed_location_info(
+    app: &AppHandle,
+    setting: &ManagedRuntimeLocationSetting,
+    warnings: Vec<String>,
+) -> Result<ManagedRuntimeLocationInfo, String> {
+    let root = resolve_managed_runtime_root_for_setting(app, setting)?;
+    let portable = portable_root(app)?;
+    Ok(ManagedRuntimeLocationInfo {
+        mode: setting.mode.clone(),
+        custom_path: setting.custom_path.clone(),
+        root_path: root.to_string_lossy().to_string(),
+        writable: writable_probe(&root),
+        portable_available: writable_probe(&portable),
+        installed_count: runtime_directory_entries(&root).len(),
+        size_bytes: directory_size(&root),
+        warnings,
+    })
+}
+
+fn write_managed_location(
+    app: &AppHandle,
+    setting: &ManagedRuntimeLocationSetting,
+) -> Result<(), String> {
+    let content = crate::read_config_file_contents(app, "data.json")?;
+    let mut data = if content.trim().is_empty() {
+        Value::Object(serde_json::Map::new())
+    } else {
+        serde_json::from_str::<Value>(&content)
+            .map_err(|error| format!("Failed to parse data.json before updating Node runtime location: {error}"))?
+    };
+    let object = data
+        .as_object_mut()
+        .ok_or_else(|| "data.json root must be an object".to_string())?;
+    let settings = object
+        .entry("settings".to_string())
+        .or_insert_with(|| Value::Object(serde_json::Map::new()))
+        .as_object_mut()
+        .ok_or_else(|| "data.json settings must be an object".to_string())?;
+    settings.insert(
+        "managedNodeRuntimeLocation".to_string(),
+        serde_json::to_value(setting).map_err(|error| error.to_string())?,
+    );
+    let serialized = serde_json::to_string_pretty(&data).map_err(|error| error.to_string())?;
+    let path = crate::app_config_file_path(app, "data.json")?;
+    crate::atomic_write_config(&path, &serialized)
 }
 
 fn version_dir(root: &Path, version: &str) -> PathBuf {
@@ -585,14 +824,40 @@ fn cleanup_install_temp(part_path: &Path, archive_path: &Path, extract_dir: &Pat
 fn run_node_version(exe: &Path) -> Result<String, String> {
     let mut cmd = Command::new(exe);
     cmd.arg("-v");
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    let output = cmd.output().map_err(|e| e.to_string())?;
+    let mut child = cmd
+        .spawn()
+        .map_err(|error| format!("failed to start node executable: {error}"))?;
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("node -v validation timed out".to_string());
+            }
+            Err(error) => return Err(format!("node -v validation failed: {error}")),
+        }
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("node -v validation failed: {error}"))?;
     if !output.status.success() {
-        return Err("node -v validation failed".to_string());
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if detail.is_empty() {
+            "node -v validation failed".to_string()
+        } else {
+            detail
+        });
     }
     let line = String::from_utf8_lossy(&output.stdout)
         .lines()
@@ -607,6 +872,23 @@ fn run_node_version(exe: &Path) -> Result<String, String> {
     } else {
         Ok(format!("v{line}"))
     }
+}
+
+fn normalize_detected_version(raw: &str) -> Option<String> {
+    let line = raw.trim();
+    let normalized = if line.starts_with('v') || line.starts_with('V') {
+        format!("v{}", &line[1..])
+    } else {
+        format!("v{line}")
+    };
+    validate_node_version(&normalized).ok()
+}
+
+fn runtime_id(source: &str, version: &str, path: &Path) -> String {
+    if source == "managed" {
+        return format!("managed:{version}");
+    }
+    format!("{source}:{}", normalized_path_key(path))
 }
 
 fn emit_progress(app: &AppHandle, progress: &NodeInstallProgress) {
@@ -646,6 +928,140 @@ fn cleanup_stale(root: &Path, busy_versions: &HashSet<String>) {
     }
 }
 
+fn push_unique_path(paths: &mut Vec<PathBuf>, candidate: PathBuf) {
+    if candidate.as_os_str().is_empty() || paths.iter().any(|path| paths_equal(path, &candidate)) {
+        return;
+    }
+    paths.push(candidate);
+}
+
+fn discover_nvm_roots(app: &AppHandle) -> Vec<PathBuf> {
+    #[cfg(target_os = "windows")]
+    let _ = app;
+    let mut roots = Vec::new();
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(value) = std::env::var_os("NVM_HOME") {
+            push_unique_path(&mut roots, PathBuf::from(value));
+        }
+        if let Some(value) = std::env::var_os("NVM_SYMLINK") {
+            // NVM_SYMLINK is normally the active version directory. It is a
+            // useful fallback when NVM_HOME is absent, but it is not scanned
+            // recursively.
+            push_unique_path(&mut roots, PathBuf::from(value));
+        }
+        if let Some(value) = std::env::var_os("APPDATA") {
+            push_unique_path(&mut roots, PathBuf::from(value).join("nvm"));
+        }
+        if let Some(value) = std::env::var_os("LOCALAPPDATA") {
+            push_unique_path(&mut roots, PathBuf::from(value).join("nvm"));
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Some(value) = std::env::var_os("NVM_DIR") {
+            push_unique_path(&mut roots, PathBuf::from(value));
+        }
+        if let Ok(home) = app.path().home_dir() {
+            push_unique_path(&mut roots, home.join(".nvm"));
+        }
+    }
+
+    roots
+}
+
+fn nvm_candidates(root: &Path) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if node_executable(root).is_some() {
+        candidates.push(root.to_path_buf());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(entries) = fs::read_dir(root) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() && node_executable(&path).is_some() {
+                    candidates.push(path);
+                }
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let versions_root = root.join("versions").join("node");
+        if let Ok(entries) = fs::read_dir(versions_root) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() && node_executable(&path).is_some() {
+                    candidates.push(path);
+                }
+            }
+        }
+    }
+
+    candidates.sort_by(|left, right| normalized_path_key(left).cmp(&normalized_path_key(right)));
+    candidates.dedup_by(|left, right| paths_equal(left, right));
+    candidates
+}
+
+fn scan_nvm_root(root: &Path) -> Vec<NodeRuntimeInfo> {
+    let mut result = Vec::new();
+    let mut seen = HashSet::new();
+    for candidate in nvm_candidates(root) {
+        let Some(executable) = node_executable(&candidate) else {
+            continue;
+        };
+        let Ok(raw_version) = run_node_version(&executable) else {
+            continue;
+        };
+        let Some(version) = normalize_detected_version(&raw_version) else {
+            continue;
+        };
+        let id = runtime_id("nvm", &version, &candidate);
+        if !seen.insert(id.clone()) {
+            continue;
+        }
+        result.push(NodeRuntimeInfo {
+            runtime_id: id,
+            version,
+            path: candidate.to_string_lossy().to_string(),
+            source: "nvm".to_string(),
+            status: "available".to_string(),
+            runtime_root: Some(root.to_string_lossy().to_string()),
+        });
+    }
+    result.sort_by(|left, right| {
+        right
+            .version
+            .cmp(&left.version)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    result
+}
+
+fn scan_nvm_runtimes(app: &AppHandle) -> Vec<NodeRuntimeInfo> {
+    let mut result = Vec::new();
+    let mut seen = HashSet::new();
+    for root in discover_nvm_roots(app) {
+        for runtime in scan_nvm_root(&root) {
+            if seen.insert(runtime.runtime_id.clone()) {
+                result.push(runtime);
+            }
+        }
+    }
+    result.sort_by(|left, right| {
+        right
+            .version
+            .cmp(&left.version)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    result
+}
+
 fn lock_version(state: &NodeRuntimeState, version: &str) -> Result<(), String> {
     let mut installing = state.installing.lock().map_err(|e| e.to_string())?;
     if installing.contains(version) {
@@ -682,25 +1098,214 @@ pub async fn list_installed_node_runtimes(
         return Ok(Vec::new());
     }
     let mut result = Vec::new();
-    for entry in fs::read_dir(&root).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let name = entry.file_name().to_string_lossy().to_string();
-        if validate_node_version(&name).is_err() {
-            continue;
-        }
+    for (version, path) in runtime_directory_entries(&root) {
+        let status = match node_executable(&path).and_then(|executable| run_node_version(&executable).ok()) {
+            Some(actual) if normalize_detected_version(&actual).as_deref() == Some(version.as_str()) => "available",
+            _ => "broken",
+        };
         result.push(NodeRuntimeInfo {
-            version: name,
+            runtime_id: runtime_id("managed", &version, &path),
+            version,
             path: path.to_string_lossy().to_string(),
             source: "managed".to_string(),
-            status: runtime_status(&path).to_string(),
+            status: status.to_string(),
+            runtime_root: Some(root.to_string_lossy().to_string()),
         });
     }
     result.sort_by(|a, b| b.version.cmp(&a.version));
     Ok(result)
+}
+
+#[tauri::command]
+pub async fn scan_nvm_node_runtimes(app: AppHandle) -> Result<Vec<NodeRuntimeInfo>, String> {
+    Ok(scan_nvm_runtimes(&app))
+}
+
+#[tauri::command]
+pub fn get_managed_node_runtime_location(
+    app: AppHandle,
+) -> Result<ManagedRuntimeLocationInfo, String> {
+    let setting = read_managed_location(&app)?;
+    let mut warnings = Vec::new();
+    let root = resolve_managed_runtime_root_for_setting(&app, &setting)?;
+    if !writable_probe(&root) {
+        warnings.push(format!("Managed Node runtime directory is not writable: {}", root.display()));
+    }
+    if setting.mode == "portable" && !writable_probe(&portable_root(&app)?) {
+        warnings.push("当前安装目录不可写，请选择应用数据目录或自定义目录。".to_string());
+    }
+    managed_location_info(&app, &setting, warnings)
+}
+
+fn copy_directory_recursive(source: &Path, target: &Path) -> Result<(), String> {
+    if target.exists() {
+        if !target.is_dir() {
+            return Err(format!("Migration target is not a directory: {}", target.display()));
+        }
+    } else {
+        fs::create_dir_all(target)
+            .map_err(|error| format!("Failed to create migration directory {}: {error}", target.display()))?;
+    }
+
+    let entries = fs::read_dir(source)
+        .map_err(|error| format!("Failed to read Managed Node runtime {}: {error}", source.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+        if source_path.is_dir() {
+            copy_directory_recursive(&source_path, &target_path)?;
+        } else {
+            if let Some(parent) = target_path.parent() {
+                fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            }
+            fs::copy(&source_path, &target_path).map_err(|error| {
+                format!(
+                    "Failed to copy {} to {}: {error}",
+                    source_path.display(),
+                    target_path.display()
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_runtime_directory(path: &Path, expected_version: &str) -> Result<(), String> {
+    let executable = node_executable(path)
+        .ok_or_else(|| format!("Managed Node runtime is missing node executable: {}", path.display()))?;
+    let actual = run_node_version(&executable)?;
+    let actual = normalize_detected_version(&actual)
+        .ok_or_else(|| format!("Invalid node -v output from {}", executable.display()))?;
+    if actual != expected_version {
+        return Err(format!(
+            "Managed Node runtime version mismatch: expected {expected_version}, got {actual}"
+        ));
+    }
+    Ok(())
+}
+
+fn migration_stage_name() -> String {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    format!(".project-manager-runtime-migration-{stamp}")
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn migrate_managed_node_runtime_location(
+    app: AppHandle,
+    mode: String,
+    custom_path: Option<String>,
+    migrate: bool,
+    running_runtime_paths: Vec<String>,
+) -> Result<ManagedRuntimeLocationInfo, String> {
+    let setting = ManagedRuntimeLocationSetting {
+        mode: mode.trim().to_string(),
+        custom_path: custom_path
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+    };
+    let old_setting = read_managed_location(&app)?;
+    let old_root = resolve_managed_runtime_root_for_setting(&app, &old_setting)?;
+    let new_root = resolve_managed_runtime_root_for_setting(&app, &setting)?;
+
+    if paths_equal(&old_root, &new_root) {
+        ensure_writable_directory(&new_root)?;
+        write_managed_location(&app, &setting)?;
+        return managed_location_info(&app, &setting, Vec::new());
+    }
+
+    if migrate && (path_is_within(&new_root, &old_root) || path_is_within(&old_root, &new_root)) {
+        return Err("Managed Node runtime migration cannot use nested source and target directories".to_string());
+    }
+
+    ensure_writable_directory(&new_root)?;
+    let installed = runtime_directory_entries(&old_root);
+    if migrate && !installed.is_empty() {
+        for running_path in running_runtime_paths {
+            let running = Path::new(&running_path);
+            if installed.iter().any(|(_, runtime_path)| path_is_within(running, runtime_path)) {
+                return Err("当前有项目正在使用 Managed Node，请先停止项目，再迁移运行时目录。".to_string());
+            }
+        }
+    }
+
+    if !migrate || installed.is_empty() {
+        write_managed_location(&app, &setting)?;
+        return managed_location_info(&app, &setting, Vec::new());
+    }
+
+    let stage_root = new_root.join(migration_stage_name());
+    if stage_root.exists() {
+        remove_runtime_path_with_retry(
+            "migration",
+            "remove previous migration staging directory",
+            &stage_root,
+        )?;
+    }
+    fs::create_dir_all(&stage_root).map_err(|error| {
+        format!(
+            "Failed to create migration staging directory {}: {error}",
+            stage_root.display()
+        )
+    })?;
+
+    let migration_result = (|| {
+        for (version, source_path) in &installed {
+            let target_path = new_root.join(version);
+            if target_path.exists() {
+                validate_runtime_directory(&target_path, version).map_err(|error| {
+                    format!("Migration target conflict for {version}: {error}")
+                })?;
+                continue;
+            }
+            let staged_path = stage_root.join(version);
+            copy_directory_recursive(source_path, &staged_path)?;
+            validate_runtime_directory(&staged_path, version)?;
+        }
+
+        for (version, _) in &installed {
+            let target_path = new_root.join(version);
+            if target_path.exists() {
+                continue;
+            }
+            let staged_path = stage_root.join(version);
+            rename_with_retry(
+                "migration",
+                "promote migrated Node runtime",
+                &staged_path,
+                &target_path,
+            )?;
+        }
+        write_managed_location(&app, &setting)?;
+        Ok::<(), String>(())
+    })();
+
+    let _ = fs::remove_dir_all(&stage_root);
+    migration_result?;
+
+    let mut warnings = Vec::new();
+    for (_, source_path) in installed {
+        if source_path.exists() {
+            if let Err(error) = remove_runtime_path_with_retry(
+                "migration",
+                "remove old Managed Node runtime",
+                &source_path,
+            ) {
+                warnings.push(format!(
+                    "迁移成功，但旧文件未完全删除：{} ({error})",
+                    source_path.display()
+                ));
+            }
+        }
+    }
+    if old_root.exists() {
+        let _ = fs::remove_dir(&old_root);
+    }
+
+    managed_location_info(&app, &setting, warnings)
 }
 
 #[tauri::command]
@@ -1423,6 +2028,86 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *node-v20.11.1-
             }
             assert_eq!(runtime_status(temp.path()), "available");
         }
+    }
+
+    fn test_node_executable() -> Option<PathBuf> {
+        #[cfg(target_os = "windows")]
+        use std::os::windows::process::CommandExt;
+        #[cfg(target_os = "windows")]
+        let output = Command::new("where")
+            .arg("node")
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .ok()?;
+        #[cfg(not(target_os = "windows"))]
+        let output = Command::new("which").arg("node").output().ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .map(PathBuf::from)
+    }
+
+    fn copy_test_node_runtime(root: &Path, source: &Path) {
+        #[cfg(target_os = "windows")]
+        let executable = root.join("node.exe");
+        #[cfg(not(target_os = "windows"))]
+        let executable = root.join("bin").join("node");
+        fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        fs::copy(source, &executable).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+
+    #[test]
+    fn nvm_scan_uses_executable_version_and_skips_invalid_candidates() {
+        let Some(source) = test_node_executable() else {
+            return;
+        };
+        let temp = tempfile::tempdir().unwrap();
+        #[cfg(target_os = "windows")]
+        let scan_root = temp.path().to_path_buf();
+        #[cfg(not(target_os = "windows"))]
+        let scan_root = temp.path().join(".nvm");
+
+        #[cfg(target_os = "windows")]
+        {
+            copy_test_node_runtime(&scan_root.join("v18.20.8"), &source);
+            copy_test_node_runtime(&scan_root.join("v20.19.0"), &source);
+            let invalid = scan_root.join("invalid");
+            fs::create_dir_all(&invalid).unwrap();
+            File::create(invalid.join("node.exe")).unwrap();
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            copy_test_node_runtime(&scan_root.join("versions/node/v18.20.8"), &source);
+            copy_test_node_runtime(&scan_root.join("versions/node/v20.19.0"), &source);
+            let invalid = scan_root.join("versions/node/invalid");
+            fs::create_dir_all(&invalid).unwrap();
+            File::create(invalid.join("bin/node")).unwrap();
+        }
+
+        let runtimes = scan_nvm_root(&scan_root);
+        assert_eq!(runtimes.len(), 2);
+        assert!(runtimes.iter().all(|runtime| runtime.source == "nvm"));
+        assert!(runtimes.iter().all(|runtime| runtime.runtime_id.starts_with("nvm:")));
+        assert!(runtimes.iter().all(|runtime| runtime.status == "available"));
+    }
+
+    #[test]
+    fn runtime_ids_keep_same_version_sources_separate() {
+        let managed = runtime_id("managed", "v20.19.0", Path::new("C:/managed/v20.19.0"));
+        let nvm = runtime_id("nvm", "v20.19.0", Path::new("C:/nvm/v20.19.0"));
+        assert_eq!(managed, "managed:v20.19.0");
+        assert_ne!(managed, nvm);
+        assert!(path_is_within(Path::new("C:/old/v20/node.exe"), Path::new("C:/old/v20")));
+        assert!(!path_is_within(Path::new("C:/old-other/v20"), Path::new("C:/old")));
     }
 
     #[test]

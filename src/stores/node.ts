@@ -1,8 +1,23 @@
 import { defineStore } from 'pinia';
-import { ref, onMounted } from 'vue';
+import { ref } from 'vue';
 import { api } from '../api';
-import type { AppDefaultNode, NodeInstallProgress, NodeVersion } from '../types';
+import type {
+  AppDefaultNode,
+  ManagedRuntimeLocation,
+  ManagedRuntimeLocationInfo,
+  NodeInstallProgress,
+  NodeVersion,
+} from '../types';
+import {
+  buildNodeRuntimeId,
+  ensureNodeRuntime,
+  getNodeRuntimeId,
+  normalizeRuntimeVersion,
+  resolveAppDefaultRuntime,
+} from '../utils/nodeRuntime';
 import { mergeNodeRuntimes, migrateLegacyNodeSource, sortNodeVersions } from '../utils/nodeDefaultState';
+import { resolveTerminalCommand } from '../utils/terminalConfig';
+import { useSettingsStore } from './settings';
 
 const SYSTEM_NODE_PLACEHOLDER = 'System Default';
 const APP_DEFAULT_KEY = 'app_default_node';
@@ -10,11 +25,11 @@ const CUSTOM_NODES_KEY = 'custom_nodes';
 const LEGACY_SYSTEM_PATH_KEY = 'system_node_path';
 
 function normalizeVersionLabel(version: string): string {
-  const trimmed = version.trim();
-  return trimmed.toLowerCase().startsWith('v') ? `v${trimmed.slice(1)}` : `v${trimmed}`;
+  return normalizeRuntimeVersion(version);
 }
 
-function readCustomNodes(): NodeVersion[] {
+function parseLegacyCustomNodes(): NodeVersion[] {
+  if (typeof localStorage === 'undefined') return [];
   const stored = localStorage.getItem(CUSTOM_NODES_KEY);
   if (!stored) return [];
   try {
@@ -23,82 +38,163 @@ function readCustomNodes(): NodeVersion[] {
       .filter(node => node && node.path && node.version)
       .map(node => {
         const source = migrateLegacyNodeSource(node.source);
-        return {
+        return ensureNodeRuntime({
           version: node.version,
           path: node.path,
-          source: source === 'system' ? 'custom' as const : source,
+          source: source === 'system' ? 'custom' : source,
           status: node.status || 'available',
-        };
-      });
+        });
+      })
+      .filter(node => node.source === 'custom');
   } catch (error) {
-    console.error('Failed to load custom nodes', error);
+    console.error('Failed to load legacy custom nodes', error);
     return [];
   }
 }
 
-function readAppDefault(): AppDefaultNode | null {
+function parseLegacyDefault(): AppDefaultNode | null {
+  if (typeof localStorage === 'undefined') return null;
   const stored = localStorage.getItem(APP_DEFAULT_KEY);
   if (stored) {
     try {
       const parsed = JSON.parse(stored) as AppDefaultNode;
-      if (parsed?.path && parsed?.version && parsed?.source) return parsed;
+      if (parsed?.path && parsed?.version && parsed?.source) {
+        const source = migrateLegacyNodeSource(parsed.source);
+        return {
+          runtimeId: parsed.runtimeId || buildNodeRuntimeId(source, parsed.version, parsed.path),
+          source,
+          version: parsed.version,
+          path: parsed.path,
+        };
+      }
     } catch (error) {
-      console.error('Failed to load app default node', error);
+      console.error('Failed to load legacy app default node', error);
     }
   }
 
   const legacyPath = localStorage.getItem(LEGACY_SYSTEM_PATH_KEY);
   if (legacyPath && legacyPath !== SYSTEM_NODE_PLACEHOLDER) {
-    return { source: 'system', version: '', path: legacyPath };
+    return {
+      runtimeId: buildNodeRuntimeId('system', '', legacyPath),
+      source: 'system',
+      version: '',
+      path: legacyPath,
+    };
   }
   return null;
+}
+
+function clearLegacyStorage() {
+  if (typeof localStorage === 'undefined') return;
+  localStorage.removeItem(APP_DEFAULT_KEY);
+  localStorage.removeItem(CUSTOM_NODES_KEY);
+  localStorage.removeItem(LEGACY_SYSTEM_PATH_KEY);
 }
 
 export const useNodeStore = defineStore('node', () => {
   const versions = ref<NodeVersion[]>([]);
   const loading = ref(false);
   const managedSupported = ref(true);
+  const registryError = ref('');
   const appDefault = ref<AppDefaultNode | null>(null);
+  const managedLocation = ref<ManagedRuntimeLocationInfo | null>(null);
   const installProgress = ref<Record<string, NodeInstallProgress>>({});
+  const persistedCustomNodes = ref<NodeVersion[]>([]);
+  const hydrated = ref(false);
+  const legacyMigrationPending = ref(false);
   let progressUnlisten: (() => void) | null = null;
-
-  function persistCustomNodes() {
-    const custom = versions.value.filter(v => v.source === 'custom');
-    localStorage.setItem(CUSTOM_NODES_KEY, JSON.stringify(custom));
-  }
-
-  function persistAppDefault() {
-    if (!appDefault.value) {
-      localStorage.removeItem(APP_DEFAULT_KEY);
-      return;
-    }
-    localStorage.setItem(APP_DEFAULT_KEY, JSON.stringify(appDefault.value));
-  }
 
   function markDefault(list: NodeVersion[]): NodeVersion[] {
     const current = appDefault.value;
-    return list.map(node => ({
-      ...node,
-      isDefault: !!current && node.source === current.source && (
-        node.path === current.path || (!!current.version && node.version === current.version)
-      ),
-    }));
+    const currentId = current
+      ? current.runtimeId || buildNodeRuntimeId(current.source, current.version, current.path)
+      : '';
+    return list.map(node => {
+      const normalized = ensureNodeRuntime(node);
+      return { ...normalized, isDefault: !!currentId && getNodeRuntimeId(normalized) === currentId };
+    });
   }
 
   function applyMerged(parts: {
     system?: NodeVersion | null;
     managed?: NodeVersion[];
+    nvm?: NodeVersion[];
     custom?: NodeVersion[];
   }) {
     versions.value = markDefault(mergeNodeRuntimes({
       system: parts.system ?? (versions.value.find(v => v.source === 'system') || null),
       managed: parts.managed ?? versions.value.filter(v => v.source === 'managed'),
-      custom: parts.custom ?? versions.value.filter(v => v.source === 'custom'),
+      nvm: parts.nvm ?? versions.value.filter(v => v.source === 'nvm'),
+      custom: parts.custom ?? persistedCustomNodes.value,
     }));
   }
 
+  function hydratePersistedData(data: {
+    customNodes?: NodeVersion[];
+    appDefaultNode?: AppDefaultNode | null;
+  }) {
+    persistedCustomNodes.value = (data.customNodes || [])
+      .filter(node => node && node.path && node.version)
+      .map(node => ensureNodeRuntime({ ...node, source: 'custom' }));
+    appDefault.value = data.appDefaultNode
+      ? {
+        ...data.appDefaultNode,
+        runtimeId: data.appDefaultNode.runtimeId
+          || buildNodeRuntimeId(data.appDefaultNode.source, data.appDefaultNode.version, data.appDefaultNode.path),
+      }
+      : null;
+    hydrated.value = true;
+    applyMerged({ custom: persistedCustomNodes.value });
+  }
+
+  function migrateLegacyStorage(): boolean {
+    const customNodes = parseLegacyCustomNodes();
+    const defaultNode = parseLegacyDefault();
+    hydrated.value = true;
+    if (!customNodes.length && !defaultNode) return false;
+    hydratePersistedData({ customNodes, appDefaultNode: defaultNode });
+    legacyMigrationPending.value = true;
+    return true;
+  }
+
+  function completeLegacyMigration() {
+    clearLegacyStorage();
+    legacyMigrationPending.value = false;
+  }
+
+  function migrateDefaultRuntimeId(): boolean {
+    if (!appDefault.value) return false;
+    const resolved = resolveAppDefaultRuntime(versions.value, appDefault.value);
+    if (!resolved.runtime) return false;
+    const runtime = ensureNodeRuntime(resolved.runtime);
+    const next = {
+      runtimeId: getNodeRuntimeId(runtime),
+      source: runtime.source,
+      version: runtime.version,
+      path: runtime.path,
+    } satisfies AppDefaultNode;
+    const changed = JSON.stringify(appDefault.value) !== JSON.stringify(next);
+    if (changed) appDefault.value = next;
+    versions.value = markDefault(versions.value);
+    return changed;
+  }
+
   const loadCustomNodes = () => {
-    applyMerged({ custom: readCustomNodes() });
+    applyMerged({ custom: persistedCustomNodes.value });
+  };
+
+  const refreshCustomRuntimes = async () => {
+    const checked = await Promise.all(persistedCustomNodes.value.map(async runtime => {
+      try {
+        const actual = await api.getNodeVersion(runtime.path);
+        const valid = !!actual && normalizeRuntimeVersion(actual) === normalizeRuntimeVersion(runtime.version);
+        return { ...runtime, status: valid ? 'available' as const : 'broken' as const };
+      } catch {
+        return { ...runtime, status: 'broken' as const };
+      }
+    }));
+    persistedCustomNodes.value = checked;
+    applyMerged({ custom: checked });
   };
 
   const syncSystemNode = async (options: {
@@ -120,7 +216,7 @@ export const useNodeStore = defineStore('node', () => {
     if (resolvedPath !== SYSTEM_NODE_PLACEHOLDER) {
       try {
         const detectedVersion = await api.getNodeVersion(resolvedPath);
-        if (detectedVersion) resolvedVersion = detectedVersion;
+        if (detectedVersion) resolvedVersion = normalizeVersionLabel(detectedVersion);
         else status = 'broken';
       } catch (error) {
         console.error('Failed to detect system node version', error);
@@ -129,12 +225,12 @@ export const useNodeStore = defineStore('node', () => {
     }
 
     applyMerged({
-      system: {
+      system: ensureNodeRuntime({
         version: resolvedVersion,
         path: resolvedPath,
         source: 'system',
         status,
-      },
+      }),
     });
   };
 
@@ -142,19 +238,43 @@ export const useNodeStore = defineStore('node', () => {
     try {
       const managed = await api.listInstalledNodeRuntimes();
       applyMerged({
-        managed: managed.map(node => ({
+        managed: managed.map(node => ensureNodeRuntime({
           ...node,
-          source: 'managed' as const,
+          source: 'managed',
           status: node.status || 'available',
         })),
       });
     } catch (error) {
+      registryError.value = String(error);
+      applyMerged({ managed: [] });
       console.error('Failed to load managed node runtimes', error);
+    }
+    try {
+      managedLocation.value = await api.getManagedNodeRuntimeLocation();
+    } catch (error) {
+      console.error('Failed to load managed runtime location', error);
+    }
+  };
+
+  const refreshNvmRuntimes = async () => {
+    try {
+      const nvm = await api.scanNvmNodeRuntimes();
+      applyMerged({
+        nvm: nvm.map(node => ensureNodeRuntime({
+          ...node,
+          source: 'nvm',
+          status: node.status || 'available',
+        })),
+      });
+    } catch (error) {
+      console.warn('NVM discovery is unavailable', error);
+      applyMerged({ nvm: [] });
     }
   };
 
   const loadRuntimes = async () => {
     loading.value = true;
+    registryError.value = '';
     try {
       try {
         managedSupported.value = await api.managedNodeRuntimeSupported();
@@ -163,8 +283,11 @@ export const useNodeStore = defineStore('node', () => {
       }
       await syncSystemNode();
       loadCustomNodes();
+      await refreshCustomRuntimes();
       await refreshManagedRuntimes();
+      await refreshNvmRuntimes();
       versions.value = sortNodeVersions(markDefault(versions.value));
+      migrateDefaultRuntimeId();
     } finally {
       loading.value = false;
     }
@@ -173,41 +296,105 @@ export const useNodeStore = defineStore('node', () => {
   /** @deprecated 使用 loadRuntimes */
   const loadNvmNodes = loadRuntimes;
 
-  const addCustomNode = (node: NodeVersion) => {
-    applyMerged({
-      custom: [
-        ...versions.value.filter(v => v.source === 'custom' && v.path !== node.path),
-        { ...node, source: 'custom', status: node.status || 'available' },
-      ],
-    });
-    persistCustomNodes();
+  const getRuntime = (runtimeId: string | undefined) => {
+    if (!runtimeId) return undefined;
+    return versions.value.find(runtime => getNodeRuntimeId(runtime) === runtimeId);
   };
 
-  const removeNode = (path: string) => {
-    applyMerged({
-      custom: versions.value.filter(v => v.source === 'custom' && v.path !== path),
+  const addCustomNode = async (node: NodeVersion) => {
+    const candidate = ensureNodeRuntime({ ...node, source: 'custom' });
+    const detectedVersion = await api.getNodeVersion(candidate.path);
+    if (!detectedVersion) throw new Error('无法验证该 Node 可执行文件，请选择包含 node.exe 的目录。');
+    const version = normalizeVersionLabel(detectedVersion);
+    const normalized = ensureNodeRuntime({
+      ...candidate,
+      runtimeId: buildNodeRuntimeId('custom', version, candidate.path),
+      version,
+      status: 'available',
     });
-    persistCustomNodes();
-    if (appDefault.value?.path === path) {
-      appDefault.value = null;
-      persistAppDefault();
-      versions.value = markDefault(versions.value);
-    }
+    persistedCustomNodes.value = [
+      ...persistedCustomNodes.value.filter(item => getNodeRuntimeId(item) !== getNodeRuntimeId(normalized)),
+      normalized,
+    ];
+    applyMerged({ custom: persistedCustomNodes.value });
+    return normalized;
+  };
+
+  const removeNode = (runtimeIdOrPath: string) => {
+    const target = persistedCustomNodes.value.find(node =>
+      getNodeRuntimeId(node) === runtimeIdOrPath || node.path === runtimeIdOrPath,
+    );
+    if (!target) return;
+    const targetId = getNodeRuntimeId(target);
+    persistedCustomNodes.value = persistedCustomNodes.value.filter(node => getNodeRuntimeId(node) !== targetId);
+    applyMerged({ custom: persistedCustomNodes.value });
+  };
+
+  const replaceCustomNodes = (nodes: NodeVersion[]) => {
+    persistedCustomNodes.value = nodes
+      .filter(node => node && node.path && node.version)
+      .map(node => ensureNodeRuntime({ ...node, source: 'custom' }));
+    applyMerged({ custom: persistedCustomNodes.value });
   };
 
   const setAppDefaultNode = async (node: NodeVersion) => {
+    const targetId = getNodeRuntimeId(node);
+    const target = getRuntime(targetId) || ensureNodeRuntime(node);
+    if (!getRuntime(targetId)) {
+      throw new Error('所选 Node Runtime 不存在或已被移除，请先重新扫描。');
+    }
+    if (!target.path || target.path === SYSTEM_NODE_PLACEHOLDER || target.status === 'broken' || target.status === 'unavailable') {
+      throw new Error('所选 Node Runtime 不可用，请先重新检测。');
+    }
+    let actualVersion: string;
+    try {
+      actualVersion = await api.getNodeVersion(target.path);
+    } catch (error) {
+      throw new Error(`Node Runtime 验证失败：${String(error)}`);
+    }
+    if (!actualVersion) throw new Error('Node Runtime 验证失败：找不到 node 可执行文件。');
+    const expected = normalizeRuntimeVersion(target.version);
+    const actual = normalizeRuntimeVersion(actualVersion);
+    if (expected !== actual) {
+      throw new Error(`Node Runtime 版本不匹配：记录为 ${expected}，实际为 ${actual}。`);
+    }
+
+    const previousDefault = appDefault.value ? { ...appDefault.value } : null;
+    const runtimeId = getNodeRuntimeId(target);
     appDefault.value = {
-      source: node.source,
-      version: node.version,
-      path: node.path,
+      runtimeId,
+      source: target.source,
+      version: actual,
+      path: target.path,
     };
-    persistAppDefault();
-    localStorage.removeItem(LEGACY_SYSTEM_PATH_KEY);
     versions.value = markDefault(versions.value);
+    try {
+      const { flushPendingSave } = await import('../utils/persistence');
+      await flushPendingSave();
+    } catch (error) {
+      appDefault.value = previousDefault;
+      versions.value = markDefault(versions.value);
+      throw new Error(`默认 Node 保存失败：${String(error)}`);
+    }
   };
 
-  /** @deprecated 使用 setAppDefaultNode；不再调用 nvm use / 改系统 PATH */
-  const setDefaultNode = setAppDefaultNode;
+  /** 验证 Runtime，并把状态更新为 available/broken。 */
+  const validateRuntime = async (runtimeId: string) => {
+    const target = getRuntime(runtimeId);
+    if (!target) throw new Error('Runtime 不存在或已被移除。');
+    const index = versions.value.findIndex(item => getNodeRuntimeId(item) === runtimeId);
+    let actual = '';
+    try {
+      actual = await api.getNodeVersion(target.path);
+    } catch (error) {
+      if (index >= 0) versions.value[index] = { ...versions.value[index], status: 'broken' };
+      throw new Error(`Node Runtime 验证失败：${String(error)}`);
+    }
+    const valid = !!actual && normalizeRuntimeVersion(actual) === normalizeRuntimeVersion(target.version);
+    if (index >= 0) versions.value[index] = { ...versions.value[index], status: valid ? 'available' : 'broken' };
+    if (!valid) throw new Error(`Node Runtime 验证失败：期望 ${target.version}，实际 ${actual || '不可用'}。`);
+    return actual;
+  };
 
   const updateSystemNode = async (newPath: string, preferredVersion?: string) => {
     await syncSystemNode({ preferredPath: newPath, preferredVersion });
@@ -241,13 +428,11 @@ export const useNodeStore = defineStore('node', () => {
     try {
       loading.value = true;
       await api.installManagedNode(version, operationId);
-      await refreshManagedRuntimes();
+      await loadRuntimes();
       const exists = versions.value.some(v =>
         v.source === 'managed' && normalizeVersionLabel(v.version) === normalized && v.status !== 'broken',
       );
-      if (!exists) {
-        throw new Error('Node version not found after installation.');
-      }
+      if (!exists) throw new Error('Node version not found after installation.');
       return true;
     } finally {
       const next = { ...installProgress.value };
@@ -268,62 +453,72 @@ export const useNodeStore = defineStore('node', () => {
     loading.value = true;
     try {
       await api.uninstallManagedNode(version);
-      await refreshManagedRuntimes();
+      await loadRuntimes();
       const normalized = normalizeVersionLabel(version);
       const exists = versions.value.some(v =>
         v.source === 'managed' && normalizeVersionLabel(v.version) === normalized,
       );
-      if (exists) {
-        throw new Error('Node version still exists after uninstallation.');
-      }
-      if (appDefault.value?.source === 'managed' && normalizeVersionLabel(appDefault.value.version) === normalized) {
-        appDefault.value = null;
-        persistAppDefault();
-        versions.value = markDefault(versions.value);
-      }
+      if (exists) throw new Error('Node version still exists after uninstallation.');
       return true;
     } finally {
       loading.value = false;
     }
   };
 
-  /** @deprecated 使用 uninstallManagedNode */
-  const uninstallNode = uninstallManagedNode;
-
-  onMounted(async () => {
-    appDefault.value = readAppDefault();
+  const changeManagedRuntimeLocation = async (
+    location: ManagedRuntimeLocation,
+    migrate: boolean,
+    runningRuntimePaths: string[] = [],
+  ) => {
+    const result = await api.migrateManagedNodeRuntimeLocation(location, migrate, runningRuntimePaths);
+    managedLocation.value = result;
     await loadRuntimes();
-    if (appDefault.value && !appDefault.value.version) {
-      const matched = versions.value.find(v => v.path === appDefault.value?.path);
-      if (matched) {
-        appDefault.value = { source: matched.source, version: matched.version, path: matched.path };
-        persistAppDefault();
-        versions.value = markDefault(versions.value);
-      }
-    }
-    await ensureProgressListener();
-  });
+    return result;
+  };
+
+  const openTerminalWithRuntime = async (runtime: NodeVersion) => {
+    const settingsStore = useSettingsStore();
+    const home = await api.getHomeDirectory();
+    const terminal = resolveTerminalCommand(
+      settingsStore.settings.defaultTerminal,
+      settingsStore.settings.customTerminals,
+    );
+    return api.openInTerminal(home || '.', terminal, runtime.path, 'npm');
+  };
 
   return {
     versions,
     loading,
     managedSupported,
+    registryError,
     appDefault,
+    managedLocation,
     installProgress,
+    legacyMigrationPending,
     loadRuntimes,
     loadNvmNodes,
     refreshManagedRuntimes,
+    refreshNvmRuntimes,
     loadCustomNodes,
+    refreshCustomRuntimes,
+    hydratePersistedData,
+    migrateLegacyStorage,
+    completeLegacyMigration,
+    migrateDefaultRuntimeId,
+    getRuntime,
     addCustomNode,
     removeNode,
+    replaceCustomNodes,
     updateSystemNode,
     syncSystemNode,
     setAppDefaultNode,
-    setDefaultNode,
+    validateRuntime,
     installManagedNode,
     installNode,
     cancelManagedNodeInstall,
     uninstallManagedNode,
-    uninstallNode,
+    uninstallNode: uninstallManagedNode,
+    changeManagedRuntimeLocation,
+    openTerminalWithRuntime,
   };
 });

@@ -10,6 +10,7 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use tauri::Manager;
 #[cfg(target_os = "windows")]
 use encoding_rs::{GBK, UTF_16BE, UTF_16LE};
 
@@ -86,6 +87,20 @@ pub fn get_platform_info() -> PlatformInfo {
         os: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
     }
+}
+
+#[tauri::command]
+pub fn get_home_directory(app: tauri::AppHandle) -> String {
+    app.path()
+        .home_dir()
+        .ok()
+        .map(|path| path.to_string_lossy().to_string())
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .map(|path| path.to_string_lossy().to_string())
+        })
+        .unwrap_or_else(|| ".".to_string())
 }
 
 async fn run_system_task<T, F>(task: F) -> Result<T, String>

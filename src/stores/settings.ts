@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { ref, watch, computed } from 'vue';
-import type { AiChannelConfig, AiServiceConfig, Settings } from '../types';
+import type { AiChannelConfig, AiServiceConfig, ManagedRuntimeLocation, Settings } from '../types';
 import { MAX_AI_FALLBACK_SLOTS } from '../types';
 import type { TerminalInfo } from '../api/types';
 import { api } from '../api';
@@ -112,6 +112,7 @@ export const useSettingsStore = defineStore('settings', () => {
     editorPath: 'code',
     defaultTerminal: 'cmd',
     customTerminals: [],
+    managedNodeRuntimeLocation: { mode: 'app-data' },
     layoutState: {},
     workspaceExplorerWidth: WORKSPACE_EXPLORER_DEFAULT_WIDTH,
     locale: 'zh',
@@ -212,6 +213,17 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.gitAiStream = true;
   }
   settings.value.customTerminals = normalizeTerminalConfigs(settings.value.customTerminals);
+  const managedLocation = settings.value.managedNodeRuntimeLocation as Partial<ManagedRuntimeLocation> | undefined;
+  if (managedLocation?.mode !== 'app-data' && managedLocation?.mode !== 'custom' && managedLocation?.mode !== 'portable') {
+    settings.value.managedNodeRuntimeLocation = { mode: 'app-data' };
+  } else if (managedLocation.mode === 'custom') {
+    const customPath = typeof managedLocation.customPath === 'string' ? managedLocation.customPath.trim() : '';
+    settings.value.managedNodeRuntimeLocation = customPath
+      ? { mode: 'custom', customPath }
+      : { mode: 'app-data' };
+  } else {
+    settings.value.managedNodeRuntimeLocation = { mode: managedLocation.mode };
+  }
   if (!Array.isArray(settings.value.projectViewPresets)) {
     settings.value.projectViewPresets = [];
   }

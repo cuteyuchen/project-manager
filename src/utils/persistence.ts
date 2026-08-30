@@ -170,8 +170,19 @@ export async function loadData(): Promise<PersistenceLoadResult> {
   try {
     const content = await api.readConfigFile(FILE_NAME);
     if (!content) {
+      const nodeStore = useNodeStore();
+      const legacyMigrated = nodeStore.migrateLegacyStorage();
       saveQueue.markPersisted(serializePersistedData());
       persistenceState = 'ready';
+      if (legacyMigrated) {
+        try {
+          await saveQueue.enqueue(serializePersistedData(), true);
+          nodeStore.completeLegacyMigration();
+          saveQueue.markPersisted(serializePersistedData());
+        } catch (error) {
+          return { state: 'read-only', error: enterReadOnly('save', error) };
+        }
+      }
       reportRecovery('load');
       return { state: 'ready' };
     }
@@ -184,6 +195,12 @@ export async function loadData(): Promise<PersistenceLoadResult> {
     }
 
     let normalizedDataChanged = false;
+    const nodeStore = useNodeStore();
+    const hasFormalNodeData = Array.isArray(data.customNodes)
+      || Object.prototype.hasOwnProperty.call(data, 'appDefaultNode');
+    if (!hasFormalNodeData) {
+      nodeStore.migrateLegacyStorage();
+    }
     if (data.projects) {
       const projectStore = useProjectStore();
       const settingsStore = useSettingsStore();
@@ -213,6 +230,7 @@ export async function loadData(): Promise<PersistenceLoadResult> {
         frontendEnvGroups: Array.isArray(p.frontendEnvGroups) ? p.frontendEnvGroups : undefined,
         frontendEnvScannedAt: typeof p.frontendEnvScannedAt === 'number' ? p.frontendEnvScannedAt : undefined,
         terminalInjectNode: typeof p.terminalInjectNode === 'boolean' ? p.terminalInjectNode : undefined,
+        nodeRuntimeId: typeof p.nodeRuntimeId === 'string' ? p.nodeRuntimeId : undefined,
       }, installCommandName));
 
       normalizedDataChanged = projectStore.projects.some((project: Project, index: number) => {
@@ -226,31 +244,53 @@ export async function loadData(): Promise<PersistenceLoadResult> {
       if (!Array.isArray(merged.projectViewPresets)) merged.projectViewPresets = [];
       if (!Array.isArray(merged.workspaceProfiles)) merged.workspaceProfiles = [];
       merged.workspaceExplorerWidth = clampWorkspaceExplorerWidth(merged.workspaceExplorerWidth);
+      const managedLocation = merged.managedNodeRuntimeLocation;
+      if (managedLocation?.mode === 'custom' && typeof managedLocation.customPath === 'string' && managedLocation.customPath.trim()) {
+        merged.managedNodeRuntimeLocation = {
+          mode: 'custom',
+          customPath: managedLocation.customPath.trim(),
+        };
+      } else if (managedLocation?.mode === 'portable') {
+        merged.managedNodeRuntimeLocation = { mode: 'portable' };
+      } else {
+        merged.managedNodeRuntimeLocation = { mode: 'app-data' };
+      }
       settingsStore.settings = merged;
     }
-    if (data.customNodes) {
-      const nodeStore = useNodeStore();
-      const existing = new Set(nodeStore.versions.map(v => v.path));
-      data.customNodes.forEach((n: any) => {
-        if (!existing.has(n.path)) {
-          nodeStore.addCustomNode({
-            version: n.version,
-            path: n.path,
-            source: 'custom',
-            status: n.status || 'available',
-          });
-        }
+    const normalizeNodeSource = (source: unknown): NodeVersion['source'] =>
+      source === 'managed' || source === 'nvm' || source === 'system' || source === 'custom'
+        ? source
+        : 'custom';
+    const persistedCustomNodes = Array.isArray(data.customNodes)
+      ? data.customNodes.map((node: any) => ({
+        runtimeId: typeof node.runtimeId === 'string' ? node.runtimeId : undefined,
+        runtimeRoot: typeof node.runtimeRoot === 'string' ? node.runtimeRoot : undefined,
+        version: typeof node.version === 'string' ? node.version : '',
+        path: typeof node.path === 'string' ? node.path : '',
+        source: 'custom' as const,
+        status: node.status || 'available',
+      }))
+      : undefined;
+    const persistedDefault = data.appDefaultNode && typeof data.appDefaultNode === 'object'
+      ? {
+        runtimeId: typeof data.appDefaultNode.runtimeId === 'string' ? data.appDefaultNode.runtimeId : undefined,
+        source: normalizeNodeSource(data.appDefaultNode.source),
+        version: typeof data.appDefaultNode.version === 'string' ? data.appDefaultNode.version : '',
+        path: typeof data.appDefaultNode.path === 'string' ? data.appDefaultNode.path : '',
+      }
+      : (Object.prototype.hasOwnProperty.call(data, 'appDefaultNode') ? null : undefined);
+    if (persistedCustomNodes !== undefined || persistedDefault !== undefined) {
+      nodeStore.hydratePersistedData({
+        customNodes: persistedCustomNodes,
+        appDefaultNode: persistedDefault,
       });
-    }
-    if (data.appDefaultNode && data.appDefaultNode.path) {
-      const nodeStore = useNodeStore();
-      await nodeStore.setAppDefaultNode({
-        version: data.appDefaultNode.version,
-        path: data.appDefaultNode.path,
-        source: data.appDefaultNode.source === 'managed' || data.appDefaultNode.source === 'custom'
-          ? data.appDefaultNode.source
-          : 'system',
-      });
+      if (persistedCustomNodes !== undefined) {
+        const originalNodes = Array.isArray(data.customNodes) ? data.customNodes : [];
+        normalizedDataChanged ||= JSON.stringify(nodeStore.versions.filter(node => node.source === 'custom')) !== JSON.stringify(originalNodes);
+      }
+      if (persistedDefault !== undefined) {
+        normalizedDataChanged ||= JSON.stringify(nodeStore.appDefault) !== JSON.stringify(data.appDefaultNode ?? null);
+      }
     }
     if (data.usageData) {
       const usageStore = useUsageStore();
@@ -268,9 +308,11 @@ export async function loadData(): Promise<PersistenceLoadResult> {
 
     persistenceState = 'ready';
     const serialized = serializePersistedData();
-    if (normalizedDataChanged) {
+    const legacyMigrationPending = nodeStore.legacyMigrationPending;
+    if (normalizedDataChanged || legacyMigrationPending) {
       try {
         await saveQueue.enqueue(serialized, true);
+        if (legacyMigrationPending) nodeStore.completeLegacyMigration();
       } catch (error) {
         return { state: 'read-only', error: enterReadOnly('save', error) };
       }

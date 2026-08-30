@@ -14,7 +14,7 @@ import {
   getProjectCommandRunId,
   type ProjectCommandType,
 } from '../utils/projectCommands';
-import { resolveNodePathFromVersion, resolveProjectNodePath, isExplicitNodeVersion, resolveAppDefaultNodePath } from '../utils/nodeRuntime';
+import { resolveNodePathFromVersion, resolveProjectNodePath, resolveProjectRuntime, isExplicitNodeVersion, resolveAppDefaultNodePath } from '../utils/nodeRuntime';
 import { normalizeNodeVersion, projectNodeVersionHint } from '../utils/nvm';
 import { scanFrontendEnvProject } from '../utils/frontendEnvSwitcher';
 import { normalizeProjectTags } from '../utils/projectTags';
@@ -380,7 +380,13 @@ export const useProjectStore = defineStore('project', () => {
       await nodeStore.loadRuntimes();
     }
 
-    let nodePath = resolveProjectNodePath(project, nodeStore.versions, nodeStore.appDefault);
+    const initialResolution = resolveProjectRuntime(project, nodeStore.versions, nodeStore.appDefault);
+    let nodePath = initialResolution.runtime?.path || '';
+
+    if (initialResolution.unavailable && project.nodeRuntimeId) {
+      ElMessage.error('项目绑定的 Node Runtime 不可用，请重新选择 Runtime 后再运行。');
+      return;
+    }
 
     // If a specific version is configured but not installed, auto-install managed runtime
     if (!nodePath && isExplicitNodeVersion(project.nodeVersion) && nodeStore.managedSupported) {
@@ -402,7 +408,9 @@ export const useProjectStore = defineStore('project', () => {
         const hint = projectNodeVersionHint(info);
         nodePath = resolveNodePathFromVersion(hint, nodeStore.versions, nodeStore.appDefault);
         if (nodePath && hint) {
-          project.nodeVersion = hint;
+          const runtime = nodeStore.versions.find(item => item.path === nodePath);
+          project.nodeVersion = runtime?.version || hint;
+          if (runtime) project.nodeRuntimeId = runtime.runtimeId;
         }
       } catch (error) {
         console.warn('Failed to rescan project node version before running project', error);

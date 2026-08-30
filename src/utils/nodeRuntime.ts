@@ -1,25 +1,70 @@
-import type { AppDefaultNode, NodeVersion, Project } from '../types';
+import type { AppDefaultNode, NodeRuntimeSource, NodeVersion, Project } from '../types';
 import { findInstalledNodeVersion, normalizeNodeVersion } from './nvm';
 
 const DEFAULT_NODE_VERSION_LABELS = new Set([
   'default',
   'system default',
-  '\u9ed8\u8ba4',
+  '默认',
 ]);
 
-const SOURCE_PRIORITY: Record<NodeVersion['source'], number> = {
+const SOURCE_PRIORITY: Record<NodeRuntimeSource, number> = {
   managed: 0,
-  custom: 1,
-  system: 2,
+  nvm: 1,
+  custom: 2,
+  system: 3,
 };
+
+export interface ResolvedNodeRuntime {
+  runtime: NodeVersion | null;
+  unavailable: boolean;
+  reason?: string;
+}
 
 function normalizeNodeVersionLabel(value?: string) {
   return (value || '').trim().toLowerCase();
 }
 
+function isWindowsPath(path: string): boolean {
+  return /^[a-z]:[\\/]/i.test(path) || path.includes('\\');
+}
+
+/** 用于 runtimeId 的平台感知路径规范化。 */
+export function normalizeRuntimePath(path: string): string {
+  const normalized = path.trim().replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/\/$/, '');
+  return isWindowsPath(path) ? normalized.toLowerCase() : normalized;
+}
+
+export function normalizeRuntimeVersion(version: string): string {
+  const normalized = normalizeNodeVersion(version);
+  if (normalized) return `v${normalized}`;
+  const trimmed = version.trim();
+  return trimmed.toLowerCase().startsWith('v') ? `v${trimmed.slice(1)}` : `v${trimmed}`;
+}
+
+export function buildNodeRuntimeId(source: NodeRuntimeSource, version: string, path: string): string {
+  if (source === 'managed') return `managed:${normalizeRuntimeVersion(version)}`;
+  return `${source}:${normalizeRuntimePath(path)}`;
+}
+
+export function getNodeRuntimeId(runtime: NodeVersion): string {
+  return runtime.runtimeId || buildNodeRuntimeId(runtime.source, runtime.version, runtime.path);
+}
+
+export function ensureNodeRuntime(runtime: NodeVersion): NodeVersion {
+  return { ...runtime, runtimeId: getNodeRuntimeId(runtime) };
+}
+
+export function isUsableNodeRuntime(runtime: NodeVersion | null | undefined): runtime is NodeVersion {
+  return !!runtime
+    && !!runtime.path
+    && runtime.path !== 'System Default'
+    && runtime.status !== 'broken'
+    && runtime.status !== 'unavailable';
+}
+
 function shouldUseDefaultNode(projectNodeVersion?: string) {
   const normalizedVersion = normalizeNodeVersionLabel(projectNodeVersion);
-  if (!normalizedVersion) return false;
+  if (!normalizedVersion) return true;
   if (DEFAULT_NODE_VERSION_LABELS.has(normalizedVersion)) return true;
   return !/\d/.test(normalizedVersion);
 }
@@ -30,106 +75,146 @@ export function isExplicitNodeVersion(nodeVersion?: string): boolean {
   return normalizeNodeVersion(nodeVersion) !== null;
 }
 
-function isUsablePath(path: string | undefined) {
-  return !!path && path !== 'System Default';
+function versionMatches(runtime: NodeVersion, target: string): boolean {
+  const normalizedTarget = normalizeNodeVersion(target);
+  if (!normalizedTarget) return false;
+  const normalizedRuntime = normalizeNodeVersion(runtime.version);
+  return normalizedRuntime === normalizedTarget || normalizedRuntime?.startsWith(`${normalizedTarget}.`) === true;
 }
 
-function findVersionByPriority(versions: NodeVersion[], predicate: (v: NodeVersion) => boolean): NodeVersion | undefined {
-  const matches = versions.filter(predicate);
-  matches.sort((a, b) => SOURCE_PRIORITY[a.source] - SOURCE_PRIORITY[b.source]);
-  return matches[0];
+function compareRuntime(a: NodeVersion, b: NodeVersion): number {
+  const source = SOURCE_PRIORITY[a.source] - SOURCE_PRIORITY[b.source];
+  if (source !== 0) return source;
+  return normalizeRuntimePath(a.path).localeCompare(normalizeRuntimePath(b.path));
 }
 
-function appDefaultPath(appDefault: AppDefaultNode | null | undefined, versions: NodeVersion[]) {
-  if (!appDefault) return '';
-  const matched = versions.find(version =>
-    version.source === appDefault.source
-    && (version.path === appDefault.path || version.version === appDefault.version),
+function findVersionByPriority(versions: NodeVersion[], predicate: (runtime: NodeVersion) => boolean): NodeVersion | undefined {
+  return versions
+    .map(ensureNodeRuntime)
+    .filter(predicate)
+    .sort(compareRuntime)[0];
+}
+
+function findRuntimeById(versions: NodeVersion[], runtimeId: string): NodeVersion | undefined {
+  return versions.map(ensureNodeRuntime).find(runtime => getNodeRuntimeId(runtime) === runtimeId);
+}
+
+export function getRuntimesByVersion(versions: NodeVersion[], version: string): NodeVersion[] {
+  return versions
+    .map(ensureNodeRuntime)
+    .filter(runtime => isUsableNodeRuntime(runtime) && versionMatches(runtime, version))
+    .sort(compareRuntime);
+}
+
+export function getRuntimeById(versions: NodeVersion[], runtimeId: string): NodeVersion | undefined {
+  return findRuntimeById(versions, runtimeId);
+}
+
+function findRuntimeForDefault(
+  appDefault: AppDefaultNode | null | undefined,
+  versions: NodeVersion[],
+): NodeVersion | undefined {
+  if (!appDefault) return undefined;
+  if (appDefault.runtimeId) return findRuntimeById(versions, appDefault.runtimeId);
+
+  const bySource = findVersionByPriority(versions, runtime =>
+    runtime.source === appDefault.source && (
+      normalizeRuntimePath(runtime.path) === normalizeRuntimePath(appDefault.path)
+      || (Boolean(appDefault.version) && normalizeNodeVersion(runtime.version) === normalizeNodeVersion(appDefault.version))
+    ),
   );
-  if (matched && isUsablePath(matched.path)) return matched.path;
-  if (isUsablePath(appDefault.path)) return appDefault.path;
-  return '';
+  if (bySource) return bySource;
+
+  // Managed runtimeId 不含路径，允许旧数据在 C/D 迁移后按版本恢复。
+  if (appDefault.source === 'managed' && appDefault.version) {
+    return findVersionByPriority(versions, runtime =>
+      runtime.source === 'managed' && versionMatches(runtime, appDefault.version!),
+    );
+  }
+  return undefined;
 }
 
-function systemNodePath(versions: NodeVersion[]) {
-  const systemNode = versions.find(version => version.source === 'system');
-  return isUsablePath(systemNode?.path) ? systemNode!.path : '';
+export function resolveAppDefaultRuntime(
+  versions: NodeVersion[],
+  appDefault?: AppDefaultNode | null,
+): ResolvedNodeRuntime {
+  if (appDefault) {
+    const runtime = findRuntimeForDefault(appDefault, versions);
+    return runtime && isUsableNodeRuntime(runtime)
+      ? { runtime, unavailable: false }
+      : { runtime: null, unavailable: true, reason: 'app_default_runtime_unavailable' };
+  }
+
+  const system = findVersionByPriority(versions, runtime => runtime.source === 'system');
+  return system && isUsableNodeRuntime(system)
+    ? { runtime: system, unavailable: false }
+    : { runtime: null, unavailable: true, reason: 'system_node_unavailable' };
+}
+
+export function resolveProjectRuntime(
+  project: Project,
+  versions: NodeVersion[],
+  appDefault?: AppDefaultNode | null,
+): ResolvedNodeRuntime {
+  if (project.nodeRuntimeId) {
+    const runtime = findRuntimeById(versions, project.nodeRuntimeId);
+    return runtime && isUsableNodeRuntime(runtime)
+      ? { runtime, unavailable: false }
+      : { runtime: null, unavailable: true, reason: 'project_runtime_unavailable' };
+  }
+
+  if (!project.nodeVersion || shouldUseDefaultNode(project.nodeVersion)) {
+    return resolveAppDefaultRuntime(versions, appDefault);
+  }
+
+  const runtime = findVersionByPriority(versions, candidate =>
+    isUsableNodeRuntime(candidate) && versionMatches(candidate, project.nodeVersion!),
+  );
+  if (runtime) return { runtime, unavailable: false };
+
+  const normalizedTarget = normalizeNodeVersion(project.nodeVersion);
+  if (normalizedTarget) {
+    const matchedVersion = findInstalledNodeVersion(
+      versions.map(version => version.version),
+      normalizedTarget,
+    );
+    if (matchedVersion) {
+      const matched = findVersionByPriority(versions, candidate => candidate.version === matchedVersion);
+      if (matched && isUsableNodeRuntime(matched)) return { runtime: matched, unavailable: false };
+    }
+  }
+
+  return { runtime: null, unavailable: true, reason: 'project_node_version_unavailable' };
 }
 
 export function resolveProjectNodePath(
   project: Project,
   versions: NodeVersion[],
   appDefault?: AppDefaultNode | null,
-) {
-  if (!project.nodeVersion) return '';
-
-  if (shouldUseDefaultNode(project.nodeVersion)) {
-    return appDefaultPath(appDefault, versions) || systemNodePath(versions);
-  }
-
-  const exactMatch = findVersionByPriority(versions, v => v.version === project.nodeVersion);
-  if (exactMatch) {
-    return isUsablePath(exactMatch.path) ? exactMatch.path : '';
-  }
-
-  const normalizedTargetVersion = normalizeNodeVersion(project.nodeVersion);
-  if (normalizedTargetVersion) {
-    const matchedVersion = findInstalledNodeVersion(
-      versions.map(version => version.version),
-      normalizedTargetVersion,
-    );
-    if (matchedVersion) {
-      const normalizedMatch = findVersionByPriority(versions, v => v.version === matchedVersion);
-      if (normalizedMatch) {
-        return isUsablePath(normalizedMatch.path) ? normalizedMatch.path : '';
-      }
-    }
-  }
-
-  return '';
+): string {
+  return resolveProjectRuntime(project, versions, appDefault).runtime?.path || '';
 }
 
 export function resolveNodePathFromVersion(
   versionLabel: string | null | undefined,
   versions: NodeVersion[],
   appDefault?: AppDefaultNode | null,
-) {
-  if (!versionLabel) return '';
-
-  if (shouldUseDefaultNode(versionLabel)) {
-    return appDefaultPath(appDefault, versions) || systemNodePath(versions);
+): string {
+  if (!versionLabel || shouldUseDefaultNode(versionLabel)) {
+    return resolveAppDefaultRuntime(versions, appDefault).runtime?.path || '';
   }
-
-  const exactMatch = findVersionByPriority(versions, v => v.version === versionLabel);
-  if (exactMatch) {
-    return isUsablePath(exactMatch.path) ? exactMatch.path : '';
-  }
-
-  const normalizedTargetVersion = normalizeNodeVersion(versionLabel);
-  if (normalizedTargetVersion) {
-    const matchedVersion = findInstalledNodeVersion(
-      versions.map(version => version.version),
-      normalizedTargetVersion,
-    );
-    if (matchedVersion) {
-      const normalizedMatch = findVersionByPriority(versions, v => v.version === matchedVersion);
-      if (normalizedMatch) {
-        return isUsablePath(normalizedMatch.path) ? normalizedMatch.path : '';
-      }
-    }
-  }
-
-  return '';
+  return findVersionByPriority(versions, runtime =>
+    isUsableNodeRuntime(runtime) && versionMatches(runtime, versionLabel),
+  )?.path || '';
 }
 
-export function shouldInjectTerminalNode(project: Project): boolean {
-  return project.type === 'node' && project.terminalInjectNode !== false;
-}
-
-/** 项目管理器默认 Node：app default，没有则回退 System。 */
 export function resolveAppDefaultNodePath(
   versions: NodeVersion[],
   appDefault?: AppDefaultNode | null,
 ): string {
-  return appDefaultPath(appDefault, versions) || systemNodePath(versions);
+  return resolveAppDefaultRuntime(versions, appDefault).runtime?.path || '';
+}
+
+export function shouldInjectTerminalNode(project: Project): boolean {
+  return project.type === 'node' && project.terminalInjectNode !== false;
 }

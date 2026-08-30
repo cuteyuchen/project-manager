@@ -1,6 +1,8 @@
 import type { NodeVersion, NodeRuntimeSource } from '../types';
+import { buildNodeRuntimeId, normalizeRuntimePath } from './nodeRuntime';
 
 export function migrateLegacyNodeSource(source: string | undefined): NodeRuntimeSource {
+  // 旧版 localStorage 的 nvm 标记实际对应手工添加的 Node，真实 NVM Runtime 由发现 API 单独写入。
   if (source === 'managed' || source === 'system' || source === 'custom') return source;
   if (source === 'nvm') return 'custom';
   return 'custom';
@@ -15,7 +17,8 @@ function parseVersion(version: string): number[] {
 const SOURCE_ORDER: Record<NodeRuntimeSource, number> = {
   system: 0,
   managed: 1,
-  custom: 2,
+  nvm: 2,
+  custom: 3,
 };
 
 export function sortNodeVersions(versions: NodeVersion[]): NodeVersion[] {
@@ -35,7 +38,7 @@ export function sortNodeVersions(versions: NodeVersion[]): NodeVersion[] {
       }
     }
 
-    return a.path.localeCompare(b.path);
+    return normalizeRuntimePath(a.path).localeCompare(normalizeRuntimePath(b.path));
   });
 }
 
@@ -59,6 +62,7 @@ export function upsertSystemNodeVersion(
 export function mergeNodeRuntimes(parts: {
   system?: NodeVersion | null;
   managed?: NodeVersion[];
+  nvm?: NodeVersion[];
   custom?: NodeVersion[];
 }): NodeVersion[] {
   const seen = new Set<string>();
@@ -66,14 +70,19 @@ export function mergeNodeRuntimes(parts: {
 
   const push = (node: NodeVersion | null | undefined) => {
     if (!node) return;
-    const key = `${node.source}:${node.path}:${node.version}`;
+    const normalized = {
+      ...node,
+      runtimeId: node.runtimeId || buildNodeRuntimeId(node.source, node.version, node.path),
+    };
+    const key = normalized.runtimeId;
     if (seen.has(key)) return;
     seen.add(key);
-    result.push(node);
+    result.push(normalized);
   };
 
   push(parts.system || null);
   for (const node of parts.managed || []) push(node);
+  for (const node of parts.nvm || []) push(node);
   for (const node of parts.custom || []) push({ ...node, source: 'custom' });
 
   return sortNodeVersions(result);

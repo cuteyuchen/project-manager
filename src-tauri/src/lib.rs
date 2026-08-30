@@ -55,7 +55,7 @@ fn validate_config_filename(filename: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn app_config_file_path(app: &tauri::AppHandle, filename: &str) -> Result<PathBuf, String> {
+pub(crate) fn app_config_file_path(app: &tauri::AppHandle, filename: &str) -> Result<PathBuf, String> {
     validate_config_filename(filename)?;
     let mut path = app.path().app_data_dir().map_err(|e| e.to_string())?;
     path.push(filename);
@@ -70,7 +70,7 @@ fn legacy_config_file_path(filename: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-fn atomic_write_config(path: &Path, content: &str) -> Result<(), String> {
+pub(crate) fn atomic_write_config(path: &Path, content: &str) -> Result<(), String> {
     let parent = path
         .parent()
         .ok_or_else(|| format!("Config path has no parent: {}", path.display()))?;
@@ -120,16 +120,23 @@ fn read_config_from_paths(data_path: &Path, legacy_path: &Path) -> Result<String
     Ok(content)
 }
 
-#[tauri::command]
-fn read_config_file(app: tauri::AppHandle, filename: String) -> Result<String, String> {
-    let data_path = app_config_file_path(&app, &filename)?;
+pub(crate) fn read_config_file_contents(
+    app: &tauri::AppHandle,
+    filename: &str,
+) -> Result<String, String> {
+    let data_path = app_config_file_path(app, filename)?;
     if data_path.exists() {
         return fs::read_to_string(&data_path)
             .map_err(|e| format!("Failed to read config file {}: {e}", data_path.display()));
     }
 
-    let legacy_path = legacy_config_file_path(&filename)?;
+    let legacy_path = legacy_config_file_path(filename)?;
     read_config_from_paths(&data_path, &legacy_path)
+}
+
+#[tauri::command]
+fn read_config_file(app: tauri::AppHandle, filename: String) -> Result<String, String> {
+    read_config_file_contents(&app, &filename)
 }
 
 #[tauri::command]
@@ -199,6 +206,9 @@ pub fn run() {
             node_runtime::get_system_node_path,
             node_runtime::get_node_version,
             node_runtime::managed_node_runtime_supported,
+            node_runtime::scan_nvm_node_runtimes,
+            node_runtime::get_managed_node_runtime_location,
+            node_runtime::migrate_managed_node_runtime_location,
             nvm::get_nvm_list,
             nvm::install_node,
             nvm::uninstall_node,
@@ -236,6 +246,7 @@ pub fn run() {
             system::check_context_menu,
             system::is_context_menu_supported,
             system::get_platform_info,
+            system::get_home_directory,
             system::detect_available_terminals,
             system::detect_available_editors,
             system::list_used_ports,

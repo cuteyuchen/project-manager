@@ -577,6 +577,7 @@ function normalizeProject(project: any): Project | null {
     gitBranch: typeof project.gitBranch === 'string' && project.gitBranch ? project.gitBranch : undefined,
     gitConfigured: typeof project.gitConfigured === 'boolean' ? project.gitConfigured : undefined,
     nodeVersion: project.nodeVersion || undefined,
+    nodeRuntimeId: typeof project.nodeRuntimeId === 'string' ? project.nodeRuntimeId : undefined,
     packageManager: project.packageManager || 'npm',
     scripts: Array.isArray(project.scripts) ? project.scripts : [],
     visibleScripts: Array.isArray(project.visibleScripts) ? project.visibleScripts : undefined,
@@ -603,7 +604,13 @@ function normalizeSettingsPayload(settings: any): Settings {
 
 function normalizeCustomNode(node: any): NodeVersion | null {
   if (!node || !node.path) return null;
-  return { version: String(node.version || ''), path: String(node.path), source: 'custom' };
+  return {
+    runtimeId: typeof node.runtimeId === 'string' ? node.runtimeId : undefined,
+    version: String(node.version || ''),
+    path: String(node.path),
+    source: 'custom',
+    status: node.status || 'available',
+  };
 }
 
 type ImportValueOptions = {
@@ -883,7 +890,6 @@ function applyImportPlan() {
   });
   settingsStore.settings = normalizeDefaultEditorId(normalizeAiSettings(nextSettings));
 
-  const systemNodes = nodeStore.versions.filter(item => item.source !== 'custom');
   const customNodes = deepClone(toRaw(nodeStore.versions.filter(item => item.source === 'custom')));
   plan.nodeAdds.forEach(node => {
     if (!customNodes.some(item => item.path === node.path)) {
@@ -893,7 +899,7 @@ function applyImportPlan() {
   plan.nodeConflicts.forEach((conflict) => {
     if (conflict.choice === 'incoming') customNodes[conflict.existingIndex] = deepClone(conflict.incoming);
   });
-  nodeStore.versions = sortNodes([...systemNodes, ...customNodes]);
+  nodeStore.replaceCustomNodes(sortNodes(customNodes));
 
   resetDraft();
   importDialogVisible.value = false;

@@ -16,6 +16,8 @@ import type {
     GitHunkMode,
     GitImageDiffPayload,
     GitBinaryDiffMeta,
+    ManagedRuntimeLocation,
+    ManagedRuntimeLocationInfo,
 } from '../types';
 
 /** 包管理器解析结果 */
@@ -130,6 +132,7 @@ export interface EditorWriteResult {
 export interface PlatformAPI {
     // Node runtime
     listInstalledNodeRuntimes(): Promise<NodeVersion[]>;
+    scanNvmNodeRuntimes(): Promise<NodeVersion[]>;
     listAvailableNodeReleases(): Promise<NodeReleaseInfo[]>;
     installManagedNode(version: string, operationId?: string): Promise<string>;
     cancelManagedNodeInstall(operationId: string): Promise<void>;
@@ -137,6 +140,12 @@ export interface PlatformAPI {
     getSystemNodePath(): Promise<string>;
     getNodeVersion(path: string): Promise<string>;
     managedNodeRuntimeSupported(): Promise<boolean>;
+    getManagedNodeRuntimeLocation(): Promise<ManagedRuntimeLocationInfo>;
+    migrateManagedNodeRuntimeLocation(
+        location: ManagedRuntimeLocation,
+        migrate: boolean,
+        runningRuntimePaths?: string[],
+    ): Promise<ManagedRuntimeLocationInfo>;
     onNodeRuntimeProgress?(callback: (payload: NodeInstallProgress) => void): Promise<() => void>;
 
     /** @deprecated 使用 listInstalledNodeRuntimes */
@@ -177,6 +186,7 @@ export interface PlatformAPI {
     resolvePackageManager(nodePath: string, defaultNodePath: string, packageManager: string, source: 'project' | 'default'): Promise<PackageManagerResolveResult>;
 
     // System / Shell
+    getHomeDirectory(): Promise<string>;
     openInEditor(path: string, editor?: string): Promise<void>;
     openInTerminal(path: string, terminal?: string, nodePath?: string, packageManager?: string): Promise<void>;
     openFolder(path: string): Promise<void>;

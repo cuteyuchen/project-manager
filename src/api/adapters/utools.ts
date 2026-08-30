@@ -28,6 +28,8 @@ import type {
   GitHunkMode,
   GitImageDiffPayload,
   GitBinaryDiffMeta,
+  ManagedRuntimeLocation,
+  ManagedRuntimeLocationInfo,
 } from '../../types';
 
 // Declare global interface for uTools services
@@ -53,6 +55,10 @@ export class UToolsAdapter implements PlatformAPI {
       ? this.service.listInstalledNodeRuntimes()
       : this.service.getNvmList();
   }
+  scanNvmNodeRuntimes(): Promise<NodeVersion[]> {
+    const service = this.service as PlatformAPI & { scanNvmNodeRuntimes?: () => Promise<NodeVersion[]> };
+    return service.scanNvmNodeRuntimes ? service.scanNvmNodeRuntimes() : Promise.resolve([]);
+  }
   listAvailableNodeReleases(): Promise<NodeReleaseInfo[]> {
     return this.service.listAvailableNodeReleases
       ? this.service.listAvailableNodeReleases()
@@ -76,6 +82,35 @@ export class UToolsAdapter implements PlatformAPI {
     return this.service.managedNodeRuntimeSupported
       ? this.service.managedNodeRuntimeSupported()
       : Promise.resolve(false);
+  }
+  getManagedNodeRuntimeLocation(): Promise<ManagedRuntimeLocationInfo> {
+    const service = this.service as PlatformAPI & { getManagedNodeRuntimeLocation?: () => Promise<ManagedRuntimeLocationInfo> };
+    if (service.getManagedNodeRuntimeLocation) return service.getManagedNodeRuntimeLocation();
+    return Promise.resolve({
+      mode: 'app-data',
+      rootPath: '',
+      writable: false,
+      portableAvailable: false,
+      installedCount: 0,
+      sizeBytes: 0,
+    });
+  }
+  migrateManagedNodeRuntimeLocation(
+    location: ManagedRuntimeLocation,
+    migrate: boolean,
+    runningRuntimePaths: string[] = [],
+  ): Promise<ManagedRuntimeLocationInfo> {
+    const service = this.service as PlatformAPI & {
+      migrateManagedNodeRuntimeLocation?: (
+        location: ManagedRuntimeLocation,
+        migrate: boolean,
+        runningRuntimePaths?: string[],
+      ) => Promise<ManagedRuntimeLocationInfo>;
+    };
+    if (service.migrateManagedNodeRuntimeLocation) {
+      return service.migrateManagedNodeRuntimeLocation(location, migrate, runningRuntimePaths);
+    }
+    return Promise.reject(new Error('Managed Node runtime location is not supported in this plugin'));
   }
   onNodeRuntimeProgress(callback: (payload: NodeInstallProgress) => void): Promise<() => void> {
     if (this.service.onNodeRuntimeProgress) return this.service.onNodeRuntimeProgress(callback);
@@ -138,6 +173,10 @@ export class UToolsAdapter implements PlatformAPI {
   }
 
   openInEditor(path: string, editor?: string): Promise<void> { return this.service.openInEditor(path, editor); }
+  getHomeDirectory(): Promise<string> {
+    const service = this.service as PlatformAPI & { getHomeDirectory?: () => Promise<string> };
+    return service.getHomeDirectory ? service.getHomeDirectory() : Promise.resolve('.');
+  }
     openInTerminal(path: string, terminal?: string, nodePath?: string, packageManager?: string): Promise<void> {
         if ((this.service as any).openInTerminal) {
             return (this.service as any).openInTerminal(path, terminal, nodePath, packageManager);

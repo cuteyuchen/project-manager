@@ -27,7 +27,8 @@ import { useNodeStore } from './stores/node';
 import { useGitStore } from './stores/git';
 import { useUsageStore } from './stores/usage';
 import type { Project } from './types';
-import { normalizeNodeVersion, findInstalledNodeVersion, projectNodeVersionHint } from './utils/nvm';
+import { normalizeNodeVersion, projectNodeVersionHint } from './utils/nvm';
+import { getRuntimesByVersion } from './utils/nodeRuntime';
 import { buildJavaPresetCommands, ensureNodeInstallCommand, isWindowsPlatform } from './utils/projectCommands';
 import ProjectQuickSearch from './components/ProjectQuickSearch.vue';
 import {
@@ -96,42 +97,35 @@ async function handleImportProject(path: string) {
   try {
     const info = await api.scanProject(path);
     let nodeVersion = '';
+    let projectRuntimeId = '';
 
     const hint = projectNodeVersionHint(info);
     const normalizedNvmVersion = normalizeNodeVersion(hint);
     if (normalizedNvmVersion) {
-      let currentNodeVersions: string[] = [];
+      let detectedRuntime = undefined as ReturnType<typeof getRuntimesByVersion>[number] | undefined;
       try {
-        const runtimeList = await api.listInstalledNodeRuntimes();
-        currentNodeVersions = runtimeList.map(v => v.version);
-      } catch (nvmErr) {
-        console.error('Failed to load node versions for import', nvmErr);
+        await nodeStore.loadRuntimes();
+        detectedRuntime = getRuntimesByVersion(nodeStore.versions, normalizedNvmVersion)[0];
+      } catch (runtimeError) {
+        console.error('Failed to load node runtimes for import', runtimeError);
       }
 
-      let installed = findInstalledNodeVersion(currentNodeVersions, normalizedNvmVersion);
-
-      if (!installed && !processedImportInstallVersions.has(normalizedNvmVersion) && nodeStore.managedSupported) {
+      if (!detectedRuntime && !processedImportInstallVersions.has(normalizedNvmVersion) && nodeStore.managedSupported) {
         processedImportInstallVersions.add(normalizedNvmVersion);
         try {
           ElMessage.info(t('project.autoInstallStart', { version: normalizedNvmVersion }));
-          await api.installManagedNode(normalizedNvmVersion);
+          await nodeStore.installManagedNode(normalizedNvmVersion);
           ElMessage.success(t('project.autoInstallSuccess', { version: normalizedNvmVersion }));
-
-          const latestList = await api.listInstalledNodeRuntimes();
-          currentNodeVersions = latestList.map(v => v.version);
-          installed = findInstalledNodeVersion(currentNodeVersions, normalizedNvmVersion);
+          detectedRuntime = getRuntimesByVersion(nodeStore.versions, normalizedNvmVersion)[0];
         } catch (installErr) {
           ElMessage.error(`${t('project.autoInstallFailed', { version: normalizedNvmVersion })}: ${String(installErr)}`);
           console.error('Failed to auto-install node version while importing project', installErr);
         }
       }
 
-      if (!installed) {
-        installed = findInstalledNodeVersion(currentNodeVersions, normalizedNvmVersion);
-      }
-
-      if (installed) {
-        nodeVersion = installed;
+      if (detectedRuntime) {
+        nodeVersion = detectedRuntime.version;
+        projectRuntimeId = detectedRuntime.runtimeId || '';
       }
     } else if (hint) {
       ElMessage.warning(t('project.invalidNvmrc'));
@@ -147,6 +141,7 @@ async function handleImportProject(path: string) {
 
     if (info.projectType === 'node') {
       project.nodeVersion = nodeVersion;
+      project.nodeRuntimeId = projectRuntimeId;
       project.packageManager = info.packageManager || 'npm';
       project.scripts = info.scripts;
     }
@@ -636,6 +631,7 @@ async function setupCloseRequestedHandler() {
 onMounted(async () => {
   unlistenPersistenceEvents = subscribePersistenceEvents(handlePersistenceEvent);
   await loadData();
+  await nodeStore.loadRuntimes();
   loaded.value = true;
 
   const handleShortcutRecording = (event: Event) => {
@@ -836,6 +832,7 @@ watch(() => projectStore.projects, triggerSave, { deep: true });
 watch(() => projectStore.projectGroups, triggerSave, { deep: true });
 watch(() => settingsStore.settings, triggerSave, { deep: true });
 watch(() => nodeStore.versions, triggerSave, { deep: true });
+watch(() => nodeStore.appDefault, triggerSave, { deep: true });
 watch(() => usageStore.usageData, triggerSave, { deep: true });
 
 watch(

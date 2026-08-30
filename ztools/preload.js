@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { spawn, exec, execFile, execSync, execFileSync } = require('child_process');
 const { TextDecoder } = require('util');
 
@@ -1108,9 +1109,99 @@ function writeChildStdin(id, input) {
     });
 }
 
+function normalizeRuntimePath(runtimePath) {
+    return String(runtimePath || '').trim().replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/\/$/, '').toLowerCase();
+}
+
+function nodeExecutableForRuntime(runtimePath) {
+    const root = String(runtimePath || '').trim();
+    if (!root) return '';
+    try {
+        if (fs.existsSync(root) && fs.statSync(root).isFile()) return root;
+        const candidates = process.platform === 'win32'
+            ? [path.join(root, 'node.exe'), path.join(root, 'bin', 'node.exe')]
+            : [path.join(root, 'bin', 'node'), path.join(root, 'node')];
+        return candidates.find(candidate => fs.existsSync(candidate)) || '';
+    } catch (_) {
+        return '';
+    }
+}
+
+function nvmDiscoveryRoots() {
+    const roots = [];
+    const add = value => {
+        if (!value) return;
+        const candidate = path.resolve(String(value));
+        if (!roots.some(item => normalizeRuntimePath(item) === normalizeRuntimePath(candidate))) roots.push(candidate);
+    };
+    if (process.platform === 'win32') {
+        add(process.env.NVM_HOME);
+        add(process.env.NVM_SYMLINK);
+        add(process.env.APPDATA && path.join(process.env.APPDATA, 'nvm'));
+        add(process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'nvm'));
+    } else {
+        add(process.env.NVM_DIR);
+        add(path.join(os.homedir(), '.nvm'));
+    }
+    return roots;
+}
+
+function nvmDiscoveryCandidates(root) {
+    const candidates = [];
+    const add = candidate => {
+        if (nodeExecutableForRuntime(candidate) && !candidates.some(item => normalizeRuntimePath(item) === normalizeRuntimePath(candidate))) {
+            candidates.push(candidate);
+        }
+    };
+    add(root);
+    try {
+        const scanRoot = process.platform === 'win32' ? root : path.join(root, 'versions', 'node');
+        for (const entry of fs.readdirSync(scanRoot, { withFileTypes: true })) {
+            if (entry.isDirectory()) add(path.join(scanRoot, entry.name));
+        }
+    } catch (_) {}
+    return candidates;
+}
+
+function readNodeVersion(executable) {
+    return new Promise(resolve => {
+        execFile(executable, ['-v'], { timeout: 3000, windowsHide: true }, (error, stdout) => {
+            if (error) return resolve('');
+            const line = String(stdout || '').trim().split(/\r?\n/)[0];
+            const normalized = line.startsWith('v') ? line : `v${line}`;
+            resolve(/^v\d+\.\d+\.\d+$/.test(normalized) ? normalized : '');
+        });
+    });
+}
+
+async function scanNvmNodeRuntimes() {
+    const result = [];
+    const seen = new Set();
+    for (const root of nvmDiscoveryRoots()) {
+        for (const candidate of nvmDiscoveryCandidates(root)) {
+            const executable = nodeExecutableForRuntime(candidate);
+            const version = await readNodeVersion(executable);
+            if (!version) continue;
+            const runtimeId = `nvm:${normalizeRuntimePath(candidate)}`;
+            if (seen.has(runtimeId)) continue;
+            seen.add(runtimeId);
+            result.push({ runtimeId, version, path: candidate, source: 'nvm', status: 'available', runtimeRoot: root });
+        }
+    }
+    return result.sort((a, b) => b.version.localeCompare(a.version) || a.path.localeCompare(b.path));
+}
+
 window.services = {
     managedNodeRuntimeSupported: async () => false,
     listInstalledNodeRuntimes: async () => [],
+    scanNvmNodeRuntimes,
+    getManagedNodeRuntimeLocation: async () => {
+        const rootPath = path.join(platform.getPath('userData'), 'runtimes', 'node');
+        return { mode: 'app-data', rootPath, writable: true, portableAvailable: false, installedCount: 0, sizeBytes: 0, warnings: [] };
+    },
+    migrateManagedNodeRuntimeLocation: async () => {
+        throw new Error('Managed Node runtime location is not supported in this plugin');
+    },
     listAvailableNodeReleases: async () => [],
     installManagedNode: async () => {
         throw new Error('Managed Node runtime is not supported in this plugin. Use the desktop app.');
@@ -1159,6 +1250,8 @@ window.services = {
             }
         });
     },
+
+    getHomeDirectory: async () => os.homedir(),
 
     installNode: async () => {
         throw new Error('Managed Node runtime is not supported in this plugin. Use the desktop app.');

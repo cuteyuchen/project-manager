@@ -33,6 +33,8 @@ import type {
     GitHunkMode,
     GitImageDiffPayload,
     GitBinaryDiffMeta,
+    ManagedRuntimeLocation,
+    ManagedRuntimeLocationInfo,
 } from '../../types';
 
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -42,6 +44,10 @@ export class TauriAdapter implements PlatformAPI {
 
     async listInstalledNodeRuntimes(): Promise<NodeVersion[]> {
         return invoke('list_installed_node_runtimes');
+    }
+
+    async scanNvmNodeRuntimes(): Promise<NodeVersion[]> {
+        return invoke('scan_nvm_node_runtimes');
     }
 
     async listAvailableNodeReleases(): Promise<NodeReleaseInfo[]> {
@@ -70,6 +76,23 @@ export class TauriAdapter implements PlatformAPI {
 
     async managedNodeRuntimeSupported(): Promise<boolean> {
         return invoke('managed_node_runtime_supported');
+    }
+
+    async getManagedNodeRuntimeLocation(): Promise<ManagedRuntimeLocationInfo> {
+        return invoke('get_managed_node_runtime_location');
+    }
+
+    async migrateManagedNodeRuntimeLocation(
+        location: ManagedRuntimeLocation,
+        migrate: boolean,
+        runningRuntimePaths: string[] = [],
+    ): Promise<ManagedRuntimeLocationInfo> {
+        return invoke('migrate_managed_node_runtime_location', {
+            mode: location.mode,
+            customPath: location.customPath || null,
+            migrate,
+            runningRuntimePaths,
+        });
     }
 
     async onNodeRuntimeProgress(callback: (payload: NodeInstallProgress) => void): Promise<() => void> {
@@ -156,6 +179,10 @@ export class TauriAdapter implements PlatformAPI {
     // System / Shell
     async openInEditor(path: string, editor?: string): Promise<void> {
         return invoke('open_in_editor', { path, editor });
+    }
+
+    async getHomeDirectory(): Promise<string> {
+        return invoke('get_home_directory');
     }
 
     async openInTerminal(path: string, terminal?: string, nodePath?: string, packageManager?: string): Promise<void> {

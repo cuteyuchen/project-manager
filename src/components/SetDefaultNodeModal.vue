@@ -14,12 +14,12 @@ const visible = computed({
 });
 
 const nodeStore = useNodeStore();
-const versions = computed(() => nodeStore.versions.filter(v => v.status !== 'broken'));
+const versions = computed(() => nodeStore.versions.filter(v => v.status !== 'broken' && v.status !== 'unavailable'));
 const selectedKey = ref('');
 const loading = ref(false);
 
-function rowKey(v: { source: string; path: string; version: string }) {
-  return `${v.source}:${v.path}:${v.version}`;
+function rowKey(v: { runtimeId?: string; source: string; path: string; version: string }) {
+  return v.runtimeId || `${v.source}:${v.path}:${v.version}`;
 }
 
 function selectVersion(v: { source: string; path: string; version: string }) {

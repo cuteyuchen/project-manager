@@ -96,6 +96,8 @@ export interface Project {
   gitBranch?: string;
   gitConfigured?: boolean;
   nodeVersion?: string;
+  /** 精确绑定的 Node Runtime；缺省时继续兼容 nodeVersion。 */
+  nodeRuntimeId?: string;
   packageManager?: 'npm' | 'yarn' | 'pnpm' | 'cnpm';
   /** 包管理器来源：'project' 使用项目 Node 环境，'default' 借用默认 Node 环境的包管理器入口 */
   packageManagerSource?: 'project' | 'default';
@@ -193,6 +195,8 @@ export interface Settings {
   defaultEditorId?: string;
   defaultTerminal: string;
   customTerminals?: TerminalConfig[];
+  /** Managed Node 运行时的正式存储位置。 */
+  managedNodeRuntimeLocation?: ManagedRuntimeLocation;
   layoutState?: Record<string, number>;
   /** Project Explorer shared width in pixels. */
   workspaceExplorerWidth?: number;
@@ -346,11 +350,31 @@ export interface ProjectHealthSnapshot {
   updatedAt: number;
 }
 
-export type NodeRuntimeSource = 'managed' | 'system' | 'custom';
+export type NodeRuntimeSource = 'managed' | 'nvm' | 'system' | 'custom';
 
-export type NodeRuntimeStatus = 'available' | 'broken' | 'installing';
+export type NodeRuntimeStatus = 'available' | 'broken' | 'installing' | 'unavailable';
+
+export type ManagedRuntimeLocationMode = 'app-data' | 'custom' | 'portable';
+
+export interface ManagedRuntimeLocation {
+  mode: ManagedRuntimeLocationMode;
+  customPath?: string;
+}
+
+export interface ManagedRuntimeLocationInfo extends ManagedRuntimeLocation {
+  rootPath: string;
+  writable: boolean;
+  portableAvailable: boolean;
+  installedCount: number;
+  sizeBytes: number;
+  warnings?: string[];
+}
 
 export interface NodeVersion {
+  /** 稳定 Runtime 身份；旧数据缺省时由 registry 推导。 */
+  runtimeId?: string;
+  /** 来源管理器的根目录（例如 NVM_HOME），仅用于展示与快捷操作。 */
+  runtimeRoot?: string;
   version: string;
   path: string;
   source: NodeRuntimeSource;
@@ -375,6 +399,8 @@ export interface NodeReleaseInfo {
 }
 
 export interface AppDefaultNode {
+  /** 稳定 Runtime 身份；旧数据缺省时按 source/path/version 迁移。 */
+  runtimeId?: string;
   source: NodeRuntimeSource;
   version: string;
   path: string;

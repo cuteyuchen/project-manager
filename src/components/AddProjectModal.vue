@@ -6,8 +6,8 @@ import { api } from '../api';
 import type { Project, CustomCommand, ProjectQuickCommand } from '../types';
 import type { ProjectInfo, ImportNode } from '../api/types';
 import { useNodeStore } from '../stores/node';
-import { normalizeNodeVersion, findInstalledNodeVersion, projectNodeVersionHint } from '../utils/nvm';
-import { resolveAppDefaultNodePath, resolveProjectNodePath } from '../utils/nodeRuntime';
+import { normalizeNodeVersion, projectNodeVersionHint } from '../utils/nvm';
+import { getRuntimesByVersion, resolveAppDefaultNodePath, resolveProjectNodePath, resolveProjectRuntime } from '../utils/nodeRuntime';
 import { ensureNodeInstallCommand, getInstallDependenciesCommand, buildJavaPresetCommands, isWindowsPlatform } from '../utils/projectCommands';
 import { getCustomCommandDisplayName } from '../utils/projectCommands';
 import { useSettingsStore } from '../stores/settings';
@@ -45,6 +45,7 @@ type ProjectForm = {
   gitConfigured: boolean;
   gitRemoteUrl: string;
   gitBranch: string;
+  nodeRuntimeId: string;
   nodeVersion: string;
   packageManager: 'npm' | 'yarn' | 'pnpm' | 'cnpm';
   packageManagerSource: 'project' | 'default';
@@ -96,6 +97,30 @@ const editorHint = computed(() => defaultEditor.value
 
 const nodeVersions = ref<string[]>([]);
 const loading = ref(false);
+
+const runtimeOptions = computed(() => nodeStore.versions.filter(runtime =>
+  runtime.status !== 'broken' && runtime.status !== 'unavailable',
+));
+const missingRuntimeOption = computed(() => {
+  if (!form.value.nodeRuntimeId || runtimeOptions.value.some(runtime => runtime.runtimeId === form.value.nodeRuntimeId)) return null;
+  return {
+    runtimeId: form.value.nodeRuntimeId,
+    version: form.value.nodeVersion || t('nodes.unavailable'),
+    source: 'custom',
+    status: 'unavailable' as const,
+  };
+});
+
+function runtimeSourceLabel(source: string): string {
+  if (source === 'managed') return t('nodes.sourceManaged');
+  if (source === 'nvm') return t('nodes.sourceNvm');
+  if (source === 'system') return t('nodes.sourceSystem');
+  return t('nodes.sourceCustom');
+}
+
+function runtimeOptionLabel(runtime: { version: string; source: string }): string {
+  return `${runtime.version} · ${runtimeSourceLabel(runtime.source)}`;
+}
 /** 各 PM 的可用性状态 { pmName: PackageManagerResolveResult } */
 const pmAvailability = ref<Record<string, PackageManagerResolveResult>>({});
 /** PM 可用性检查是否进行中 */
@@ -180,6 +205,7 @@ const form = ref<ProjectForm>({
   gitConfigured: false,
   gitRemoteUrl: '',
   gitBranch: '',
+  nodeRuntimeId: '',
   nodeVersion: '',
   packageManager: 'npm',
   packageManagerSource: 'project',
@@ -211,7 +237,8 @@ function buildEmptyForm(): ProjectForm {
     gitConfigured: false,
     gitRemoteUrl: '',
     gitBranch: '',
-    nodeVersion: nodeVersions.value[0] || '',
+    nodeRuntimeId: '',
+    nodeVersion: '',
     packageManager: 'npm',
     packageManagerSource: 'project',
     scripts: [],
@@ -275,7 +302,7 @@ async function applyDetectedNodeVersion(rawVersion?: string | null) {
     return;
   }
 
-  let installed = findInstalledNodeVersion(nodeVersions.value, normalizedNvmVersion);
+  let installed = getRuntimesByVersion(nodeStore.versions, normalizedNvmVersion)[0];
 
   if (!installed && nodeStore.managedSupported) {
     try {
@@ -283,7 +310,7 @@ async function applyDetectedNodeVersion(rawVersion?: string | null) {
       await nodeStore.installManagedNode(normalizedNvmVersion);
       ElMessage.success(t('project.autoInstallSuccess', { version: normalizedNvmVersion }));
       await refreshNodeVersions();
-      installed = findInstalledNodeVersion(nodeVersions.value, normalizedNvmVersion);
+      installed = getRuntimesByVersion(nodeStore.versions, normalizedNvmVersion)[0];
     } catch (installError) {
       ElMessage.error(`${t('project.autoInstallFailed', { version: normalizedNvmVersion })}: ${String(installError)}`);
       console.error('Failed to auto-install node version', installError);
@@ -291,7 +318,8 @@ async function applyDetectedNodeVersion(rawVersion?: string | null) {
   }
 
   if (installed) {
-    form.value.nodeVersion = installed;
+    form.value.nodeRuntimeId = installed.runtimeId || '';
+    form.value.nodeVersion = installed.version;
   }
 }
 
@@ -341,6 +369,7 @@ async function applyScanResult(info: ProjectInfo, options: { preferDetectedName?
 }
 
 function hydrateFormFromProject(project: Project) {
+  const resolvedRuntime = resolveProjectRuntime(project, nodeStore.versions, nodeStore.appDefault).runtime;
   form.value = {
     id: project.id,
     name: project.name,
@@ -351,6 +380,7 @@ function hydrateFormFromProject(project: Project) {
     gitConfigured: !!project.gitConfigured,
     gitRemoteUrl: project.gitRemoteUrl || '',
     gitBranch: project.gitBranch || '',
+    nodeRuntimeId: project.nodeRuntimeId || resolvedRuntime?.runtimeId || '',
     nodeVersion: project.nodeVersion || '',
     packageManager: project.packageManager || 'npm',
     packageManagerSource: project.packageManagerSource || 'project',
@@ -425,6 +455,17 @@ watch(() => form.value.nodeVersion, () => {
   refreshPmAvailability();
 });
 
+watch(() => form.value.nodeRuntimeId, (runtimeId) => {
+  if (!runtimeId) {
+    if (form.value.nodeVersion && !getRuntimesByVersion(nodeStore.versions, form.value.nodeVersion).length) {
+      form.value.nodeVersion = '';
+    }
+    return;
+  }
+  const runtime = nodeStore.getRuntime(runtimeId);
+  if (runtime) form.value.nodeVersion = runtime.version;
+});
+
 // When PM source changes, refresh PM availability
 watch(() => form.value.packageManagerSource, () => {
   refreshPmAvailability();
@@ -445,7 +486,14 @@ async function refreshPmAvailability() {
       await nodeStore.loadRuntimes();
     }
     const nodePath = resolveProjectNodePath(
-      { id: '', name: '', path: form.value.path, type: 'node', nodeVersion: form.value.nodeVersion },
+      {
+        id: '',
+        name: '',
+        path: form.value.path,
+        type: 'node',
+        nodeRuntimeId: form.value.nodeRuntimeId || undefined,
+        nodeVersion: form.value.nodeVersion,
+      },
       nodeStore.versions,
       nodeStore.appDefault,
     );
@@ -638,7 +686,11 @@ function buildProjectPayload(): Project {
   }
 
   if (form.value.type === 'node') {
-    project.nodeVersion = form.value.nodeVersion;
+    const selectedRuntime = form.value.nodeRuntimeId
+      ? nodeStore.getRuntime(form.value.nodeRuntimeId)
+      : undefined;
+    project.nodeRuntimeId = form.value.nodeRuntimeId || undefined;
+    project.nodeVersion = selectedRuntime?.version || (form.value.nodeRuntimeId ? form.value.nodeVersion : '');
     project.packageManager = form.value.packageManager;
     project.packageManagerSource = form.value.packageManagerSource;
     project.scripts = form.value.scripts;
@@ -905,9 +957,25 @@ async function cancelClone() {
         <div class="grid gap-4 grid-cols-3">
           <div class="min-w-0">
             <el-form-item :label="t('project.nodeVersion')">
-              <el-select v-model="form.nodeVersion">
-                <el-option :label="t('nodes.select')" value="" />
-                <el-option v-for="version in nodeVersions" :key="version" :label="version" :value="version" />
+              <el-select v-model="form.nodeRuntimeId" class="w-full">
+                <el-option :label="t('nodes.projectManagerDefault')" value="" />
+                <el-option
+                  v-if="missingRuntimeOption"
+                  :label="`${missingRuntimeOption.version} · ${t('nodes.unavailable')}`"
+                  :value="missingRuntimeOption.runtimeId"
+                  disabled
+                />
+                <el-option
+                  v-for="runtime in runtimeOptions"
+                  :key="runtime.runtimeId"
+                  :label="runtimeOptionLabel(runtime)"
+                  :value="runtime.runtimeId"
+                >
+                  <div class="flex min-w-0 items-center justify-between gap-3">
+                    <span class="font-mono">{{ runtime.version }}</span>
+                    <span class="text-xs text-slate-400">{{ runtimeSourceLabel(runtime.source) }}</span>
+                  </div>
+                </el-option>
               </el-select>
             </el-form-item>
           </div>
