@@ -70,8 +70,8 @@ function createNode(version: string, path: string, source: NodeVersion['source']
   assert(merged.some(item => item.source === 'custom'), 'custom runtimes must be kept');
 }
 
-assert.equal(migrateLegacyNodeSource('nvm'), 'custom');
-assert.equal(migrateLegacyNodeSource('managed'), 'managed');
-assert.equal(migrateLegacyNodeSource('system'), 'system');
+assert(migrateLegacyNodeSource('nvm') === 'custom', 'legacy nvm source should migrate to custom');
+assert(migrateLegacyNodeSource('managed') === 'managed', 'managed source should stay managed');
+assert(migrateLegacyNodeSource('system') === 'system', 'system source should stay system');
 
 console.log('nodeDefaultState tests passed');

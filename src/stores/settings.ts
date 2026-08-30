@@ -18,6 +18,7 @@ import {
   normalizeShortcut,
 } from '../utils/shortcut';
 import { createImageDataUrl } from '../utils/backgroundImage';
+import { clampWorkspaceExplorerWidth, WORKSPACE_EXPLORER_DEFAULT_WIDTH } from '../utils/workspaceExplorerLayout';
 
 function createDefaultAiService(overrides: Partial<AiServiceConfig> = {}): AiServiceConfig {
   return {
@@ -112,6 +113,7 @@ export const useSettingsStore = defineStore('settings', () => {
     defaultTerminal: 'cmd',
     customTerminals: [],
     layoutState: {},
+    workspaceExplorerWidth: WORKSPACE_EXPLORER_DEFAULT_WIDTH,
     locale: 'zh',
     themeMode: 'auto',
     backgroundImagePath: '',
@@ -227,6 +229,7 @@ export const useSettingsStore = defineStore('settings', () => {
   if (!settings.value.layoutState || typeof settings.value.layoutState !== 'object' || Array.isArray(settings.value.layoutState)) {
     settings.value.layoutState = {};
   }
+  settings.value.workspaceExplorerWidth = clampWorkspaceExplorerWidth(settings.value.workspaceExplorerWidth);
   if (typeof settings.value.quickSearchAppShortcut !== 'string') {
     settings.value.quickSearchAppShortcut = DEFAULT_QUICK_SEARCH_APP_SHORTCUT;
   } else {

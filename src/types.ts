@@ -194,6 +194,8 @@ export interface Settings {
   defaultTerminal: string;
   customTerminals?: TerminalConfig[];
   layoutState?: Record<string, number>;
+  /** Project Explorer shared width in pixels. */
+  workspaceExplorerWidth?: number;
   locale: 'zh' | 'en';
   themeMode: 'dark' | 'light' | 'auto';
   /** 全局背景图片的本地文件路径 */
@@ -359,10 +361,11 @@ export interface NodeVersion {
 export interface NodeInstallProgress {
   operationId: string;
   version: string;
-  phase: 'resolving' | 'downloading' | 'verifying' | 'extracting' | 'validating' | 'complete' | string;
+  phase: 'preparing' | 'resolving' | 'downloading' | 'verifying' | 'extracting' | 'finalizing' | 'validating' | 'cleanup' | 'complete' | string;
   downloadedBytes?: number;
   totalBytes?: number;
   percent?: number;
+  warning?: string;
 }
 
 export interface NodeReleaseInfo {

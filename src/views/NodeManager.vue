@@ -51,10 +51,13 @@ function progressText(row: NodeVersion) {
         return `${t('nodes.phaseDownloading')} ${progress.percent}%`;
     }
     const phaseKey = {
+        preparing: 'nodes.phasePreparing',
         resolving: 'nodes.phaseResolving',
         verifying: 'nodes.phaseVerifying',
         extracting: 'nodes.phaseExtracting',
+        finalizing: 'nodes.phaseFinalizing',
         validating: 'nodes.phaseValidating',
+        cleanup: 'nodes.phaseCleanup',
         complete: 'nodes.phaseComplete',
     }[progress.phase];
     return phaseKey ? t(phaseKey) : progress.phase;

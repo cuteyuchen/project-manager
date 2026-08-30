@@ -202,7 +202,6 @@ onBeforeUnmount(() => {
         'is-root-project': depth === 0,
         'is-child-project': depth > 0,
       }"
-      :style="{ paddingLeft: `${8 + depth * 16}px` }"
       @click="selectProject"
       @contextmenu.prevent="forwardContextMenu($event, { kind: 'project', project, relativePath: '', name: project.name, isDirectory: true })"
     >
@@ -267,7 +266,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="expanded" class="explorer-project-children">
-      <div v-if="loading" class="explorer-loading" :style="{ paddingLeft: `${26 + depth * 16}px` }">加载中…</div>
+      <div v-if="loading" class="explorer-loading">加载中…</div>
       <FileTreeNode
         v-for="entry in visibleEntries"
         :key="`${project.id}:${entry.name}`"
@@ -320,6 +319,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 5px;
   min-height: 29px;
+  padding-left: 4px;
   padding-right: 8px;
   color: var(--app-text-secondary);
   font-size: 11px;
@@ -354,9 +354,9 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--app-primary) 14%, var(--app-surface-soft));
 }
 .explorer-project-children {
-  margin-left: 12px;
-  padding-left: 5px;
-  border-left: 1px solid color-mix(in srgb, var(--app-primary) 28%, var(--app-border));
+  margin-left: 14px;
+  padding-left: 0;
+  border-left: 1px solid color-mix(in srgb, var(--app-primary) 18%, var(--app-border));
 }
 .explorer-chevron {
   display: inline-flex;
@@ -444,10 +444,10 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: flex-end;
   gap: 1px;
-  width: 132px;
-  min-width: 132px;
+  width: 154px;
+  min-width: 154px;
   height: 26px;
-  flex: 0 0 132px;
+  flex: 0 0 154px;
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
@@ -533,7 +533,7 @@ onBeforeUnmount(() => {
 .explorer-menu-item.danger:hover {
   color: var(--app-danger);
 }
-@container (max-width: 300px) {
+@container (max-width: 340px) {
   .explorer-project-actions {
     width: 78px;
     min-width: 78px;

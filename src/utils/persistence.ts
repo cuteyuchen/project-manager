@@ -6,6 +6,7 @@ import { useUsageStore } from '../stores/usage';
 import type { AppDefaultNode, NodeVersion, Project, ProjectGroup, Settings, UsageData } from '../types';
 import { ensureNodeInstallCommand } from './projectCommands';
 import { createPersistenceSaveQueue } from './persistenceQueue';
+import { clampWorkspaceExplorerWidth } from './workspaceExplorerLayout';
 
 const FILE_NAME = 'data.json';
 const SAVE_DEBOUNCE_MS = 800;
@@ -224,6 +225,7 @@ export async function loadData(): Promise<PersistenceLoadResult> {
       const merged = { ...settingsStore.settings, ...data.settings };
       if (!Array.isArray(merged.projectViewPresets)) merged.projectViewPresets = [];
       if (!Array.isArray(merged.workspaceProfiles)) merged.workspaceProfiles = [];
+      merged.workspaceExplorerWidth = clampWorkspaceExplorerWidth(merged.workspaceExplorerWidth);
       settingsStore.settings = merged;
     }
     if (data.customNodes) {

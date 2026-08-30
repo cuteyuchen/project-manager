@@ -21,6 +21,7 @@ const loading = ref(false);
 const fetchError = ref('');
 const installingVersion = ref<string | null>(null);
 const operationId = ref<string | null>(null);
+const installError = ref<{ version: string; detail: string } | null>(null);
 const searchQuery = ref('');
 const currentPage = ref(1);
 const pageSize = ref(20);
@@ -116,23 +117,35 @@ function progressLabel(version: string) {
     return `${t('nodes.phaseDownloading')} ${progress.percent}%`;
   }
   const map: Record<string, string> = {
+    preparing: t('nodes.phasePreparing'),
     resolving: t('nodes.phaseResolving'),
     verifying: t('nodes.phaseVerifying'),
     extracting: t('nodes.phaseExtracting'),
+    finalizing: t('nodes.phaseFinalizing'),
     validating: t('nodes.phaseValidating'),
+    cleanup: t('nodes.phaseCleanup'),
     complete: t('nodes.phaseComplete'),
   };
   return map[progress.phase] || progress.phase;
 }
 
+function errorDetail(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  return String(error);
+}
+
 async function install(version: string) {
   try {
+    installError.value = null;
     installingVersion.value = version;
     operationId.value = `install-${version}-${Date.now()}`;
     await nodeStore.installManagedNode(version, operationId.value);
     ElMessage.success(`Node ${version} installed successfully`);
   } catch (e: any) {
-    ElMessage.error(e.message || 'Installation failed');
+    const detail = errorDetail(e);
+    installError.value = { version, detail };
+    ElMessage.error(`${t('nodes.installFailed')}: ${detail}`);
   } finally {
     installingVersion.value = null;
     operationId.value = null;
@@ -201,6 +214,14 @@ async function cancelInstall() {
           </template>
         </el-table-column>
       </el-table>
+
+      <div v-if="installError" class="mx-2 mb-2 rounded-md border border-rose-200 bg-rose-50 p-2 text-xs text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-300">
+        <div class="flex items-center justify-between gap-2">
+          <strong>{{ t('nodes.installFailed') }}: {{ installError.version }}</strong>
+          <el-button link type="danger" size="small" @click="install(installError!.version)">{{ t('nodes.retryInstall') }}</el-button>
+        </div>
+        <pre class="mt-1 max-h-28 overflow-auto whitespace-pre-wrap break-words font-mono text-[10px]">{{ installError.detail }}</pre>
+      </div>
 
       <div
         class="p-2 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 flex justify-between">

@@ -6,10 +6,18 @@ import type { GitFileStatus, Project } from '../../types';
 import { api } from '../../api';
 import { useGitStore } from '../../stores/git';
 import { useProjectStore } from '../../stores/project';
+import { useSettingsStore } from '../../stores/settings';
 import { useWorkspaceEditorStore } from '../../stores/workspaceEditor';
 import { useProjectExternalActions } from '../../composables/useProjectExternalActions';
 import { fileKind } from '../../utils/fileTypes';
 import { clampContextMenuPosition } from '../../utils/contextMenuPosition';
+import {
+  clampWorkspaceExplorerWidth,
+  persistWorkspaceExplorerWidth,
+  readWorkspaceExplorerWidth,
+  WORKSPACE_EXPLORER_MAX_WIDTH,
+  WORKSPACE_EXPLORER_MIN_WIDTH,
+} from '../../utils/workspaceExplorerLayout';
 import { joinAbsolutePath, joinWorkspacePath, normalizeWorkspaceRelativePath, parentWorkspacePath } from '../../utils/workspacePath';
 import { cleanupRemovedExplorerProjects, setExplorerExpanded } from '../../utils/workspaceExplorerState';
 import ProjectExplorerNode, { type ExplorerContextPayload, type ExplorerProjectAction } from './ProjectExplorerNode.vue';
@@ -26,6 +34,7 @@ const emit = defineEmits<{
 }>();
 
 const projectStore = useProjectStore();
+const settingsStore = useSettingsStore();
 const editorStore = useWorkspaceEditorStore();
 const gitStore = useGitStore();
 const { t } = useI18n();
@@ -39,9 +48,7 @@ const contextMenuRef = ref<HTMLElement | null>(null);
 const contextMenu = ref<{ x: number; y: number; payload: ExplorerContextPayload } | null>(null);
 const contextMenuStyle = ref({ left: '0px', top: '0px' });
 const actionProject = ref<Project | null>(null);
-const EXPLORER_MIN_WIDTH = 240;
-const EXPLORER_MAX_WIDTH = 520;
-const explorerWidth = ref(320);
+const explorerWidth = ref(readWorkspaceExplorerWidth(settingsStore.settings));
 const resizingExplorer = ref(false);
 const explorerResizeStartX = ref(0);
 const explorerResizeStartWidth = ref(explorerWidth.value);
@@ -81,7 +88,11 @@ function expandTargetAncestors(projectId: string | null): void {
 }
 
 function clampExplorerWidth(width: number): number {
-  return Math.min(EXPLORER_MAX_WIDTH, Math.max(EXPLORER_MIN_WIDTH, width));
+  return clampWorkspaceExplorerWidth(width);
+}
+
+function persistExplorerWidth(): void {
+  persistWorkspaceExplorerWidth(settingsStore.settings, explorerWidth.value);
 }
 
 function resizeExplorer(event: PointerEvent): void {
@@ -89,14 +100,24 @@ function resizeExplorer(event: PointerEvent): void {
   explorerWidth.value = clampExplorerWidth(explorerResizeStartWidth.value + event.clientX - explorerResizeStartX.value);
 }
 
-function stopExplorerResize(): void {
+function finishExplorerResize(shouldPersist: boolean): void {
   if (!resizingExplorer.value) return;
   document.removeEventListener('pointermove', resizeExplorer, true);
-  document.removeEventListener('pointerup', stopExplorerResize, true);
-  document.removeEventListener('pointercancel', stopExplorerResize, true);
+  document.removeEventListener('pointerup', finishExplorerResizeOnPointerUp, true);
+  document.removeEventListener('pointercancel', finishExplorerResizeOnPointerCancel, true);
+  if (!shouldPersist) explorerWidth.value = explorerResizeStartWidth.value;
+  if (shouldPersist) persistExplorerWidth();
   document.body.style.cursor = previousBodyCursor;
   document.body.style.userSelect = previousBodyUserSelect;
   resizingExplorer.value = false;
+}
+
+function finishExplorerResizeOnPointerUp(): void {
+  finishExplorerResize(true);
+}
+
+function finishExplorerResizeOnPointerCancel(): void {
+  finishExplorerResize(false);
 }
 
 function startExplorerResize(event: PointerEvent): void {
@@ -110,26 +131,32 @@ function startExplorerResize(event: PointerEvent): void {
   document.body.style.userSelect = 'none';
   resizingExplorer.value = true;
   document.addEventListener('pointermove', resizeExplorer, true);
-  document.addEventListener('pointerup', stopExplorerResize, true);
-  document.addEventListener('pointercancel', stopExplorerResize, true);
+  document.addEventListener('pointerup', finishExplorerResizeOnPointerUp, true);
+  document.addEventListener('pointercancel', finishExplorerResizeOnPointerCancel, true);
 }
 
 function handleExplorerResizeKeydown(event: KeyboardEvent): void {
   const step = event.shiftKey ? 40 : 16;
+  let nextWidth: number | null = null;
   if (event.key === 'ArrowLeft') {
-    explorerWidth.value = clampExplorerWidth(explorerWidth.value - step);
-    event.preventDefault();
+    nextWidth = explorerWidth.value - step;
   } else if (event.key === 'ArrowRight') {
-    explorerWidth.value = clampExplorerWidth(explorerWidth.value + step);
-    event.preventDefault();
+    nextWidth = explorerWidth.value + step;
   } else if (event.key === 'Home') {
-    explorerWidth.value = EXPLORER_MIN_WIDTH;
-    event.preventDefault();
+    nextWidth = WORKSPACE_EXPLORER_MIN_WIDTH;
   } else if (event.key === 'End') {
-    explorerWidth.value = EXPLORER_MAX_WIDTH;
+    nextWidth = WORKSPACE_EXPLORER_MAX_WIDTH;
+  }
+  if (nextWidth !== null) {
+    explorerWidth.value = clampExplorerWidth(nextWidth);
+    persistExplorerWidth();
     event.preventDefault();
   }
 }
+
+watch(() => settingsStore.settings.workspaceExplorerWidth, value => {
+  if (!resizingExplorer.value) explorerWidth.value = readWorkspaceExplorerWidth({ workspaceExplorerWidth: value });
+});
 
 watch(() => props.selectedProjectId, value => expandTargetAncestors(value), { immediate: true });
 watch(() => props.rootId, () => {
@@ -400,7 +427,7 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
-  stopExplorerResize();
+  finishExplorerResize(false);
   document.removeEventListener('mousedown', closeOnDocumentMouseDown, true);
   document.removeEventListener('click', closeContextMenu);
   document.removeEventListener('wheel', closeOnViewportChange, true);
@@ -452,8 +479,8 @@ onUnmounted(() => {
       aria-label="调整项目浏览器宽度"
       aria-orientation="vertical"
       :aria-valuenow="explorerWidth"
-      aria-valuemin="240"
-      aria-valuemax="520"
+      :aria-valuemin="WORKSPACE_EXPLORER_MIN_WIDTH"
+      :aria-valuemax="WORKSPACE_EXPLORER_MAX_WIDTH"
       tabindex="0"
       @pointerdown="startExplorerResize"
       @keydown="handleExplorerResizeKeydown"

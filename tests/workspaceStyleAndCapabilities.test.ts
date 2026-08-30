@@ -92,6 +92,10 @@ assert(
 );
 
 assert(/:project="workspaceProject"/.test(workspace), '文件和备忘录应使用当前项目实例');
+assert(/files:\s*'关联文件'/.test(read('src/locales/zh.ts')), '中文文件页签应明确为关联文件');
+assert(/files:\s*'Linked Files'/.test(read('src/locales/en.ts')), '英文文件页签应明确为 Linked Files');
+assert(/empty:\s*'暂无关联文件'/.test(read('src/locales/zh.ts')), '中文空状态应使用关联文件语义');
+assert(/empty:\s*'No linked files'/.test(read('src/locales/en.ts')), '英文空状态应使用 linked files 语义');
 assert(/SKIPPED_PREVIEW_LIMIT = 8/.test(calendar), '跳过项目应限制默认展示数量');
 assert(/visibleSkippedProjects/.test(calendar) && /skippedExpanded/.test(calendar), '跳过项目应支持展开和收起');
 assert(/scanFrontendEnvForProject\(newProject\.id\)/.test(projectStore), '新增子项目后应扫描环境配置');

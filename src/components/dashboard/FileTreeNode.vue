@@ -162,7 +162,6 @@ onMounted(() => {
     <div
       class="explorer-row explorer-file-row"
       :class="{ 'is-selected': selected, 'is-directory': entry.isDirectory }"
-      :style="{ paddingLeft: `${10 + depth * 16}px` }"
       @click="select"
       @dblclick="open"
       @contextmenu.prevent="emit('contextMenu', $event, { kind: 'file', project, relativePath, name: entry.name, isDirectory: entry.isDirectory })"
@@ -184,7 +183,7 @@ onMounted(() => {
       <span v-if="status" class="explorer-git-status" :class="`status-${status.status}`">{{ status.status === 'modified' ? 'M' : status.status === 'added' ? 'A' : status.status === 'deleted' ? 'D' : status.status === 'untracked' ? 'U' : status.status === 'conflicted' ? 'C' : status.status === 'copied' ? 'C' : 'R' }}</span>
     </div>
     <div v-if="entry.isDirectory && expanded" class="explorer-children">
-      <div v-if="loading" class="explorer-loading" :style="{ paddingLeft: `${28 + depth * 16}px` }">加载中…</div>
+      <div v-if="loading" class="explorer-loading">加载中…</div>
       <FileTreeNode
         v-for="child in visibleChildren"
         :key="`${project.id}:${joinWorkspacePath(relativePath, child.name)}`"
@@ -218,6 +217,7 @@ onMounted(() => {
   align-items: center;
   gap: 5px;
   min-height: 26px;
+  padding-left: 4px;
   padding-right: 8px;
   color: var(--app-text-secondary);
   font-size: 11px;
@@ -285,8 +285,8 @@ onMounted(() => {
   font-size: 10px;
 }
 .explorer-children {
-  margin-left: 12px;
-  padding-left: 5px;
-  border-left: 1px solid var(--app-border);
+  margin-left: 14px;
+  padding-left: 0;
+  border-left: 1px solid color-mix(in srgb, var(--app-text-muted) 26%, transparent);
 }
 </style>

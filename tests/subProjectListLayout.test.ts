@@ -28,8 +28,15 @@ assert(
 );
 
 assert(
-  /class="workspace-project-explorer[^\"]*w-80/.test(explorer),
-  'Project Explorer 左栏应保持 w-80 宽度，减少名称和路径截断',
+  /:style="\{ width: `\$\{explorerWidth\}px` \}"/.test(explorer),
+  'Project Explorer 左栏应使用响应式像素宽度',
+);
+
+assert(
+  explorer.includes('workspaceExplorerWidth')
+  && explorer.includes('WORKSPACE_EXPLORER_MIN_WIDTH')
+  && explorer.includes('WORKSPACE_EXPLORER_MAX_WIDTH'),
+  'Project Explorer 宽度应接入设置并保持 240~520 的边界',
 );
 
 assert(

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,9 +13,22 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 const NODE_DIST_HOST: &str = "https://nodejs.org";
 const VERSION_RE: &str = r"^v?\d+\.\d+\.\d+$";
+const FS_RETRY_BACKOFF_MS: &[u64] = &[0, 80, 160, 320, 640, 1000];
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NodeArchiveKind {
+    Zip,
+    TarGz,
+}
+
+#[derive(Debug, Clone)]
+struct NodeArtifact {
+    file_name: String,
+    kind: NodeArchiveKind,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -140,8 +153,16 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
-fn current_artifact(version: &str) -> Result<String, String> {
-    node_artifact_name(version, std::env::consts::OS, std::env::consts::ARCH)
+fn current_artifact(version: &str) -> Result<NodeArtifact, String> {
+    let file_name = node_artifact_name(version, std::env::consts::OS, std::env::consts::ARCH)?;
+    let kind = if file_name.ends_with(".zip") {
+        NodeArchiveKind::Zip
+    } else if file_name.ends_with(".tar.gz") || file_name.ends_with(".tgz") {
+        NodeArchiveKind::TarGz
+    } else {
+        return Err(format!("Unsupported Node archive: {file_name}"));
+    };
+    Ok(NodeArtifact { file_name, kind })
 }
 
 fn managed_root(app: &AppHandle) -> Result<PathBuf, String> {
@@ -183,11 +204,11 @@ pub fn node_executable(root: &Path) -> Option<PathBuf> {
 
 pub fn runtime_status(root: &Path) -> &'static str {
     match node_executable(root) {
-        Some(exe) => {
+        Some(_exe) => {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                if let Ok(meta) = fs::metadata(&exe) {
+                if let Ok(meta) = fs::metadata(_exe) {
                     if meta.permissions().mode() & 0o111 == 0 {
                         return "broken";
                     }
@@ -236,9 +257,117 @@ fn validate_entry_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+enum FsTarget<'a> {
+    Path(&'a Path),
+    Rename { from: &'a Path, to: &'a Path },
+}
+
+fn format_fs_error(phase: &str, operation: &str, target: FsTarget<'_>, error: &io::Error) -> String {
+    let raw_os_error = error
+        .raw_os_error()
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "none".to_string());
+    let mut message = format!(
+        "Node install failed\nphase: {phase}\noperation: {operation}"
+    );
+    match target {
+        FsTarget::Path(path) => message.push_str(&format!("\npath: {}", path.display())),
+        FsTarget::Rename { from, to } => message.push_str(&format!(
+            "\nfrom: {}\nto: {}",
+            from.display(),
+            to.display()
+        )),
+    }
+    message.push_str(&format!("\nerror: {error}\nraw_os_error: {raw_os_error}"));
+    message
+}
+
+fn fs_error(phase: &str, operation: &str, path: &Path, error: &io::Error) -> String {
+    format_fs_error(phase, operation, FsTarget::Path(path), error)
+}
+
+fn is_transient_fs_error(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::PermissionDenied || error.raw_os_error() == Some(5)
+}
+
+fn retry_fs_operation_with_sleep<T, F, S>(
+    phase: &str,
+    operation: &str,
+    target: FsTarget<'_>,
+    mut operation_fn: F,
+    mut sleep: S,
+) -> Result<T, String>
+where
+    F: FnMut() -> io::Result<T>,
+    S: FnMut(Duration),
+{
+    for (attempt, delay_ms) in FS_RETRY_BACKOFF_MS.iter().enumerate() {
+        if *delay_ms > 0 {
+            sleep(Duration::from_millis(*delay_ms));
+        }
+        match operation_fn() {
+            Ok(value) => return Ok(value),
+            Err(error) if is_transient_fs_error(&error) && attempt + 1 < FS_RETRY_BACKOFF_MS.len() => {}
+            Err(error) => return Err(format_fs_error(phase, operation, target, &error)),
+        }
+    }
+    unreachable!("filesystem retry schedule must contain at least one attempt")
+}
+
+fn retry_fs_operation<T, F>(
+    phase: &str,
+    operation: &str,
+    target: FsTarget<'_>,
+    operation_fn: F,
+) -> Result<T, String>
+where
+    F: FnMut() -> io::Result<T>,
+{
+    retry_fs_operation_with_sleep(phase, operation, target, operation_fn, std::thread::sleep)
+}
+
+fn rename_with_retry(phase: &str, operation: &str, from: &Path, to: &Path) -> Result<(), String> {
+    retry_fs_operation(
+        phase,
+        operation,
+        FsTarget::Rename { from, to },
+        || fs::rename(from, to),
+    )
+}
+
+fn remove_file_with_retry(phase: &str, operation: &str, path: &Path) -> Result<(), String> {
+    retry_fs_operation(phase, operation, FsTarget::Path(path), || match fs::remove_file(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        result => result,
+    })
+}
+
+fn remove_dir_all_with_retry(phase: &str, operation: &str, path: &Path) -> Result<(), String> {
+    retry_fs_operation(phase, operation, FsTarget::Path(path), || match fs::remove_dir_all(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        result => result,
+    })
+}
+
+fn remove_runtime_path_with_retry(phase: &str, operation: &str, path: &Path) -> Result<(), String> {
+    if path.is_dir() {
+        remove_dir_all_with_retry(phase, operation, path)
+    } else {
+        remove_file_with_retry(phase, operation, path)
+    }
+}
+
+fn runtime_error(phase: &str, operation: &str, path: &Path, detail: &str) -> String {
+    format!(
+        "Node install failed\nphase: {phase}\noperation: {operation}\npath: {}\nerror: {detail}",
+        path.display()
+    )
+}
+
 fn hoist_single_directory(dir: &Path) -> Result<(), String> {
     let entries: Vec<_> = fs::read_dir(dir)
-        .map_err(|e| e.to_string())?
+        .map_err(|error| fs_error("extracting", "read extracted runtime", dir, &error))?
         .filter_map(|entry| entry.ok())
         .collect();
     if entries.len() != 1 {
@@ -250,18 +379,22 @@ fn hoist_single_directory(dir: &Path) -> Result<(), String> {
     }
     let inner = only.path();
     let staging = dir.join(".hoist-staging");
-    fs::rename(&inner, &staging).map_err(|e| e.to_string())?;
-    for entry in fs::read_dir(&staging).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
+    rename_with_retry("extracting", "prepare extracted runtime", &inner, &staging)?;
+    for entry in fs::read_dir(&staging)
+        .map_err(|error| fs_error("extracting", "read extracted runtime", &staging, &error))?
+    {
+        let entry = entry.map_err(|error| fs_error("extracting", "read extracted entry", &staging, &error))?;
         let name = entry.file_name();
-        fs::rename(entry.path(), dir.join(name)).map_err(|e| e.to_string())?;
+        let target = dir.join(name);
+        rename_with_retry("extracting", "hoist extracted runtime entry", &entry.path(), &target)?;
     }
-    let _ = fs::remove_dir_all(staging);
+    remove_dir_all_with_retry("extracting", "remove hoist staging directory", &staging)?;
     Ok(())
 }
 
 fn extract_zip(archive_path: &Path, dest: &Path) -> Result<(), String> {
-    let file = File::open(archive_path).map_err(|e| e.to_string())?;
+    let file = File::open(archive_path)
+        .map_err(|error| fs_error("extracting", "open downloaded archive", archive_path, &error))?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
@@ -275,20 +408,26 @@ fn extract_zip(archive_path: &Path, dest: &Path) -> Result<(), String> {
             return Err(format!("Archive entry escapes runtime root: {name}"));
         }
         if entry.is_dir() {
-            fs::create_dir_all(&out_path).map_err(|e| e.to_string())?;
+            fs::create_dir_all(&out_path)
+                .map_err(|error| fs_error("extracting", "create archive directory", &out_path, &error))?;
             continue;
         }
         if let Some(parent) = out_path.parent() {
-            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            fs::create_dir_all(parent).map_err(|error| {
+                fs_error("extracting", "create archive parent directory", parent, &error)
+            })?;
         }
-        let mut outfile = File::create(&out_path).map_err(|e| e.to_string())?;
-        io::copy(&mut entry, &mut outfile).map_err(|e| e.to_string())?;
+        let mut outfile = File::create(&out_path)
+            .map_err(|error| fs_error("extracting", "create extracted file", &out_path, &error))?;
+        io::copy(&mut entry, &mut outfile)
+            .map_err(|error| fs_error("extracting", "write extracted file", &out_path, &error))?;
     }
     Ok(())
 }
 
 fn extract_tar_gz(archive_path: &Path, dest: &Path) -> Result<(), String> {
-    let file = File::open(archive_path).map_err(|e| e.to_string())?;
+    let file = File::open(archive_path)
+        .map_err(|error| fs_error("extracting", "open downloaded archive", archive_path, &error))?;
     let decoder = flate2::read::GzDecoder::new(file);
     let mut archive = tar::Archive::new(decoder);
     for entry in archive.entries().map_err(|e| e.to_string())? {
@@ -316,10 +455,18 @@ fn extract_tar_gz(archive_path: &Path, dest: &Path) -> Result<(), String> {
                 #[cfg(unix)]
                 {
                     if let Some(parent) = out_path.parent() {
-                        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                        fs::create_dir_all(parent).map_err(|error| {
+                            fs_error("extracting", "create archive link parent directory", parent, &error)
+                        })?;
                     }
-                    let _ = fs::remove_file(&out_path);
-                    std::os::unix::fs::symlink(target.as_ref(), &out_path).map_err(|e| e.to_string())?;
+                    remove_file_with_retry(
+                        "extracting",
+                        "replace archive link",
+                        &out_path,
+                    )?;
+                    std::os::unix::fs::symlink(target.as_ref(), &out_path).map_err(|error| {
+                        fs_error("extracting", "create archive link", &out_path, &error)
+                    })?;
                 }
                 #[cfg(not(unix))]
                 {
@@ -327,25 +474,21 @@ fn extract_tar_gz(archive_path: &Path, dest: &Path) -> Result<(), String> {
                 }
             }
             _ => {
-                entry.unpack_in(dest).map_err(|e| e.to_string())?;
+                entry
+                    .unpack_in(dest)
+                    .map_err(|error| fs_error("extracting", "write extracted archive entry", dest, &error))?;
             }
         }
     }
     Ok(())
 }
 
-fn extract_archive(archive_path: &Path, dest: &Path) -> Result<(), String> {
-    fs::create_dir_all(dest).map_err(|e| e.to_string())?;
-    let name = archive_path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or_default();
-    if name.ends_with(".zip") {
-        extract_zip(archive_path, dest)?;
-    } else if name.ends_with(".tar.gz") || name.ends_with(".tgz") {
-        extract_tar_gz(archive_path, dest)?;
-    } else {
-        return Err(format!("Unsupported archive: {name}"));
+fn extract_archive(archive_path: &Path, kind: NodeArchiveKind, dest: &Path) -> Result<(), String> {
+    fs::create_dir_all(dest)
+        .map_err(|error| fs_error("extracting", "create runtime staging directory", dest, &error))?;
+    match kind {
+        NodeArchiveKind::Zip => extract_zip(archive_path, dest)?,
+        NodeArchiveKind::TarGz => extract_tar_gz(archive_path, dest)?,
     }
     hoist_single_directory(dest)
 }
@@ -355,7 +498,12 @@ fn checksum_matches(expected: &str, actual: &str) -> bool {
 }
 
 fn promote_downloaded_archive(part_path: &Path, archive_path: &Path) -> Result<(), String> {
-    fs::rename(part_path, archive_path).map_err(|error| format!("Failed to finalize archive: {error}"))
+    rename_with_retry(
+        "archive_promotion",
+        "promote downloaded archive",
+        part_path,
+        archive_path,
+    )
 }
 
 fn sync_and_close_download(file: File) -> Result<(), String> {
@@ -365,10 +513,73 @@ fn sync_and_close_download(file: File) -> Result<(), String> {
     Ok(())
 }
 
+fn cleanup_install_temp_with<FFile, FDir, SSleep>(
+    phase: &str,
+    part_path: &Path,
+    archive_path: &Path,
+    extract_dir: &Path,
+    mut remove_file: FFile,
+    mut remove_dir: FDir,
+    mut sleep: SSleep,
+) -> Vec<String>
+where
+    FFile: FnMut(&Path) -> io::Result<()>,
+    FDir: FnMut(&Path) -> io::Result<()>,
+    SSleep: FnMut(Duration),
+{
+    let mut warnings = Vec::new();
+    let file_targets = [
+        ("remove downloaded archive part", part_path),
+        ("remove downloaded archive", archive_path),
+    ];
+    for (operation, path) in file_targets {
+        if let Err(error) = retry_fs_operation_with_sleep(
+            phase,
+            operation,
+            FsTarget::Path(path),
+            || match remove_file(path) {
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+                result => result,
+            },
+            &mut sleep,
+        ) {
+            warnings.push(error);
+        }
+    }
+    if let Err(error) = retry_fs_operation_with_sleep(
+        phase,
+        "remove runtime staging directory",
+        FsTarget::Path(extract_dir),
+        || match remove_dir(extract_dir) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            result => result,
+        },
+        &mut sleep,
+    ) {
+        warnings.push(error);
+    }
+    warnings
+}
+
+fn cleanup_install_temp_with_warnings(
+    phase: &str,
+    part_path: &Path,
+    archive_path: &Path,
+    extract_dir: &Path,
+) -> Vec<String> {
+    cleanup_install_temp_with(
+        phase,
+        part_path,
+        archive_path,
+        extract_dir,
+        |path: &Path| fs::remove_file(path),
+        |path: &Path| fs::remove_dir_all(path),
+        std::thread::sleep,
+    )
+}
+
 fn cleanup_install_temp(part_path: &Path, archive_path: &Path, extract_dir: &Path) {
-    let _ = fs::remove_file(part_path);
-    let _ = fs::remove_file(archive_path);
-    let _ = fs::remove_dir_all(extract_dir);
+    let _ = cleanup_install_temp_with_warnings("cleanup", part_path, archive_path, extract_dir);
 }
 
 fn run_node_version(exe: &Path) -> Result<String, String> {
@@ -403,7 +614,12 @@ fn emit_progress(app: &AppHandle, progress: &NodeInstallProgress) {
 }
 
 pub fn is_stale_runtime_temp(name: &str, busy_versions: &HashSet<String>) -> bool {
-    let is_temp = name.ends_with(".part") || name.ends_with(".tmp") || name.starts_with("extract-");
+    let is_temp = name.ends_with(".part")
+        || name.ends_with(".tmp")
+        || name.ends_with(".zip")
+        || name.ends_with(".tar.gz")
+        || name.ends_with(".tgz")
+        || name.starts_with("extract-");
     if !is_temp {
         return false;
     }
@@ -421,9 +637,9 @@ fn cleanup_stale(root: &Path, busy_versions: &HashSet<String>) {
             let path = entry.path();
             if is_stale_runtime_temp(name.as_ref(), busy_versions) {
                 let _ = if path.is_dir() {
-                    fs::remove_dir_all(&path)
+                    remove_dir_all_with_retry("cleanup_stale", "remove stale runtime directory", &path)
                 } else {
-                    fs::remove_file(&path)
+                    remove_file_with_retry("cleanup_stale", "remove stale runtime file", &path)
                 };
             }
         }
@@ -533,12 +749,26 @@ pub async fn install_managed_node(
     let operation_id = operation_id.unwrap_or_else(|| format!("install-{version}"));
     lock_version(&state, &version)?;
     let cancel = Arc::new(AtomicBool::new(false));
-    {
-        let mut cancels = state.cancels.lock().map_err(|e| e.to_string())?;
+    if let Err(error) = state.cancels.lock().map(|mut cancels| {
         cancels.insert(operation_id.clone(), cancel.clone());
+    }) {
+        unlock_version(&state, &version);
+        return Err(error.to_string());
     }
 
-    let result = install_managed_node_inner(&app, &version, &operation_id, cancel.clone()).await;
+    let busy_versions = state
+        .installing
+        .lock()
+        .map(|installing| installing.clone())
+        .unwrap_or_else(|_| HashSet::from([version.clone()]));
+    let result = install_managed_node_inner(
+        &app,
+        &version,
+        &operation_id,
+        cancel.clone(),
+        &busy_versions,
+    )
+    .await;
 
     {
         if let Ok(mut cancels) = state.cancels.lock() {
@@ -549,15 +779,70 @@ pub async fn install_managed_node(
     result
 }
 
+fn finalize_runtime(staging_dir: &Path, final_dir: &Path) -> Result<(), String> {
+    if final_dir.exists() {
+        if runtime_status(final_dir) == "available" {
+            return Ok(());
+        }
+        remove_runtime_path_with_retry(
+            "replace_broken_runtime",
+            "remove broken managed runtime",
+            final_dir,
+        )?;
+    }
+    rename_with_retry(
+        "finalize",
+        "promote runtime staging directory",
+        staging_dir,
+        final_dir,
+    )
+}
+
+fn validate_final_runtime(final_dir: &Path, expected_version: &str) -> Result<(), String> {
+    let exe = node_executable(final_dir).ok_or_else(|| {
+        runtime_error(
+            "validating",
+            "locate finalized node executable",
+            final_dir,
+            "finalized runtime is missing node executable",
+        )
+    })?;
+    match run_node_version(&exe) {
+        Ok(actual_version) if actual_version == expected_version => Ok(()),
+        Ok(actual_version) => Err(runtime_error(
+            "validating",
+            "run node -v",
+            &exe,
+            &format!(
+                "node -v mismatch: expected {expected_version}, got {actual_version}"
+            ),
+        )),
+        Err(error) => Err(runtime_error("validating", "run node -v", &exe, &error)),
+    }
+}
+
 async fn install_managed_node_inner(
     app: &AppHandle,
     version: &str,
     operation_id: &str,
     cancel: Arc<AtomicBool>,
+    busy_versions: &HashSet<String>,
 ) -> Result<String, String> {
+    emit_progress(
+        app,
+        &NodeInstallProgress {
+            operation_id: operation_id.to_string(),
+            version: version.to_string(),
+            phase: "preparing".to_string(),
+            downloaded_bytes: None,
+            total_bytes: None,
+            percent: None,
+        },
+    );
     let root = managed_root(app)?;
-    fs::create_dir_all(&root).map_err(|e| e.to_string())?;
-    cleanup_stale(&root, &HashSet::from([version.to_string()]));
+    fs::create_dir_all(&root)
+        .map_err(|error| fs_error("preparing", "create managed runtime directory", &root, &error))?;
+    cleanup_stale(&root, busy_versions);
 
     let final_dir = version_dir(&root, version);
     if final_dir.exists() && runtime_status(&final_dir) == "available" {
@@ -576,29 +861,29 @@ async fn install_managed_node_inner(
     }
 
     let artifact = current_artifact(version)?;
-    let part_path = root.join(format!("{artifact}.part"));
-    let archive_path = root.join(&artifact);
+    let part_path = root.join(format!("{}.part", artifact.file_name));
+    let archive_path = root.join(&artifact.file_name);
     let extract_dir = root.join(format!("extract-{version}"));
-    cleanup_install_temp(&part_path, &archive_path, &extract_dir);
+    let prepare_cleanup_warnings = cleanup_install_temp_with_warnings(
+        "preparing",
+        &part_path,
+        &archive_path,
+        &extract_dir,
+    );
+    if !prepare_cleanup_warnings.is_empty() {
+        return Err(format!(
+            "Node install failed\nphase: preparing\noperation: clear previous temporary files\npath: {}\nerror: {}",
+            root.display(),
+            prepare_cleanup_warnings.join("\n")
+        ));
+    }
 
     let dist_base = format!("{NODE_DIST_HOST}/dist/{version}");
     let shasum_url = format!("{dist_base}/SHASUMS256.txt");
-    let artifact_url = format!("{dist_base}/{artifact}");
+    let artifact_url = format!("{dist_base}/{}", artifact.file_name);
     if !artifact_url.starts_with(NODE_DIST_HOST) || !shasum_url.starts_with(NODE_DIST_HOST) {
         return Err("Refusing to download from non-official host".to_string());
     }
-
-    emit_progress(
-        app,
-        &NodeInstallProgress {
-            operation_id: operation_id.to_string(),
-            version: version.to_string(),
-            phase: "resolving".to_string(),
-            downloaded_bytes: None,
-            total_bytes: None,
-            percent: None,
-        },
-    );
 
     let client = reqwest::Client::builder()
         .use_rustls_tls()
@@ -618,9 +903,9 @@ async fn install_managed_node_inner(
         .map_err(|e| format!("Failed to read checksums: {e}"))?;
     let checksums = parse_shasums256(&shasum_text);
     let expected = checksums
-        .get(&artifact)
+        .get(&artifact.file_name)
         .cloned()
-        .ok_or_else(|| format!("Checksum missing for {artifact}"))?;
+        .ok_or_else(|| format!("Checksum missing for {}", artifact.file_name))?;
 
     emit_progress(
         app,
@@ -643,7 +928,7 @@ async fn install_managed_node_inner(
     };
     if response.status().as_u16() == 404 {
         cleanup_install_temp(&part_path, &archive_path, &extract_dir);
-        return Err(format!("Node artifact not found: {artifact}"));
+        return Err(format!("Node artifact not found: {}", artifact.file_name));
     }
     if let Err(error) = response.error_for_status_ref() {
         cleanup_install_temp(&part_path, &archive_path, &extract_dir);
@@ -654,7 +939,7 @@ async fn install_managed_node_inner(
         Ok(file) => file,
         Err(error) => {
             cleanup_install_temp(&part_path, &archive_path, &extract_dir);
-            return Err(error.to_string());
+            return Err(fs_error("downloading", "create archive part", &part_path, &error));
         }
     };
     let mut hasher = Sha256::new();
@@ -675,7 +960,7 @@ async fn install_managed_node_inner(
         };
         if let Err(error) = file.write_all(&chunk) {
             cleanup_install_temp(&part_path, &archive_path, &extract_dir);
-            return Err(error.to_string());
+            return Err(fs_error("downloading", "write archive part", &part_path, &error));
         }
         hasher.update(&chunk);
         downloaded += chunk.len() as u64;
@@ -697,11 +982,14 @@ async fn install_managed_node_inner(
     }
     if let Err(error) = file.flush() {
         cleanup_install_temp(&part_path, &archive_path, &extract_dir);
-        return Err(error.to_string());
+        return Err(fs_error("downloading", "flush archive part", &part_path, &error));
     }
     if let Err(error) = sync_and_close_download(file) {
         cleanup_install_temp(&part_path, &archive_path, &extract_dir);
-        return Err(error);
+        return Err(format!(
+            "Node install failed\nphase: downloading\noperation: sync and close archive part\npath: {}\nerror: {error}",
+            part_path.display()
+        ));
     }
 
     emit_progress(
@@ -723,12 +1011,12 @@ async fn install_managed_node_inner(
         .collect::<String>();
     if !checksum_matches(&expected, &actual) {
         cleanup_install_temp(&part_path, &archive_path, &extract_dir);
-        return Err("Checksum mismatch".to_string());
-    }
-
-    if let Err(error) = promote_downloaded_archive(&part_path, &archive_path) {
-        cleanup_install_temp(&part_path, &archive_path, &extract_dir);
-        return Err(error);
+        return Err(runtime_error(
+            "verifying",
+            "verify SHA-256 checksum",
+            &part_path,
+            "checksum mismatch",
+        ));
     }
 
     emit_progress(
@@ -743,13 +1031,39 @@ async fn install_managed_node_inner(
         },
     );
 
-    if let Err(error) = extract_archive(&archive_path, &extract_dir) {
+    if let Err(error) = extract_archive(&part_path, artifact.kind, &extract_dir) {
         cleanup_install_temp(&part_path, &archive_path, &extract_dir);
         return Err(error);
     }
-    if let Err(error) = fs::remove_file(&archive_path) {
+    if node_executable(&extract_dir).is_none() {
         cleanup_install_temp(&part_path, &archive_path, &extract_dir);
-        return Err(error.to_string());
+        return Err(runtime_error(
+            "extracting",
+            "locate extracted node executable",
+            &extract_dir,
+            "extracted runtime is missing node executable",
+        ));
+    }
+
+    emit_progress(
+        app,
+        &NodeInstallProgress {
+            operation_id: operation_id.to_string(),
+            version: version.to_string(),
+            phase: "finalizing".to_string(),
+            downloaded_bytes: Some(downloaded),
+            total_bytes: total,
+            percent: Some(100),
+        },
+    );
+
+    if cancel.load(Ordering::SeqCst) {
+        cleanup_install_temp(&part_path, &archive_path, &extract_dir);
+        return Err("cancelled".to_string());
+    }
+    if let Err(error) = finalize_runtime(&extract_dir, &final_dir) {
+        cleanup_install_temp(&part_path, &archive_path, &extract_dir);
+        return Err(error);
     }
 
     emit_progress(
@@ -763,32 +1077,39 @@ async fn install_managed_node_inner(
             percent: Some(100),
         },
     );
-
-    let exe = match node_executable(&extract_dir) {
-        Some(exe) => exe,
-        None => {
-            cleanup_install_temp(&part_path, &archive_path, &extract_dir);
-            return Err("Extracted runtime is missing node executable".to_string());
-        }
-    };
-    match run_node_version(&exe) {
-        Ok(actual_version) if actual_version == version => {}
-        Ok(actual_version) => {
-            cleanup_install_temp(&part_path, &archive_path, &extract_dir);
-            return Err(format!("node -v mismatch: expected {version}, got {actual_version}"));
-        }
-        Err(error) => {
-            cleanup_install_temp(&part_path, &archive_path, &extract_dir);
-            return Err(error);
-        }
-    }
-
-    if final_dir.exists() {
-        let _ = fs::remove_dir_all(&final_dir);
-    }
-    if let Err(error) = fs::rename(&extract_dir, &final_dir) {
+    if let Err(error) = validate_final_runtime(&final_dir, version) {
+        let remove_error = remove_runtime_path_with_retry(
+            "validating",
+            "remove invalid finalized runtime",
+            &final_dir,
+        )
+        .err();
         cleanup_install_temp(&part_path, &archive_path, &extract_dir);
-        return Err(error.to_string());
+        return Err(match remove_error {
+            Some(remove_error) => format!("{error}\ncleanup_error: {remove_error}"),
+            None => error,
+        });
+    }
+
+    emit_progress(
+        app,
+        &NodeInstallProgress {
+            operation_id: operation_id.to_string(),
+            version: version.to_string(),
+            phase: "cleanup".to_string(),
+            downloaded_bytes: Some(downloaded),
+            total_bytes: total,
+            percent: Some(100),
+        },
+    );
+    let cleanup_warnings = cleanup_install_temp_with_warnings(
+        "cleanup",
+        &part_path,
+        &archive_path,
+        &extract_dir,
+    );
+    for warning in &cleanup_warnings {
+        eprintln!("Node install cleanup warning: {warning}");
     }
 
     emit_progress(
@@ -820,7 +1141,7 @@ pub async fn uninstall_managed_node(
         if !dir.exists() {
             return Ok(());
         }
-        fs::remove_dir_all(&dir).map_err(|e| e.to_string())
+        remove_runtime_path_with_retry("uninstall", "remove managed runtime", &dir)
     })();
     unlock_version(&state, &version);
     result
@@ -930,6 +1251,129 @@ mod tests {
     }
 
     #[test]
+    fn current_artifact_keeps_archive_kind_separate_from_file_name() {
+        let artifact = current_artifact("v20.11.1").unwrap();
+        #[cfg(target_os = "windows")]
+        {
+            assert_eq!(artifact.file_name, "node-v20.11.1-win-x64.zip");
+            assert_eq!(artifact.kind, NodeArchiveKind::Zip);
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            assert!(artifact.file_name.ends_with(".tar.gz"));
+            assert_eq!(artifact.kind, NodeArchiveKind::TarGz);
+        }
+    }
+
+    #[test]
+    fn transient_permission_denied_retries_then_succeeds() {
+        let temp = tempfile::tempdir().unwrap();
+        let from = temp.path().join("staging");
+        let to = temp.path().join("final");
+        let mut calls = 0;
+        let value = retry_fs_operation_with_sleep(
+            "finalize",
+            "rename staging runtime",
+            FsTarget::Rename { from: &from, to: &to },
+            || {
+                calls += 1;
+                if calls == 1 {
+                    Err(io::Error::from_raw_os_error(5))
+                } else {
+                    Ok("promoted")
+                }
+            },
+            |_| {},
+        )
+        .unwrap();
+
+        assert_eq!(value, "promoted");
+        assert_eq!(calls, 2);
+    }
+
+    #[test]
+    fn exhausted_filesystem_retry_contains_phase_paths_and_raw_error() {
+        let temp = tempfile::tempdir().unwrap();
+        let from = temp.path().join("staging");
+        let to = temp.path().join("final");
+        let error = retry_fs_operation_with_sleep::<(), _, _>(
+            "finalize",
+            "rename staging runtime",
+            FsTarget::Rename { from: &from, to: &to },
+            || Err(io::Error::from_raw_os_error(5)),
+            |_| {},
+        )
+        .unwrap_err();
+
+        assert!(error.contains("phase: finalize"));
+        assert!(error.contains(&format!("from: {}", from.display())));
+        assert!(error.contains(&format!("to: {}", to.display())));
+        assert!(error.contains("raw_os_error: 5"));
+    }
+
+    #[test]
+    fn broken_final_runtime_is_replaced_explicitly() {
+        let temp = tempfile::tempdir().unwrap();
+        let staging = temp.path().join("runtime-staging");
+        let final_dir = temp.path().join("v20.11.1");
+        fs::create_dir_all(&staging).unwrap();
+        fs::create_dir_all(&final_dir).unwrap();
+        #[cfg(target_os = "windows")]
+        File::create(staging.join("node.exe")).unwrap();
+        #[cfg(not(target_os = "windows"))]
+        {
+            let executable = staging.join("node");
+            File::create(&executable).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
+
+        finalize_runtime(&staging, &final_dir).unwrap();
+        assert!(!staging.exists());
+        assert!(final_dir.exists());
+        assert!(node_executable(&final_dir).is_some());
+    }
+
+    #[test]
+    fn post_success_cleanup_failure_is_reported_as_warning_only() {
+        let temp = tempfile::tempdir().unwrap();
+        let part = temp.path().join("archive.part");
+        let archive = temp.path().join("archive.zip");
+        let staging = temp.path().join("runtime-staging");
+        let warnings = cleanup_install_temp_with(
+            "cleanup",
+            &part,
+            &archive,
+            &staging,
+            |path| {
+                if path == part {
+                    Err(io::Error::from_raw_os_error(5))
+                } else {
+                    Ok(())
+                }
+            },
+            |_| Ok(()),
+            |_| {},
+        );
+
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("phase: cleanup"));
+        assert!(warnings[0].contains("archive.part"));
+        assert!(warnings[0].contains("raw_os_error: 5"));
+    }
+
+    #[test]
+    fn finalize_call_precedes_final_validation_call() {
+        let source = include_str!("node_runtime.rs");
+        let finalize = source.find("if let Err(error) = finalize_runtime(&extract_dir").unwrap();
+        let validate = source.find("if let Err(error) = validate_final_runtime(&final_dir").unwrap();
+        assert!(finalize < validate, "final runtime must be validated after promotion");
+    }
+
+    #[test]
     fn shasum_parser_and_checksum_mismatch() {
         let text = "\
 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  node-v20.11.1-win-x64.zip\n\
@@ -982,7 +1426,6 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *node-v20.11.1-
     }
 
     #[test]
-    #[test]
     fn stale_temp_cleanup_skips_busy_version() {
         let busy = HashSet::from(["v20.11.1".to_string()]);
         assert!(is_stale_runtime_temp("node-v22.0.0-win-x64.zip.part", &busy));
@@ -1011,7 +1454,7 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *node-v20.11.1-
     }
 
     #[test]
-    fn zip_part_is_promoted_before_extraction() {
+    fn zip_part_is_extracted_with_explicit_archive_kind() {
         let temp = tempfile::tempdir().unwrap();
         let part_path = temp.path().join("node-v20.11.1-win-x64.zip.part");
         let archive_path = temp.path().join("node-v20.11.1-win-x64.zip");
@@ -1024,12 +1467,12 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *node-v20.11.1-
             zip.finish().unwrap();
         }
         let dest = temp.path().join("extract-v20.11.1");
-        promote_downloaded_archive(&part_path, &archive_path).unwrap();
-        extract_archive(&archive_path, &dest).unwrap();
-        assert!(!part_path.exists());
-        assert!(archive_path.exists());
+        extract_archive(&part_path, NodeArchiveKind::Zip, &dest).unwrap();
+        assert!(part_path.exists());
+        assert!(!archive_path.exists());
         assert!(dest.join("node.exe").exists());
         cleanup_install_temp(&part_path, &archive_path, &dest);
+        assert!(!part_path.exists());
         assert!(!archive_path.exists());
         assert!(!dest.exists());
     }
@@ -1048,7 +1491,7 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *node-v20.11.1-
     }
 
     #[test]
-    fn tar_gz_part_is_promoted_before_extraction() {
+    fn tar_gz_part_is_extracted_with_explicit_archive_kind() {
         let temp = tempfile::tempdir().unwrap();
         let part_path = temp.path().join("node-v20.11.1-linux-x64.tar.gz.part");
         let archive_path = temp.path().join("node-v20.11.1-linux-x64.tar.gz");
@@ -1065,9 +1508,8 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *node-v20.11.1-
             tar.into_inner().unwrap().finish().unwrap();
         }
         let dest = temp.path().join("extract-v20.11.1");
-        promote_downloaded_archive(&part_path, &archive_path).unwrap();
-        extract_archive(&archive_path, &dest).unwrap();
-        assert!(!part_path.exists());
+        extract_archive(&part_path, NodeArchiveKind::TarGz, &dest).unwrap();
+        assert!(part_path.exists());
         assert!(dest.join("bin").join("node").exists());
         cleanup_install_temp(&part_path, &archive_path, &dest);
         assert!(!archive_path.exists());
@@ -1096,7 +1538,7 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *node-v20.11.1-
         let extract_dir = temp.path().join("extract-v20.11.1");
         fs::write(&part_path, b"not a zip").unwrap();
         promote_downloaded_archive(&part_path, &archive_path).unwrap();
-        assert!(extract_archive(&archive_path, &extract_dir).is_err());
+        assert!(extract_archive(&archive_path, NodeArchiveKind::Zip, &extract_dir).is_err());
         cleanup_install_temp(&part_path, &archive_path, &extract_dir);
         assert!(!part_path.exists());
         assert!(!archive_path.exists());
@@ -1111,7 +1553,7 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *node-v20.11.1-
             zip.finish().unwrap();
         }
         promote_downloaded_archive(&part_path, &archive_path).unwrap();
-        extract_archive(&archive_path, &extract_dir).unwrap();
+        extract_archive(&archive_path, NodeArchiveKind::Zip, &extract_dir).unwrap();
         assert!(extract_dir.join("node.exe").exists());
         cleanup_install_temp(&part_path, &archive_path, &extract_dir);
     }
