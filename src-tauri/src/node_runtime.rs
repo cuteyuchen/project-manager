@@ -358,6 +358,13 @@ fn promote_downloaded_archive(part_path: &Path, archive_path: &Path) -> Result<(
     fs::rename(part_path, archive_path).map_err(|error| format!("Failed to finalize archive: {error}"))
 }
 
+fn sync_and_close_download(file: File) -> Result<(), String> {
+    file.sync_all()
+        .map_err(|error| format!("Failed to sync downloaded archive: {error}"))?;
+    drop(file);
+    Ok(())
+}
+
 fn cleanup_install_temp(part_path: &Path, archive_path: &Path, extract_dir: &Path) {
     let _ = fs::remove_file(part_path);
     let _ = fs::remove_file(archive_path);
@@ -692,9 +699,9 @@ async fn install_managed_node_inner(
         cleanup_install_temp(&part_path, &archive_path, &extract_dir);
         return Err(error.to_string());
     }
-    if let Err(error) = file.sync_all() {
+    if let Err(error) = sync_and_close_download(file) {
         cleanup_install_temp(&part_path, &archive_path, &extract_dir);
-        return Err(error.to_string());
+        return Err(error);
     }
 
     emit_progress(
@@ -1025,6 +1032,19 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *node-v20.11.1-
         cleanup_install_temp(&part_path, &archive_path, &dest);
         assert!(!archive_path.exists());
         assert!(!dest.exists());
+    }
+
+    #[test]
+    fn downloaded_archive_writer_is_closed_before_promotion() {
+        let temp = tempfile::tempdir().unwrap();
+        let part_path = temp.path().join("node-v20.11.1-win-x64.zip.part");
+        let archive_path = temp.path().join("node-v20.11.1-win-x64.zip");
+        let mut file = File::create(&part_path).unwrap();
+        file.write_all(b"downloaded").unwrap();
+        sync_and_close_download(file).unwrap();
+        promote_downloaded_archive(&part_path, &archive_path).unwrap();
+        assert!(archive_path.exists());
+        cleanup_install_temp(&part_path, &archive_path, &temp.path().join("extract-v20.11.1"));
     }
 
     #[test]
