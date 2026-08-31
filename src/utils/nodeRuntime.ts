@@ -115,20 +115,22 @@ function findRuntimeForDefault(
   versions: NodeVersion[],
 ): NodeVersion | undefined {
   if (!appDefault) return undefined;
-  if (appDefault.runtimeId) return findRuntimeById(versions, appDefault.runtimeId);
+  if (appDefault.runtimeId) {
+    const exact = findRuntimeById(versions, appDefault.runtimeId);
+    if (exact) return exact;
+  }
 
   const bySource = findVersionByPriority(versions, runtime =>
     runtime.source === appDefault.source && (
       normalizeRuntimePath(runtime.path) === normalizeRuntimePath(appDefault.path)
-      || (Boolean(appDefault.version) && normalizeNodeVersion(runtime.version) === normalizeNodeVersion(appDefault.version))
     ),
   );
   if (bySource) return bySource;
 
-  // Managed runtimeId 不含路径，允许旧数据在 C/D 迁移后按版本恢复。
-  if (appDefault.source === 'managed' && appDefault.version) {
+  // Exact binding 缺失时按版本恢复，但保留 persisted appDefault 不被静默改写。
+  if (appDefault.version) {
     return findVersionByPriority(versions, runtime =>
-      runtime.source === 'managed' && versionMatches(runtime, appDefault.version!),
+      isUsableNodeRuntime(runtime) && versionMatches(runtime, appDefault.version!),
     );
   }
   return undefined;
@@ -137,6 +139,7 @@ function findRuntimeForDefault(
 export function resolveAppDefaultRuntime(
   versions: NodeVersion[],
   appDefault?: AppDefaultNode | null,
+  systemRuntime?: NodeVersion | null,
 ): ResolvedNodeRuntime {
   if (appDefault) {
     const runtime = findRuntimeForDefault(appDefault, versions);
@@ -145,7 +148,9 @@ export function resolveAppDefaultRuntime(
       : { runtime: null, unavailable: true, reason: 'app_default_runtime_unavailable' };
   }
 
-  const system = findVersionByPriority(versions, runtime => runtime.source === 'system');
+  const system = systemRuntime && isUsableNodeRuntime(systemRuntime)
+    ? systemRuntime
+    : findVersionByPriority(versions, runtime => runtime.source === 'system');
   return system && isUsableNodeRuntime(system)
     ? { runtime: system, unavailable: false }
     : { runtime: null, unavailable: true, reason: 'system_node_unavailable' };
@@ -155,16 +160,23 @@ export function resolveProjectRuntime(
   project: Project,
   versions: NodeVersion[],
   appDefault?: AppDefaultNode | null,
+  systemRuntime?: NodeVersion | null,
 ): ResolvedNodeRuntime {
   if (project.nodeRuntimeId) {
     const runtime = findRuntimeById(versions, project.nodeRuntimeId);
-    return runtime && isUsableNodeRuntime(runtime)
-      ? { runtime, unavailable: false }
+    if (runtime && isUsableNodeRuntime(runtime)) return { runtime, unavailable: false };
+    if (!project.nodeVersion) return { runtime: null, unavailable: true, reason: 'project_runtime_unavailable' };
+
+    const fallback = findVersionByPriority(versions, candidate =>
+      isUsableNodeRuntime(candidate) && versionMatches(candidate, project.nodeVersion!),
+    );
+    return fallback
+      ? { runtime: fallback, unavailable: false, reason: 'project_runtime_binding_fallback' }
       : { runtime: null, unavailable: true, reason: 'project_runtime_unavailable' };
   }
 
   if (!project.nodeVersion || shouldUseDefaultNode(project.nodeVersion)) {
-    return resolveAppDefaultRuntime(versions, appDefault);
+    return resolveAppDefaultRuntime(versions, appDefault, systemRuntime);
   }
 
   const runtime = findVersionByPriority(versions, candidate =>
@@ -191,17 +203,19 @@ export function resolveProjectNodePath(
   project: Project,
   versions: NodeVersion[],
   appDefault?: AppDefaultNode | null,
+  systemRuntime?: NodeVersion | null,
 ): string {
-  return resolveProjectRuntime(project, versions, appDefault).runtime?.path || '';
+  return resolveProjectRuntime(project, versions, appDefault, systemRuntime).runtime?.path || '';
 }
 
 export function resolveNodePathFromVersion(
   versionLabel: string | null | undefined,
   versions: NodeVersion[],
   appDefault?: AppDefaultNode | null,
+  systemRuntime?: NodeVersion | null,
 ): string {
   if (!versionLabel || shouldUseDefaultNode(versionLabel)) {
-    return resolveAppDefaultRuntime(versions, appDefault).runtime?.path || '';
+    return resolveAppDefaultRuntime(versions, appDefault, systemRuntime).runtime?.path || '';
   }
   return findVersionByPriority(versions, runtime =>
     isUsableNodeRuntime(runtime) && versionMatches(runtime, versionLabel),
@@ -211,8 +225,9 @@ export function resolveNodePathFromVersion(
 export function resolveAppDefaultNodePath(
   versions: NodeVersion[],
   appDefault?: AppDefaultNode | null,
+  systemRuntime?: NodeVersion | null,
 ): string {
-  return resolveAppDefaultRuntime(versions, appDefault).runtime?.path || '';
+  return resolveAppDefaultRuntime(versions, appDefault, systemRuntime).runtime?.path || '';
 }
 
 export function shouldInjectTerminalNode(project: Project): boolean {

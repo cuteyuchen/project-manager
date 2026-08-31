@@ -68,7 +68,7 @@ export function useProjectExternalActions(projectSource: MaybeRefOrGetter<Projec
 
     await nodeStore.loadRuntimes();
 
-    const initialResolution = resolveProjectRuntime(project, nodeStore.versions, nodeStore.appDefault);
+    const initialResolution = resolveProjectRuntime(project, nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime);
     let nodePath = initialResolution.runtime?.path || '';
 
     if (initialResolution.unavailable && project.nodeRuntimeId) {
@@ -81,7 +81,7 @@ export function useProjectExternalActions(projectSource: MaybeRefOrGetter<Projec
         ElMessage.info(t('project.autoInstallStart', { version }));
         await nodeStore.installManagedNode(version);
         ElMessage.success(t('project.autoInstallSuccess', { version }));
-        nodePath = resolveProjectNodePath(project, nodeStore.versions, nodeStore.appDefault);
+        nodePath = resolveProjectNodePath(project, nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime);
       } catch (installError) {
         ElMessage.error(`${t('project.autoInstallFailed', { version })}: ${String(installError)}`);
         console.error('Failed to auto-install node version for terminal', installError);
@@ -91,7 +91,7 @@ export function useProjectExternalActions(projectSource: MaybeRefOrGetter<Projec
     if (!nodePath) {
       try {
         const info = await api.scanProject(project.path);
-        nodePath = resolveNodePathFromVersion(projectNodeVersionHint(info), nodeStore.versions, nodeStore.appDefault);
+        nodePath = resolveNodePathFromVersion(projectNodeVersionHint(info), nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime);
         if (nodePath) {
           const runtime = nodeStore.versions.find(item => item.path === nodePath);
           if (runtime) {

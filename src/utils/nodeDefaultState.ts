@@ -46,17 +46,10 @@ export function sortNodeVersions(versions: NodeVersion[]): NodeVersion[] {
 
 export function upsertSystemNodeVersion(
   versions: NodeVersion[],
-  systemNode: Pick<NodeVersion, 'version' | 'path' | 'status'>,
+  _systemNode: Pick<NodeVersion, 'version' | 'path' | 'status'>,
 ): NodeVersion[] {
-  const nextVersions = versions.filter(item => item.source !== 'system');
-  nextVersions.unshift({
-    version: systemNode.version,
-    path: systemNode.path,
-    source: 'system',
-    status: systemNode.status || (systemNode.path && systemNode.path !== 'System Default' ? 'available' : 'broken'),
-  });
-
-  return sortNodeVersions(nextVersions);
+  // System Node is ephemeral detector state, never a registry row.
+  return sortNodeVersions(versions.filter(item => item.source !== 'system'));
 }
 
 export function mergeNodeRuntimes(parts: {
@@ -80,7 +73,6 @@ export function mergeNodeRuntimes(parts: {
     result.push(normalized);
   };
 
-  push(parts.system || null);
   for (const node of parts.managed || []) push(node);
   for (const node of parts.nvm || []) push(node);
   for (const node of parts.custom || []) push({ ...node, source: 'custom' });

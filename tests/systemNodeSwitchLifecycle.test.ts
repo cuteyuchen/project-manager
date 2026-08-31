@@ -10,7 +10,7 @@ const nodeManager = read('src/views/NodeManager.vue');
 assert.match(rust, /pub async fn switch_system_node\(/, 'system switching should yield off the Tauri command thread');
 assert.match(
   rust,
-  /spawn_blocking\(move \|\| switch_system_node_blocking\(app, runtime, options\)\)/,
+  /spawn_blocking\(move \|\|\s*\{\s*switch_system_node_blocking\(app, runtime, options\)\s*\}\s*\)/,
   'blocking registry/process work should run in a blocking worker',
 );
 assert.match(rust, /fn switch_system_node_blocking\(/);

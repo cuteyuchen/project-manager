@@ -377,6 +377,8 @@ export interface NodeVersion {
   runtimeId?: string;
   /** 来源管理器的根目录（例如 NVM_HOME），仅用于展示与快捷操作。 */
   runtimeRoot?: string;
+  /** 解析 junction/reparse point 后的真实 Runtime 根目录。 */
+  canonicalPath?: string;
   version: string;
   path: string;
   source: NodeRuntimeSource;
@@ -384,11 +386,45 @@ export interface NodeVersion {
   isDefault?: boolean;
 }
 
+export type CanonicalNodeRuntimeSource = 'managed' | 'nvm' | 'custom' | 'external';
+
+export interface NodeRuntimeAlias {
+  source: NodeRuntimeSource | 'external';
+  path: string;
+  runtimeId?: string;
+}
+
+/** 一个真实 physical Runtime；junction/symlink 只保留为 aliases。 */
+export interface CanonicalNodeRuntime {
+  canonicalId: string;
+  version: string;
+  preferredSource: CanonicalNodeRuntimeSource;
+  runtimePath: string;
+  executablePath: string;
+  /** 同一 physical Runtime 的所有 Registry 变体，用于精确选择 effective Runtime。 */
+  variants: NodeVersion[];
+  aliases: NodeRuntimeAlias[];
+  runtime: NodeVersion;
+  isSystemCurrent: boolean;
+  isProjectManagerDefault: boolean;
+}
+
+/** Runtime Center 主列表的一行；一个精确版本只对应一个 entry。 */
+export interface NodeVersionEntry {
+  key: string;
+  version: string;
+  runtimes: CanonicalNodeRuntime[];
+  effectiveRuntime: NodeVersion;
+  isSystemCurrent: boolean;
+  isProjectManagerDefault: boolean;
+}
+
 export type SystemNodePathScope = 'user' | 'machine' | 'nvm' | 'unknown';
 
 export interface SystemNodeCandidate {
   path: string;
   version?: string;
+  canonicalPath?: string;
 }
 
 /** Real Node resolution from the current OS environment, never persisted as the source of truth. */
@@ -397,15 +433,18 @@ export interface SystemNodeState {
   version?: string;
   nodePath?: string;
   runtimeId?: string;
-  source?: NodeRuntimeSource | 'unknown';
+  source?: NodeRuntimeSource | 'external' | 'unknown';
   candidates: SystemNodeCandidate[];
   pathScope?: SystemNodePathScope;
   nvmSymlink?: string;
   nvmTargetPath?: string;
+  /** 第一条 where 结果解析后的真实 executable。 */
+  canonicalNodePath?: string;
 }
 
 export interface SystemNodeSwitchOptions {
   elevated?: boolean;
+  /** @deprecated PATH 优先级由 elevated Controller operation 自动处理。 */
   repairPathPriority?: boolean;
 }
 
@@ -423,7 +462,7 @@ export interface SystemNodeSwitchResult {
   previous?: SystemNodeState;
   current?: SystemNodeState;
   conflictingPath?: string;
-  operation?: 'nvm-use' | 'user-path' | 'machine-path';
+  operation?: 'controller' | 'user-path' | 'machine-path';
   errorCode?: string;
   message?: string;
 }

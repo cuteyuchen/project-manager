@@ -122,8 +122,8 @@ export const useProjectHealthStore = defineStore('projectHealth', () => {
             if (!nodeStore.versions.length) {
               await nodeStore.loadRuntimes();
             }
-            const nodePath = resolveProjectNodePath(project, nodeStore.versions, nodeStore.appDefault);
-            const defaultNodePath = resolveAppDefaultNodePath(nodeStore.versions, nodeStore.appDefault);
+            const nodePath = resolveProjectNodePath(project, nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime);
+            const defaultNodePath = resolveAppDefaultNodePath(nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime);
 
             const source = project.packageManagerSource || 'project';
             const pmResult = await api.resolvePackageManager(

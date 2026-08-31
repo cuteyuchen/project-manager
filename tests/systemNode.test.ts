@@ -50,6 +50,8 @@ const custom = runtime('custom', 'v24.20.0', 'E:/custom/v24.20.0');
       pathScope: 'nvm',
       nvmSymlink: 'D:/node',
       nvmTargetPath: 'D:/nvm/v24.20.0',
+      canonicalNodePath: 'D:/nvm/v24.20.0/node.exe',
+      candidates: [{ path: 'D:/node/node.exe', version: 'v24.20.0', canonicalPath: 'D:/nvm/v24.20.0/node.exe' }],
     }),
     [managed, nvm, custom],
   );
@@ -78,7 +80,7 @@ const custom = runtime('custom', 'v24.20.0', 'E:/custom/v24.20.0');
     }),
     [nvm],
   );
-  assert.equal(mapped.source, 'system', 'same version alone must not identify an NVM Runtime');
+  assert.equal(mapped.source, 'external', 'same version alone must not identify an NVM Runtime');
   assert.equal(mapped.runtimeId, undefined);
 }
 

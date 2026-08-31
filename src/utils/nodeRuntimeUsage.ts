@@ -19,12 +19,13 @@ export function getProjectsUsingRuntime(
   runtime: NodeVersion,
   versions: NodeVersion[],
   appDefault?: AppDefaultNode | null,
+  systemRuntime?: NodeVersion | null,
 ): ProjectRuntimeUsage[] {
   const runtimeId = getNodeRuntimeId(runtime);
   return projects
     .filter(project => project.type === 'node')
     .flatMap(project => {
-      const resolved = resolveProjectRuntime(project, versions, appDefault).runtime;
+      const resolved = resolveProjectRuntime(project, versions, appDefault, systemRuntime).runtime;
       if (!resolved || getNodeRuntimeId(resolved) !== runtimeId) return [];
       return [{ project, reason: usageReason(project) }];
     });

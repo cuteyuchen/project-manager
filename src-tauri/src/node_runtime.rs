@@ -40,6 +40,8 @@ pub struct NodeRuntimeInfo {
     pub source: String,
     pub status: String,
     pub runtime_root: Option<String>,
+    #[serde(default)]
+    pub canonical_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -120,7 +122,10 @@ where
 /// 规范化为 `vX.Y.Z`，拒绝 nightly / 路径注入。
 pub fn validate_node_version(raw: &str) -> Result<String, String> {
     let trimmed = raw.trim();
-    if trimmed.is_empty() || trimmed.contains('/') || trimmed.contains('\\') || trimmed.contains("..")
+    if trimmed.is_empty()
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+        || trimmed.contains("..")
     {
         return Err(format!("Invalid Node version: {raw}"));
     }
@@ -226,18 +231,17 @@ fn resolve_managed_runtime_root_from_paths(
             .ok_or_else(|| "Application data directory is unavailable".to_string())?
             .join("runtimes")
             .join("node")),
-        "custom" => Ok(PathBuf::from(
-            setting
-                .custom_path
-                .as_deref()
-                .ok_or_else(|| "Custom Managed Node runtime location is empty".to_string())?,
-        )),
+        "custom" => Ok(PathBuf::from(setting.custom_path.as_deref().ok_or_else(
+            || "Custom Managed Node runtime location is empty".to_string(),
+        )?)),
         "portable" => Ok(executable_dir
             .ok_or_else(|| "Application directory is unavailable".to_string())?
             .join("data")
             .join("runtimes")
             .join("node")),
-        other => Err(format!("Unsupported Managed Node runtime location mode: {other}")),
+        other => Err(format!(
+            "Unsupported Managed Node runtime location mode: {other}"
+        )),
     }
 }
 
@@ -267,7 +271,9 @@ fn normalize_managed_location_setting(
                 custom_path: Some(path.to_string()),
             })
         }
-        other => Err(format!("Unsupported Managed Node runtime location mode: {other}")),
+        other => Err(format!(
+            "Unsupported Managed Node runtime location mode: {other}"
+        )),
     }
 }
 
@@ -277,8 +283,9 @@ fn read_managed_location(app: &AppHandle) -> Result<ManagedRuntimeLocationSettin
         return Ok(ManagedRuntimeLocationSetting::default());
     }
 
-    let data: Value = serde_json::from_str(&content)
-        .map_err(|error| format!("Failed to parse data.json while resolving Node runtime location: {error}"))?;
+    let data: Value = serde_json::from_str(&content).map_err(|error| {
+        format!("Failed to parse data.json while resolving Node runtime location: {error}")
+    })?;
     let Some(raw) = data
         .get("settings")
         .and_then(|settings| settings.get("managedNodeRuntimeLocation"))
@@ -307,11 +314,7 @@ fn resolve_managed_runtime_root_for_setting(
     } else {
         None
     };
-    resolve_managed_runtime_root_from_paths(
-        setting,
-        None,
-        executable_dir.as_deref(),
-    )
+    resolve_managed_runtime_root_from_paths(setting, None, executable_dir.as_deref())
 }
 
 fn resolve_managed_runtime_root(app: &AppHandle) -> Result<PathBuf, String> {
@@ -329,6 +332,16 @@ fn normalized_path_key(path: &Path) -> String {
     {
         value.trim_end_matches('/').to_string()
     }
+}
+
+fn canonicalize_runtime_path(path: &Path) -> Option<String> {
+    fs::canonicalize(path).ok().map(|value| {
+        #[cfg(target_os = "windows")]
+        if let Ok(stripped) = value.strip_prefix(r"\\?\") {
+            return stripped.to_string_lossy().to_string();
+        }
+        value.to_string_lossy().to_string()
+    })
 }
 
 fn paths_equal(left: &Path, right: &Path) -> bool {
@@ -405,12 +418,22 @@ fn writable_probe(path: &Path) -> bool {
 
 fn ensure_writable_directory(path: &Path) -> Result<(), String> {
     if path.exists() && !path.is_dir() {
-        return Err(format!("Managed Node runtime path is not a directory: {}", path.display()));
+        return Err(format!(
+            "Managed Node runtime path is not a directory: {}",
+            path.display()
+        ));
     }
-    fs::create_dir_all(path)
-        .map_err(|error| format!("Failed to create Managed Node runtime directory {}: {error}", path.display()))?;
+    fs::create_dir_all(path).map_err(|error| {
+        format!(
+            "Failed to create Managed Node runtime directory {}: {error}",
+            path.display()
+        )
+    })?;
     if !writable_probe(path) {
-        return Err(format!("Managed Node runtime directory is not writable: {}", path.display()));
+        return Err(format!(
+            "Managed Node runtime directory is not writable: {}",
+            path.display()
+        ));
     }
     Ok(())
 }
@@ -427,7 +450,9 @@ fn runtime_directory_entries(root: &Path) -> Vec<(String, PathBuf)> {
                 return None;
             }
             let version = entry.file_name().to_string_lossy().to_string();
-            validate_node_version(&version).ok().map(|version| (version, path))
+            validate_node_version(&version)
+                .ok()
+                .map(|version| (version, path))
         })
         .collect::<Vec<_>>();
     result.sort_by(|left, right| left.0.cmp(&right.0));
@@ -533,7 +558,8 @@ async fn managed_location_info(
     let root = resolve_managed_runtime_root_for_setting(app, setting)?;
     let portable = portable_root(app)?;
     let setting = setting.clone();
-    run_node_runtime_task(move || managed_location_info_sync(&setting, root, portable, warnings)).await
+    run_node_runtime_task(move || managed_location_info_sync(&setting, root, portable, warnings))
+        .await
 }
 
 fn write_managed_location(
@@ -544,8 +570,9 @@ fn write_managed_location(
     let mut data = if content.trim().is_empty() {
         Value::Object(serde_json::Map::new())
     } else {
-        serde_json::from_str::<Value>(&content)
-            .map_err(|error| format!("Failed to parse data.json before updating Node runtime location: {error}"))?
+        serde_json::from_str::<Value>(&content).map_err(|error| {
+            format!("Failed to parse data.json before updating Node runtime location: {error}")
+        })?
     };
     let object = data
         .as_object_mut()
@@ -655,21 +682,22 @@ enum FsTarget<'a> {
     Rename { from: &'a Path, to: &'a Path },
 }
 
-fn format_fs_error(phase: &str, operation: &str, target: FsTarget<'_>, error: &io::Error) -> String {
+fn format_fs_error(
+    phase: &str,
+    operation: &str,
+    target: FsTarget<'_>,
+    error: &io::Error,
+) -> String {
     let raw_os_error = error
         .raw_os_error()
         .map(|value| value.to_string())
         .unwrap_or_else(|| "none".to_string());
-    let mut message = format!(
-        "Node install failed\nphase: {phase}\noperation: {operation}"
-    );
+    let mut message = format!("Node install failed\nphase: {phase}\noperation: {operation}");
     match target {
         FsTarget::Path(path) => message.push_str(&format!("\npath: {}", path.display())),
-        FsTarget::Rename { from, to } => message.push_str(&format!(
-            "\nfrom: {}\nto: {}",
-            from.display(),
-            to.display()
-        )),
+        FsTarget::Rename { from, to } => {
+            message.push_str(&format!("\nfrom: {}\nto: {}", from.display(), to.display()))
+        }
     }
     message.push_str(&format!("\nerror: {error}\nraw_os_error: {raw_os_error}"));
     message
@@ -700,7 +728,8 @@ where
         }
         match operation_fn() {
             Ok(value) => return Ok(value),
-            Err(error) if is_transient_fs_error(&error) && attempt + 1 < FS_RETRY_BACKOFF_MS.len() => {}
+            Err(error)
+                if is_transient_fs_error(&error) && attempt + 1 < FS_RETRY_BACKOFF_MS.len() => {}
             Err(error) => return Err(format_fs_error(phase, operation, target, &error)),
         }
     }
@@ -720,26 +749,33 @@ where
 }
 
 fn rename_with_retry(phase: &str, operation: &str, from: &Path, to: &Path) -> Result<(), String> {
-    retry_fs_operation(
-        phase,
-        operation,
-        FsTarget::Rename { from, to },
-        || fs::rename(from, to),
-    )
+    retry_fs_operation(phase, operation, FsTarget::Rename { from, to }, || {
+        fs::rename(from, to)
+    })
 }
 
 fn remove_file_with_retry(phase: &str, operation: &str, path: &Path) -> Result<(), String> {
-    retry_fs_operation(phase, operation, FsTarget::Path(path), || match fs::remove_file(path) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        result => result,
-    })
+    retry_fs_operation(
+        phase,
+        operation,
+        FsTarget::Path(path),
+        || match fs::remove_file(path) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            result => result,
+        },
+    )
 }
 
 fn remove_dir_all_with_retry(phase: &str, operation: &str, path: &Path) -> Result<(), String> {
-    retry_fs_operation(phase, operation, FsTarget::Path(path), || match fs::remove_dir_all(path) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        result => result,
-    })
+    retry_fs_operation(
+        phase,
+        operation,
+        FsTarget::Path(path),
+        || match fs::remove_dir_all(path) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            result => result,
+        },
+    )
 }
 
 fn remove_runtime_path_with_retry(phase: &str, operation: &str, path: &Path) -> Result<(), String> {
@@ -775,18 +811,30 @@ fn hoist_single_directory(dir: &Path) -> Result<(), String> {
     for entry in fs::read_dir(&staging)
         .map_err(|error| fs_error("extracting", "read extracted runtime", &staging, &error))?
     {
-        let entry = entry.map_err(|error| fs_error("extracting", "read extracted entry", &staging, &error))?;
+        let entry = entry
+            .map_err(|error| fs_error("extracting", "read extracted entry", &staging, &error))?;
         let name = entry.file_name();
         let target = dir.join(name);
-        rename_with_retry("extracting", "hoist extracted runtime entry", &entry.path(), &target)?;
+        rename_with_retry(
+            "extracting",
+            "hoist extracted runtime entry",
+            &entry.path(),
+            &target,
+        )?;
     }
     remove_dir_all_with_retry("extracting", "remove hoist staging directory", &staging)?;
     Ok(())
 }
 
 fn extract_zip(archive_path: &Path, dest: &Path) -> Result<(), String> {
-    let file = File::open(archive_path)
-        .map_err(|error| fs_error("extracting", "open downloaded archive", archive_path, &error))?;
+    let file = File::open(archive_path).map_err(|error| {
+        fs_error(
+            "extracting",
+            "open downloaded archive",
+            archive_path,
+            &error,
+        )
+    })?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
@@ -800,13 +848,19 @@ fn extract_zip(archive_path: &Path, dest: &Path) -> Result<(), String> {
             return Err(format!("Archive entry escapes runtime root: {name}"));
         }
         if entry.is_dir() {
-            fs::create_dir_all(&out_path)
-                .map_err(|error| fs_error("extracting", "create archive directory", &out_path, &error))?;
+            fs::create_dir_all(&out_path).map_err(|error| {
+                fs_error("extracting", "create archive directory", &out_path, &error)
+            })?;
             continue;
         }
         if let Some(parent) = out_path.parent() {
             fs::create_dir_all(parent).map_err(|error| {
-                fs_error("extracting", "create archive parent directory", parent, &error)
+                fs_error(
+                    "extracting",
+                    "create archive parent directory",
+                    parent,
+                    &error,
+                )
             })?;
         }
         let mut outfile = File::create(&out_path)
@@ -818,8 +872,14 @@ fn extract_zip(archive_path: &Path, dest: &Path) -> Result<(), String> {
 }
 
 fn extract_tar_gz(archive_path: &Path, dest: &Path) -> Result<(), String> {
-    let file = File::open(archive_path)
-        .map_err(|error| fs_error("extracting", "open downloaded archive", archive_path, &error))?;
+    let file = File::open(archive_path).map_err(|error| {
+        fs_error(
+            "extracting",
+            "open downloaded archive",
+            archive_path,
+            &error,
+        )
+    })?;
     let decoder = flate2::read::GzDecoder::new(file);
     let mut archive = tar::Archive::new(decoder);
     for entry in archive.entries().map_err(|e| e.to_string())? {
@@ -848,14 +908,15 @@ fn extract_tar_gz(archive_path: &Path, dest: &Path) -> Result<(), String> {
                 {
                     if let Some(parent) = out_path.parent() {
                         fs::create_dir_all(parent).map_err(|error| {
-                            fs_error("extracting", "create archive link parent directory", parent, &error)
+                            fs_error(
+                                "extracting",
+                                "create archive link parent directory",
+                                parent,
+                                &error,
+                            )
                         })?;
                     }
-                    remove_file_with_retry(
-                        "extracting",
-                        "replace archive link",
-                        &out_path,
-                    )?;
+                    remove_file_with_retry("extracting", "replace archive link", &out_path)?;
                     std::os::unix::fs::symlink(target.as_ref(), &out_path).map_err(|error| {
                         fs_error("extracting", "create archive link", &out_path, &error)
                     })?;
@@ -866,9 +927,9 @@ fn extract_tar_gz(archive_path: &Path, dest: &Path) -> Result<(), String> {
                 }
             }
             _ => {
-                entry
-                    .unpack_in(dest)
-                    .map_err(|error| fs_error("extracting", "write extracted archive entry", dest, &error))?;
+                entry.unpack_in(dest).map_err(|error| {
+                    fs_error("extracting", "write extracted archive entry", dest, &error)
+                })?;
             }
         }
     }
@@ -876,8 +937,14 @@ fn extract_tar_gz(archive_path: &Path, dest: &Path) -> Result<(), String> {
 }
 
 fn extract_archive(archive_path: &Path, kind: NodeArchiveKind, dest: &Path) -> Result<(), String> {
-    fs::create_dir_all(dest)
-        .map_err(|error| fs_error("extracting", "create runtime staging directory", dest, &error))?;
+    fs::create_dir_all(dest).map_err(|error| {
+        fs_error(
+            "extracting",
+            "create runtime staging directory",
+            dest,
+            &error,
+        )
+    })?;
     match kind {
         NodeArchiveKind::Zip => extract_zip(archive_path, dest)?,
         NodeArchiveKind::TarGz => extract_tar_gz(archive_path, dest)?,
@@ -1072,7 +1139,11 @@ fn cleanup_stale(root: &Path, busy_versions: &HashSet<String>) {
             let path = entry.path();
             if is_stale_runtime_temp(name.as_ref(), busy_versions) {
                 let _ = if path.is_dir() {
-                    remove_dir_all_with_retry("cleanup_stale", "remove stale runtime directory", &path)
+                    remove_dir_all_with_retry(
+                        "cleanup_stale",
+                        "remove stale runtime directory",
+                        &path,
+                    )
                 } else {
                     remove_file_with_retry("cleanup_stale", "remove stale runtime file", &path)
                 };
@@ -1174,10 +1245,25 @@ fn scan_nvm_root(root: &Path) -> Vec<NodeRuntimeInfo> {
         let Some(version) = normalize_detected_version(&raw_version) else {
             continue;
         };
-        let id = runtime_id("nvm", &version, &candidate);
-        if !seen.insert(id.clone()) {
+        let canonical_path = canonicalize_runtime_path(&candidate);
+        let physical_key = canonical_path
+            .clone()
+            .unwrap_or_else(|| candidate.to_string_lossy().to_string());
+        let key = format!(
+            "{version}:{}",
+            normalized_path_key(Path::new(&physical_key))
+        );
+        if !seen.insert(key) {
             continue;
         }
+        let id = runtime_id(
+            "nvm",
+            &version,
+            canonical_path
+                .as_deref()
+                .map(Path::new)
+                .unwrap_or(candidate.as_path()),
+        );
         result.push(NodeRuntimeInfo {
             runtime_id: id,
             version,
@@ -1185,6 +1271,7 @@ fn scan_nvm_root(root: &Path) -> Vec<NodeRuntimeInfo> {
             source: "nvm".to_string(),
             status: "available".to_string(),
             runtime_root: Some(root.to_string_lossy().to_string()),
+            canonical_path,
         });
     }
     result.sort_by(|left, right| {
@@ -1218,7 +1305,9 @@ fn scan_nvm_runtimes(app: &AppHandle) -> Vec<NodeRuntimeInfo> {
 fn lock_version(state: &NodeRuntimeState, version: &str) -> Result<(), String> {
     let mut installing = state.installing.lock().map_err(|e| e.to_string())?;
     if installing.contains(version) {
-        return Err(format!("Node {version} is already being installed or uninstalled"));
+        return Err(format!(
+            "Node {version} is already being installed or uninstalled"
+        ));
     }
     installing.insert(version.to_string());
     Ok(())
@@ -1245,8 +1334,14 @@ fn list_installed_node_runtimes_sync(
     }
     let mut result = Vec::new();
     for (version, path) in runtime_directory_entries(&root) {
-        let status = match node_executable(&path).and_then(|executable| run_node_version(&executable).ok()) {
-            Some(actual) if normalize_detected_version(&actual).as_deref() == Some(version.as_str()) => "available",
+        let status = match node_executable(&path)
+            .and_then(|executable| run_node_version(&executable).ok())
+        {
+            Some(actual)
+                if normalize_detected_version(&actual).as_deref() == Some(version.as_str()) =>
+            {
+                "available"
+            }
             _ => "broken",
         };
         result.push(NodeRuntimeInfo {
@@ -1256,6 +1351,7 @@ fn list_installed_node_runtimes_sync(
             source: "managed".to_string(),
             status: status.to_string(),
             runtime_root: Some(root.to_string_lossy().to_string()),
+            canonical_path: canonicalize_runtime_path(&path),
         });
     }
     result.sort_by(|a, b| b.version.cmp(&a.version));
@@ -1327,15 +1423,26 @@ pub async fn open_managed_node_runtime_root(app: AppHandle) -> Result<(), String
 fn copy_directory_recursive(source: &Path, target: &Path) -> Result<(), String> {
     if target.exists() {
         if !target.is_dir() {
-            return Err(format!("Migration target is not a directory: {}", target.display()));
+            return Err(format!(
+                "Migration target is not a directory: {}",
+                target.display()
+            ));
         }
     } else {
-        fs::create_dir_all(target)
-            .map_err(|error| format!("Failed to create migration directory {}: {error}", target.display()))?;
+        fs::create_dir_all(target).map_err(|error| {
+            format!(
+                "Failed to create migration directory {}: {error}",
+                target.display()
+            )
+        })?;
     }
 
-    let entries = fs::read_dir(source)
-        .map_err(|error| format!("Failed to read Managed Node runtime {}: {error}", source.display()))?;
+    let entries = fs::read_dir(source).map_err(|error| {
+        format!(
+            "Failed to read Managed Node runtime {}: {error}",
+            source.display()
+        )
+    })?;
     for entry in entries {
         let entry = entry.map_err(|error| error.to_string())?;
         let source_path = entry.path();
@@ -1359,8 +1466,12 @@ fn copy_directory_recursive(source: &Path, target: &Path) -> Result<(), String> 
 }
 
 fn validate_runtime_directory(path: &Path, expected_version: &str) -> Result<(), String> {
-    let executable = node_executable(path)
-        .ok_or_else(|| format!("Managed Node runtime is missing node executable: {}", path.display()))?;
+    let executable = node_executable(path).ok_or_else(|| {
+        format!(
+            "Managed Node runtime is missing node executable: {}",
+            path.display()
+        )
+    })?;
     let actual = run_node_version(&executable)?;
     let actual = normalize_detected_version(&actual)
         .ok_or_else(|| format!("Invalid node -v output from {}", executable.display()))?;
@@ -1529,10 +1640,18 @@ fn migrate_managed_node_runtime_location_sync(
 
     if paths_equal(&old_root, &new_root) {
         ensure_writable_directory(&new_root).map_err(|error| {
-            migration_error(RuntimeMigrationPhase::Prepare, "check target directory", &error)
+            migration_error(
+                RuntimeMigrationPhase::Prepare,
+                "check target directory",
+                &error,
+            )
         })?;
         write_managed_location(&app, &setting).map_err(|error| {
-            migration_error(RuntimeMigrationPhase::Switch, "save Managed Runtime location", &error)
+            migration_error(
+                RuntimeMigrationPhase::Switch,
+                "save Managed Runtime location",
+                &error,
+            )
         })?;
         return managed_location_info_for_app(app, &setting, Vec::new());
     }
@@ -1546,12 +1665,20 @@ fn migrate_managed_node_runtime_location_sync(
     }
 
     ensure_writable_directory(&new_root).map_err(|error| {
-        migration_error(RuntimeMigrationPhase::Prepare, "check target directory", &error)
+        migration_error(
+            RuntimeMigrationPhase::Prepare,
+            "check target directory",
+            &error,
+        )
     })?;
 
     if !migrate {
         write_managed_location(&app, &setting).map_err(|error| {
-            migration_error(RuntimeMigrationPhase::Switch, "save Managed Runtime location", &error)
+            migration_error(
+                RuntimeMigrationPhase::Switch,
+                "save Managed Runtime location",
+                &error,
+            )
         })?;
         return managed_location_info_for_app(app, &setting, Vec::new());
     }
@@ -1560,14 +1687,20 @@ fn migrate_managed_node_runtime_location_sync(
         return Err(migration_error(
             RuntimeMigrationPhase::Scan,
             "inspect current Managed Runtime root",
-            &format!("Managed Node runtime path is not a directory: {}", old_root.display()),
+            &format!(
+                "Managed Node runtime path is not a directory: {}",
+                old_root.display()
+            ),
         ));
     }
     let installed = runtime_directory_entries(&old_root);
     if !installed.is_empty() {
         for running_path in running_runtime_paths {
             let running = Path::new(&running_path);
-            if installed.iter().any(|(_, runtime_path)| path_is_within(running, runtime_path)) {
+            if installed
+                .iter()
+                .any(|(_, runtime_path)| path_is_within(running, runtime_path))
+            {
                 return Err(migration_error(
                     RuntimeMigrationPhase::Scan,
                     "check running Managed Node runtimes",
@@ -1579,7 +1712,11 @@ fn migrate_managed_node_runtime_location_sync(
 
     if installed.is_empty() {
         write_managed_location(&app, &setting).map_err(|error| {
-            migration_error(RuntimeMigrationPhase::Switch, "save Managed Runtime location", &error)
+            migration_error(
+                RuntimeMigrationPhase::Switch,
+                "save Managed Runtime location",
+                &error,
+            )
         })?;
         return managed_location_info_for_app(app, &setting, Vec::new());
     }
@@ -1682,12 +1819,7 @@ pub async fn migrate_managed_node_runtime_location(
 ) -> Result<ManagedRuntimeLocationInfo, String> {
     let setting = normalize_managed_location_setting(&mode, custom_path.as_deref())?;
     run_node_runtime_task(move || {
-        migrate_managed_node_runtime_location_sync(
-            &app,
-            setting,
-            migrate,
-            running_runtime_paths,
-        )
+        migrate_managed_node_runtime_location_sync(&app, setting, migrate, running_runtime_paths)
     })
     .await
 }
@@ -1705,7 +1837,10 @@ pub async fn list_available_node_releases() -> Result<Vec<NodeReleaseInfo>, Stri
         .await
         .map_err(|e| format!("Failed to fetch Node releases: {e}"))?;
     if !response.status().is_success() {
-        return Err(format!("Failed to fetch Node releases: HTTP {}", response.status()));
+        return Err(format!(
+            "Failed to fetch Node releases: HTTP {}",
+            response.status()
+        ));
     }
     response
         .json()
@@ -1802,9 +1937,7 @@ fn validate_final_runtime(final_dir: &Path, expected_version: &str) -> Result<()
             "validating",
             "run node -v",
             &exe,
-            &format!(
-                "node -v mismatch: expected {expected_version}, got {actual_version}"
-            ),
+            &format!("node -v mismatch: expected {expected_version}, got {actual_version}"),
         )),
         Err(error) => Err(runtime_error("validating", "run node -v", &exe, &error)),
     }
@@ -1829,8 +1962,14 @@ async fn install_managed_node_inner(
         },
     );
     let root = resolve_managed_runtime_root(app)?;
-    fs::create_dir_all(&root)
-        .map_err(|error| fs_error("preparing", "create managed runtime directory", &root, &error))?;
+    fs::create_dir_all(&root).map_err(|error| {
+        fs_error(
+            "preparing",
+            "create managed runtime directory",
+            &root,
+            &error,
+        )
+    })?;
     cleanup_stale(&root, busy_versions);
 
     let final_dir = version_dir(&root, version);
@@ -1853,12 +1992,8 @@ async fn install_managed_node_inner(
     let part_path = root.join(format!("{}.part", artifact.file_name));
     let archive_path = root.join(&artifact.file_name);
     let extract_dir = root.join(format!("extract-{version}"));
-    let prepare_cleanup_warnings = cleanup_install_temp_with_warnings(
-        "preparing",
-        &part_path,
-        &archive_path,
-        &extract_dir,
-    );
+    let prepare_cleanup_warnings =
+        cleanup_install_temp_with_warnings("preparing", &part_path, &archive_path, &extract_dir);
     if !prepare_cleanup_warnings.is_empty() {
         return Err(format!(
             "Node install failed\nphase: preparing\noperation: clear previous temporary files\npath: {}\nerror: {}",
@@ -1928,7 +2063,12 @@ async fn install_managed_node_inner(
         Ok(file) => file,
         Err(error) => {
             cleanup_install_temp(&part_path, &archive_path, &extract_dir);
-            return Err(fs_error("downloading", "create archive part", &part_path, &error));
+            return Err(fs_error(
+                "downloading",
+                "create archive part",
+                &part_path,
+                &error,
+            ));
         }
     };
     let mut hasher = Sha256::new();
@@ -1949,7 +2089,12 @@ async fn install_managed_node_inner(
         };
         if let Err(error) = file.write_all(&chunk) {
             cleanup_install_temp(&part_path, &archive_path, &extract_dir);
-            return Err(fs_error("downloading", "write archive part", &part_path, &error));
+            return Err(fs_error(
+                "downloading",
+                "write archive part",
+                &part_path,
+                &error,
+            ));
         }
         hasher.update(&chunk);
         downloaded += chunk.len() as u64;
@@ -1971,7 +2116,12 @@ async fn install_managed_node_inner(
     }
     if let Err(error) = file.flush() {
         cleanup_install_temp(&part_path, &archive_path, &extract_dir);
-        return Err(fs_error("downloading", "flush archive part", &part_path, &error));
+        return Err(fs_error(
+            "downloading",
+            "flush archive part",
+            &part_path,
+            &error,
+        ));
     }
     if let Err(error) = sync_and_close_download(file) {
         cleanup_install_temp(&part_path, &archive_path, &extract_dir);
@@ -2091,12 +2241,8 @@ async fn install_managed_node_inner(
             percent: Some(100),
         },
     );
-    let cleanup_warnings = cleanup_install_temp_with_warnings(
-        "cleanup",
-        &part_path,
-        &archive_path,
-        &extract_dir,
-    );
+    let cleanup_warnings =
+        cleanup_install_temp_with_warnings("cleanup", &part_path, &archive_path, &extract_dir);
     for warning in &cleanup_warnings {
         eprintln!("Node install cleanup warning: {warning}");
     }
@@ -2127,14 +2273,16 @@ pub async fn uninstall_managed_node(
     let version_for_task = version.clone();
     let result = match root {
         Err(error) => Err(error),
-        Ok(root) => run_node_runtime_task(move || {
-            let dir = version_dir(&root, &version_for_task);
-            if !dir.exists() {
-                return Ok(());
-            }
-            remove_runtime_path_with_retry("uninstall", "remove managed runtime", &dir)
-        })
-        .await,
+        Ok(root) => {
+            run_node_runtime_task(move || {
+                let dir = version_dir(&root, &version_for_task);
+                if !dir.exists() {
+                    return Ok(());
+                }
+                remove_runtime_path_with_retry("uninstall", "remove managed runtime", &dir)
+            })
+            .await
+        }
     };
     unlock_version(&state, &version);
     result
@@ -2267,7 +2415,10 @@ mod tests {
         let value = retry_fs_operation_with_sleep(
             "finalize",
             "rename staging runtime",
-            FsTarget::Rename { from: &from, to: &to },
+            FsTarget::Rename {
+                from: &from,
+                to: &to,
+            },
             || {
                 calls += 1;
                 if calls == 1 {
@@ -2292,7 +2443,10 @@ mod tests {
         let error = retry_fs_operation_with_sleep::<(), _, _>(
             "finalize",
             "rename staging runtime",
-            FsTarget::Rename { from: &from, to: &to },
+            FsTarget::Rename {
+                from: &from,
+                to: &to,
+            },
             || Err(io::Error::from_raw_os_error(5)),
             |_| {},
         )
@@ -2361,9 +2515,16 @@ mod tests {
     #[test]
     fn finalize_call_precedes_final_validation_call() {
         let source = include_str!("node_runtime.rs");
-        let finalize = source.find("if let Err(error) = finalize_runtime(&extract_dir").unwrap();
-        let validate = source.find("if let Err(error) = validate_final_runtime(&final_dir").unwrap();
-        assert!(finalize < validate, "final runtime must be validated after promotion");
+        let finalize = source
+            .find("if let Err(error) = finalize_runtime(&extract_dir")
+            .unwrap();
+        let validate = source
+            .find("if let Err(error) = validate_final_runtime(&final_dir")
+            .unwrap();
+        assert!(
+            finalize < validate,
+            "final runtime must be validated after promotion"
+        );
     }
 
     #[test]
@@ -2381,8 +2542,14 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *node-v20.11.1-
             "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
         );
         assert_ne!(sha256_hex(b"hello"), map["node-v20.11.1-win-x64.zip"]);
-        assert!(checksum_matches(&sha256_hex(b"hello"), &sha256_hex(b"hello")));
-        assert!(!checksum_matches(&sha256_hex(b"hello"), &sha256_hex(b"world")));
+        assert!(checksum_matches(
+            &sha256_hex(b"hello"),
+            &sha256_hex(b"hello")
+        ));
+        assert!(!checksum_matches(
+            &sha256_hex(b"hello"),
+            &sha256_hex(b"world")
+        ));
     }
 
     #[test]
@@ -2484,7 +2651,9 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *node-v20.11.1-
         let runtimes = scan_nvm_root(&scan_root);
         assert_eq!(runtimes.len(), 2);
         assert!(runtimes.iter().all(|runtime| runtime.source == "nvm"));
-        assert!(runtimes.iter().all(|runtime| runtime.runtime_id.starts_with("nvm:")));
+        assert!(runtimes
+            .iter()
+            .all(|runtime| runtime.runtime_id.starts_with("nvm:")));
         assert!(runtimes.iter().all(|runtime| runtime.status == "available"));
     }
 
@@ -2494,16 +2663,28 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *node-v20.11.1-
         let nvm = runtime_id("nvm", "v20.19.0", Path::new("C:/nvm/v20.19.0"));
         assert_eq!(managed, "managed:v20.19.0");
         assert_ne!(managed, nvm);
-        assert!(path_is_within(Path::new("C:/old/v20/node.exe"), Path::new("C:/old/v20")));
-        assert!(!path_is_within(Path::new("C:/old-other/v20"), Path::new("C:/old")));
+        assert!(path_is_within(
+            Path::new("C:/old/v20/node.exe"),
+            Path::new("C:/old/v20")
+        ));
+        assert!(!path_is_within(
+            Path::new("C:/old-other/v20"),
+            Path::new("C:/old")
+        ));
     }
 
     #[test]
     fn stale_temp_cleanup_skips_busy_version() {
         let busy = HashSet::from(["v20.11.1".to_string()]);
-        assert!(is_stale_runtime_temp("node-v22.0.0-win-x64.zip.part", &busy));
+        assert!(is_stale_runtime_temp(
+            "node-v22.0.0-win-x64.zip.part",
+            &busy
+        ));
         assert!(!is_stale_runtime_temp("extract-v20.11.1", &busy));
-        assert!(!is_stale_runtime_temp("node-v20.11.1-win-x64.zip.part", &busy));
+        assert!(!is_stale_runtime_temp(
+            "node-v20.11.1-win-x64.zip.part",
+            &busy
+        ));
         assert!(is_stale_runtime_temp("extract-v22.0.0", &busy));
         assert!(!is_stale_runtime_temp("v20.11.1", &busy));
     }
@@ -2542,15 +2723,27 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *node-v20.11.1-
         };
 
         assert_eq!(
-            resolve_managed_runtime_root_from_paths(&app_data_setting, Some(&app_data), Some(&executable)),
+            resolve_managed_runtime_root_from_paths(
+                &app_data_setting,
+                Some(&app_data),
+                Some(&executable)
+            ),
             Ok(app_data.join("runtimes").join("node"))
         );
         assert_eq!(
-            resolve_managed_runtime_root_from_paths(&custom_setting, Some(&app_data), Some(&executable)),
+            resolve_managed_runtime_root_from_paths(
+                &custom_setting,
+                Some(&app_data),
+                Some(&executable)
+            ),
             Ok(PathBuf::from(custom_setting.custom_path.as_ref().unwrap()))
         );
         assert_eq!(
-            resolve_managed_runtime_root_from_paths(&portable_setting, Some(&app_data), Some(&executable)),
+            resolve_managed_runtime_root_from_paths(
+                &portable_setting,
+                Some(&app_data),
+                Some(&executable)
+            ),
             Ok(executable.join("data").join("runtimes").join("node"))
         );
     }
@@ -2606,7 +2799,10 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *node-v20.11.1-
         let temp = tempfile::tempdir().unwrap();
         let missing = temp.path().join("new").join("nested");
         assert!(writable_probe(&missing));
-        assert!(!missing.exists(), "probe should remove directories it created");
+        assert!(
+            !missing.exists(),
+            "probe should remove directories it created"
+        );
 
         let file = temp.path().join("not-a-directory");
         File::create(&file).unwrap();
@@ -2786,7 +2982,8 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *node-v20.11.1-
             let file = File::create(&part_path).unwrap();
             let mut zip = zip::ZipWriter::new(file);
             let options = zip::write::SimpleFileOptions::default();
-            zip.start_file("node-v20.11.1-win-x64/node.exe", options).unwrap();
+            zip.start_file("node-v20.11.1-win-x64/node.exe", options)
+                .unwrap();
             zip.write_all(b"node").unwrap();
             zip.finish().unwrap();
         }
@@ -2811,7 +3008,11 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *node-v20.11.1-
         sync_and_close_download(file).unwrap();
         promote_downloaded_archive(&part_path, &archive_path).unwrap();
         assert!(archive_path.exists());
-        cleanup_install_temp(&part_path, &archive_path, &temp.path().join("extract-v20.11.1"));
+        cleanup_install_temp(
+            &part_path,
+            &archive_path,
+            &temp.path().join("extract-v20.11.1"),
+        );
     }
 
     #[test]
@@ -2847,7 +3048,10 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *node-v20.11.1-
         let archive_path = temp.path().join("node-v20.11.1-win-x64.zip");
         let extract_dir = temp.path().join("extract-v20.11.1");
         fs::write(&part_path, b"bad archive").unwrap();
-        assert!(!checksum_matches(&sha256_hex(b"expected"), &sha256_hex(b"bad archive")));
+        assert!(!checksum_matches(
+            &sha256_hex(b"expected"),
+            &sha256_hex(b"bad archive")
+        ));
         assert!(part_path.exists());
         assert!(!archive_path.exists());
         assert!(!extract_dir.exists());
@@ -2872,7 +3076,8 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *node-v20.11.1-
             let file = File::create(&part_path).unwrap();
             let mut zip = zip::ZipWriter::new(file);
             let options = zip::write::SimpleFileOptions::default();
-            zip.start_file("node-v20.11.1-win-x64/node.exe", options).unwrap();
+            zip.start_file("node-v20.11.1-win-x64/node.exe", options)
+                .unwrap();
             zip.write_all(b"node").unwrap();
             zip.finish().unwrap();
         }

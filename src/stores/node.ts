@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { api } from '../api';
 import type {
   AppDefaultNode,
@@ -7,6 +7,7 @@ import type {
   ManagedRuntimeLocationInfo,
   NodeInstallProgress,
   NodeVersion,
+  NodeVersionEntry,
   SystemNodeState,
   SystemNodeSwitchOptions,
   SystemNodeSwitchResult,
@@ -19,7 +20,8 @@ import {
   resolveAppDefaultRuntime,
 } from '../utils/nodeRuntime';
 import { mergeNodeRuntimes, migrateLegacyNodeSource, sortNodeVersions } from '../utils/nodeDefaultState';
-import { mapSystemNodeStateToRuntime } from '../utils/systemNode';
+import { findSystemRuntime, mapSystemNodeStateToRuntime } from '../utils/systemNode';
+import { buildNodeVersionEntries } from '../utils/nodeRuntimeGrouping';
 import { resolveTerminalCommand } from '../utils/terminalConfig';
 import { useSettingsStore } from './settings';
 
@@ -102,6 +104,8 @@ export const useNodeStore = defineStore('node', () => {
   const registryError = ref('');
   const appDefault = ref<AppDefaultNode | null>(null);
   const systemNodeState = ref<SystemNodeState | null>(null);
+  /** 仅供项目默认解析的 ephemeral fallback，不进入 Runtime Registry 或持久化。 */
+  const systemNodeRuntime = ref<NodeVersion | null>(null);
   const systemNodeLoading = ref(false);
   const systemNodeSwitching = ref(false);
   const systemNodeSwitchSupported = ref(false);
@@ -125,13 +129,11 @@ export const useNodeStore = defineStore('node', () => {
   }
 
   function applyMerged(parts: {
-    system?: NodeVersion | null;
     managed?: NodeVersion[];
     nvm?: NodeVersion[];
     custom?: NodeVersion[];
   }) {
     versions.value = markDefault(mergeNodeRuntimes({
-      system: parts.system ?? (versions.value.find(v => v.source === 'system') || null),
       managed: parts.managed ?? versions.value.filter(v => v.source === 'managed'),
       nvm: parts.nvm ?? versions.value.filter(v => v.source === 'nvm'),
       custom: parts.custom ?? persistedCustomNodes.value,
@@ -145,7 +147,10 @@ export const useNodeStore = defineStore('node', () => {
     persistedCustomNodes.value = (data.customNodes || [])
       .filter(node => node && node.path && node.version)
       .map(node => ensureNodeRuntime({ ...node, source: 'custom' }));
-    appDefault.value = data.appDefaultNode
+    // R2.2 stored the detected System Node as the app default. System Node is
+    // now an OS-derived state, so migrate that legacy value to the normal
+    // implicit fallback instead of keeping a dead `system` default binding.
+    appDefault.value = data.appDefaultNode && data.appDefaultNode.source !== 'system'
       ? {
         ...data.appDefaultNode,
         runtimeId: data.appDefaultNode.runtimeId
@@ -173,7 +178,11 @@ export const useNodeStore = defineStore('node', () => {
 
   function migrateDefaultRuntimeId(): boolean {
     if (!appDefault.value) return false;
-    const resolved = resolveAppDefaultRuntime(versions.value, appDefault.value);
+    if (appDefault.value.runtimeId) {
+      versions.value = markDefault(versions.value);
+      return false;
+    }
+    const resolved = resolveAppDefaultRuntime(versions.value, appDefault.value, systemNodeRuntime.value);
     if (!resolved.runtime) return false;
     const runtime = ensureNodeRuntime(resolved.runtime);
     const next = {
@@ -209,16 +218,17 @@ export const useNodeStore = defineStore('node', () => {
   function applySystemNodeState(state: SystemNodeState): void {
     const mapped = mapSystemNodeStateToRuntime(state, versions.value);
     systemNodeState.value = mapped;
-    const nodePath = mapped.nodePath || SYSTEM_NODE_PLACEHOLDER;
-    const version = mapped.version || 'System';
-    applyMerged({
-      system: ensureNodeRuntime({
-        version,
-        path: nodePath,
+    const matched = findSystemRuntime(mapped, versions.value);
+    systemNodeRuntime.value = matched || (mapped.available && mapped.nodePath && mapped.version
+      ? ensureNodeRuntime({
+        runtimeId: `system-state:${mapped.canonicalNodePath || mapped.nodePath}`,
+        version: mapped.version,
+        path: mapped.nodePath,
+        canonicalPath: mapped.canonicalNodePath,
         source: 'system',
-        status: mapped.available ? 'available' : 'broken',
-      }),
-    });
+        status: 'available',
+      })
+      : null);
   }
 
   const refreshSystemNode = async (options: { throwOnError?: boolean } = {}): Promise<SystemNodeState> => {
@@ -601,12 +611,25 @@ export const useNodeStore = defineStore('node', () => {
     return api.openInTerminal(home || '.', terminal, '', '');
   };
 
+  const defaultRuntime = computed(() => resolveAppDefaultRuntime(
+    versions.value,
+    appDefault.value,
+    systemNodeRuntime.value,
+  ).runtime);
+  const versionEntries = computed<NodeVersionEntry[]>(() => buildNodeVersionEntries(versions.value, {
+    systemNodeState: systemNodeState.value,
+    appDefault: appDefault.value,
+  }));
+
   return {
     versions,
     loading,
     managedSupported,
     registryError,
     appDefault,
+    defaultRuntime,
+    versionEntries,
+    systemNodeRuntime,
     systemNodeState,
     systemNodeLoading,
     systemNodeSwitching,

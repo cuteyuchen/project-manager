@@ -23,10 +23,8 @@ function createNode(version: string, path: string, source: NodeVersion['source']
     path: 'C:/system/current',
   });
 
-  assert(result[0].source === 'system', 'system row should stay at the first position');
-  assert(result[0].version === 'v20.11.1', 'system row version should be updated');
-  assert(result[0].path === 'C:/system/current', 'system row path should be updated');
-  assert(result.filter(item => item.source === 'system').length === 1, 'system row should not be duplicated');
+  assert(result.every(item => item.source !== 'system'), 'System Node must not be persisted as a Runtime row');
+  assert(result[0].version === 'v18.19.0', 'registry rows should remain sorted after detector refresh');
 }
 
 {
@@ -40,26 +38,22 @@ function createNode(version: string, path: string, source: NodeVersion['source']
     path: 'C:/system/current',
   });
 
-  assert(result[0].source === 'system', 'missing system row should be inserted at the first position');
-  assert(result[0].version === 'v18.19.0', 'inserted system row should use incoming version');
-  assert(result.filter(item => item.source === 'system').length === 1, 'inserted system row should appear once');
+  assert(result.length === 2, 'System detection must not add a synthetic Runtime row');
+  assert(result.every(item => item.source !== 'system'));
 }
 
 {
   const result = sortNodeVersions([
     createNode('v16.20.2', 'C:/runtimes/v16.20.2', 'managed'),
     createNode('v20.11.1', 'C:/custom/v20.11.1', 'custom'),
-    createNode('v18.19.0', 'C:/system/current', 'system'),
     createNode('v22.0.0', 'C:/runtimes/v22.0.0', 'managed'),
   ]);
 
-  assert(result[0].source === 'system', 'system row should always be first after sorting');
-  assert(result[1].version === 'v22.0.0', 'managed rows should keep version-desc order after system');
+  assert(result[0].version === 'v22.0.0', 'managed rows should keep version-desc order');
 }
 
 {
   const merged = mergeNodeRuntimes({
-    system: createNode('v22.0.0', 'C:/system/node', 'system'),
     managed: [
       createNode('v20.11.1', 'C:/app/runtimes/node/v20.11.1', 'managed'),
       createNode('v20.11.1', 'C:/app/runtimes/node/v20.11.1', 'managed'),

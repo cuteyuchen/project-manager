@@ -7,9 +7,9 @@ import type { ManagedRuntimeLocationMode, NodeVersion, Project } from '../types'
 import { useNodeStore } from '../stores/node';
 import { useProjectStore } from '../stores/project';
 import { useSettingsStore } from '../stores/settings';
-import { getNodeRuntimeId, resolveAppDefaultRuntime } from '../utils/nodeRuntime';
+import { getNodeRuntimeId } from '../utils/nodeRuntime';
 import { isRuntimeSystemCurrent } from '../utils/systemNode';
-import { groupNodeRuntimesByVersion, summarizeRuntimeSources, type NodeRuntimeGroup } from '../utils/nodeRuntimeGrouping';
+import { groupNodeRuntimesByVersion, type NodeRuntimeGroup } from '../utils/nodeRuntimeGrouping';
 import { getRuntimeListMode, type NodeRuntimeListMode } from '../utils/nodeRuntimeLayout';
 import { getProjectsUsingRuntime, type ProjectRuntimeUsage, type RuntimeUsageReason } from '../utils/nodeRuntimeUsage';
 import AddNodeModal from '../components/AddNodeModal.vue';
@@ -37,32 +37,15 @@ const customStoragePath = ref('');
 const migrateExisting = ref(true);
 const storageSaving = ref(false);
 type RuntimeAction = 'project-manager-default' | 'system-node';
-const showRuntimeChoiceDialog = ref(false);
-const selectedRuntimeAction = ref<RuntimeAction>('system-node');
-const selectedRuntimeGroup = ref<NodeRuntimeGroup | null>(null);
-const selectedRuntimeId = ref('');
 const runtimeListPanel = ref<HTMLElement | null>(null);
 const runtimeListMode = ref<NodeRuntimeListMode>('table');
 let runtimeListResizeObserver: ResizeObserver | null = null;
 
-const sourceOrder: NodeVersion['source'][] = ['managed', 'nvm', 'system', 'custom'];
-
-const sourceCounts = computed(() => {
-  const counts: Record<NodeVersion['source'], number> = {
-    managed: 0,
-    nvm: 0,
-    system: 0,
-    custom: 0,
-  };
-  for (const runtime of nodeStore.versions) counts[runtime.source] += 1;
-  return counts;
-});
+const sourceOrder: Array<'managed' | 'nvm' | 'custom'> = ['managed', 'nvm', 'custom'];
 
 const managedRuntimes = computed(() => nodeStore.versions.filter(runtime => runtime.source === 'managed'));
 const nvmRuntimes = computed(() => nodeStore.versions.filter(runtime => runtime.source === 'nvm'));
-const defaultRuntime = computed(() => {
-  return resolveAppDefaultRuntime(nodeStore.versions, nodeStore.appDefault).runtime;
-});
+const defaultRuntime = computed(() => nodeStore.defaultRuntime);
 const defaultUnavailable = computed(() => !!nodeStore.appDefault && !defaultRuntime.value);
 const managedRoot = computed(() => nodeStore.managedLocation?.rootPath || '');
 const managedRootLabel = computed(() => managedRoot.value || t('nodes.locationUnknown'));
@@ -91,7 +74,19 @@ const displayRuntimes = computed<NodeVersion[]>(() => {
   return rows;
 });
 
-const runtimeGroups = computed<NodeRuntimeGroup[]>(() => groupNodeRuntimesByVersion(displayRuntimes.value));
+const runtimeGroups = computed<NodeRuntimeGroup[]>(() => groupNodeRuntimesByVersion(displayRuntimes.value, {
+  systemNodeState: nodeStore.systemNodeState,
+  appDefault: nodeStore.appDefault,
+}));
+
+const sourceCounts = computed<Record<'managed' | 'nvm' | 'custom', number>>(() => {
+  const counts = { managed: 0, nvm: 0, custom: 0 };
+  for (const group of runtimeGroups.value) {
+    const source = group.effectiveRuntime.source;
+    if (source === 'managed' || source === 'nvm' || source === 'custom') counts[source] += 1;
+  }
+  return counts;
+});
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -118,8 +113,9 @@ function sourceLabel(source: NodeVersion['source']): string {
   return t('nodes.sourceCustom');
 }
 
-function systemSourceLabel(source: NodeVersion['source'] | 'unknown' | undefined): string {
+function systemSourceLabel(source: NodeVersion['source'] | 'external' | 'unknown' | undefined): string {
   if (!source || source === 'unknown') return t('nodes.sourceUnknown');
+  if (source === 'external') return t('nodes.sourceExternal');
   return sourceLabel(source);
 }
 
@@ -128,10 +124,6 @@ function sourceTone(source: NodeVersion['source']): string {
   if (source === 'nvm') return 'warning';
   if (source === 'system') return 'info';
   return 'primary';
-}
-
-function sourceSummaryLabel(source: NodeVersion['source'], count: number): string {
-  return count > 1 ? `${sourceLabel(source)} ×${count}` : sourceLabel(source);
 }
 
 function runtimeIsAvailable(runtime: NodeVersion): boolean {
@@ -161,23 +153,24 @@ function groupProgressText(group: NodeRuntimeGroup): string {
 }
 
 function primaryRuntime(group: NodeRuntimeGroup): NodeVersion {
-  return group.runtimes[0];
+  return group.effectiveRuntime;
 }
 
 function groupHasAppDefault(group: NodeRuntimeGroup): boolean {
-  return group.runtimes.some(runtime => runtime.isDefault);
+  return group.isProjectManagerDefault;
 }
 
 function groupCanSetAppDefault(group: NodeRuntimeGroup): boolean {
-  return availableRuntimes(group).some(runtime => !runtime.isDefault);
+  return runtimeIsAvailable(group.effectiveRuntime) && !group.isProjectManagerDefault;
 }
 
 function groupHasSystemCurrent(group: NodeRuntimeGroup): boolean {
-  return group.runtimes.some(runtime => isRuntimeSystemCurrent(runtime, nodeStore.systemNodeState));
+  return group.isSystemCurrent;
 }
 
 function groupCanSetSystemNode(group: NodeRuntimeGroup): boolean {
-  return availableRuntimes(group).some(runtime => !isRuntimeSystemCurrent(runtime, nodeStore.systemNodeState));
+  return runtimeIsAvailable(group.effectiveRuntime)
+    && !isRuntimeSystemCurrent(group.effectiveRuntime, nodeStore.systemNodeState);
 }
 
 function progressText(runtime: NodeVersion): string {
@@ -204,7 +197,13 @@ function projectIsRunning(project: Project): boolean {
 }
 
 function runtimeUsages(runtime: NodeVersion): ProjectRuntimeUsage[] {
-  return getProjectsUsingRuntime(projectStore.projects, runtime, nodeStore.versions, nodeStore.appDefault);
+  return getProjectsUsingRuntime(
+    projectStore.projects,
+    runtime,
+    nodeStore.versions,
+    nodeStore.appDefault,
+    nodeStore.systemNodeRuntime,
+  );
 }
 
 function projectsUsingRuntime(runtime: NodeVersion): Project[] {
@@ -221,9 +220,11 @@ function groupProjectsUsingRuntime(group: NodeRuntimeGroup): Project[] {
 
 function groupUsageEntries(group: NodeRuntimeGroup): ProjectRuntimeUsage[] {
   const usages = new Map<string, ProjectRuntimeUsage>();
-  for (const runtime of group.runtimes) {
-    for (const usage of runtimeUsages(runtime)) {
-      if (!usages.has(usage.project.id)) usages.set(usage.project.id, usage);
+  for (const canonical of group.canonicalRuntimes) {
+    for (const runtime of canonical.variants.filter(item => item.source !== 'system')) {
+      for (const usage of runtimeUsages(runtime)) {
+        if (!usages.has(usage.project.id)) usages.set(usage.project.id, usage);
+      }
     }
   }
   return [...usages.values()];
@@ -274,79 +275,27 @@ async function setProjectManagerDefault(runtime: NodeVersion): Promise<void> {
   }
 }
 
-function availableRuntimes(group: NodeRuntimeGroup): NodeVersion[] {
-  return group.runtimes.filter(runtimeIsAvailable);
-}
-
 function promptRuntimeAction(action: RuntimeAction, group: NodeRuntimeGroup): void {
-  const candidates = availableRuntimes(group);
-  if (!candidates.length) return;
-  if (group.runtimes.length === 1) {
-    const runtime = candidates[0];
-    if (action === 'project-manager-default') void setProjectManagerDefault(runtime);
-    else void confirmSystemNodeSwitch(runtime);
-    return;
-  }
-  selectedRuntimeAction.value = action;
-  selectedRuntimeGroup.value = group;
-  selectedRuntimeId.value = getNodeRuntimeId(candidates[0]);
-  showRuntimeChoiceDialog.value = true;
+  const runtime = group.effectiveRuntime;
+  if (!runtimeIsAvailable(runtime)) return;
+  if (action === 'project-manager-default') void setProjectManagerDefault(runtime);
+  else void executeSystemNodeSwitch(runtime);
 }
 
-function submitRuntimeChoice(): void {
-  const group = selectedRuntimeGroup.value;
-  const runtime = group?.runtimes.find(item => getNodeRuntimeId(item) === selectedRuntimeId.value);
-  if (!runtime || !runtimeIsAvailable(runtime)) return;
-  showRuntimeChoiceDialog.value = false;
-  if (selectedRuntimeAction.value === 'project-manager-default') void setProjectManagerDefault(runtime);
-  else void confirmSystemNodeSwitch(runtime);
-}
-
-function systemNodeSummary(state: typeof nodeStore.systemNodeState): string {
-  if (!state?.available) return t('nodes.systemNodeUnavailable');
-  return `${state.version || t('nodes.versionUnknown')} · ${systemSourceLabel(state.source)}\n${state.nodePath || ''}`;
-}
-
-async function confirmSystemNodeSwitch(runtime: NodeVersion): Promise<void> {
+async function executeSystemNodeSwitch(runtime: NodeVersion, elevated = false): Promise<void> {
   if (!nodeStore.systemNodeSwitchSupported) {
     ElMessage.info(t('nodes.systemSwitchUnsupported'));
     return;
   }
-  try {
-    await ElMessageBox.confirm(
-      t('nodes.systemSwitchConfirmMessage', {
-        current: systemNodeSummary(nodeStore.systemNodeState),
-        target: `${runtime.version} · ${sourceLabel(runtime.source)}\n${runtime.path}`,
-      }),
-      t('nodes.systemSwitchConfirmTitle'),
-      {
-        confirmButtonText: t('nodes.switchSystemNode'),
-        cancelButtonText: t('common.cancel'),
-        type: 'warning',
-        distinguishCancelAndClose: true,
-      },
-    );
-  } catch (error) {
-    if (error === 'cancel' || error === 'close') return;
-    return;
-  }
-  await executeSystemNodeSwitch(runtime);
-}
-
-async function executeSystemNodeSwitch(
-  runtime: NodeVersion,
-  options: { elevated?: boolean; repairPathPriority?: boolean } = {},
-  allowRecovery = true,
-): Promise<void> {
   let result;
   try {
-    result = await nodeStore.switchSystemNode(runtime, options);
+    result = await nodeStore.switchSystemNode(runtime, { elevated });
   } catch (error: any) {
     ElMessage.error(error?.message || t('nodes.systemNodeSwitchFailed'));
     return;
   }
 
-  if (result.status === 'elevation-required' && allowRecovery) {
+  if (result.status === 'elevation-required' && !elevated) {
     try {
       await ElMessageBox.confirm(
         t('nodes.elevationRequiredMessage'),
@@ -362,38 +311,12 @@ async function executeSystemNodeSwitch(
       if (error === 'cancel' || error === 'close') return;
       return;
     }
-    await executeSystemNodeSwitch(runtime, { ...options, elevated: true }, false);
-    return;
-  }
-
-  if (result.status === 'path-conflict' && allowRecovery) {
-    try {
-      await ElMessageBox.confirm(
-        t('nodes.pathConflictMessage', {
-          target: runtime.path,
-          current: result.conflictingPath || result.current?.nodePath || t('nodes.unknownNodePath'),
-        }),
-        t('nodes.pathConflictTitle'),
-        {
-          confirmButtonText: t('nodes.repairPathPriority'),
-          cancelButtonText: t('common.cancel'),
-          type: 'warning',
-          distinguishCancelAndClose: true,
-        },
-      );
-    } catch (error) {
-      if (error === 'cancel' || error === 'close') return;
-      return;
-    }
-    await executeSystemNodeSwitch(runtime, { ...options, repairPathPriority: true });
+    await executeSystemNodeSwitch(runtime, true);
     return;
   }
 
   if (result.status === 'switched') {
-    ElMessage.success({
-      message: `${t('nodes.systemNodeSwitchSuccess', { version: runtime.version })}\n${t('nodes.terminalRestartHint')}`,
-      duration: 6000,
-    });
+    ElMessage.success(t('nodes.systemNodeSwitchSuccess', { version: runtime.version }));
     void nodeStore.refreshRuntimeRegistryAfterSystemSwitch().catch(() => {
       ElMessage.warning({
         message: t('nodes.backgroundRefreshFailed'),
@@ -404,17 +327,10 @@ async function executeSystemNodeSwitch(
     ElMessage.info(t('nodes.alreadySystemNode'));
   } else if (result.status === 'cancelled') {
     ElMessage.info(t('nodes.systemSwitchCancelled'));
-  } else if (result.status === 'path-conflict') {
-    ElMessage.error(t('nodes.pathConflictMessage', {
-      target: runtime.path,
-      current: result.conflictingPath || result.current?.nodePath || t('nodes.unknownNodePath'),
-    }));
   } else {
     const errorKey: Record<string, string> = {
-      nvm_not_found: 'nodes.nvmExecutableNotFound',
       runtime_unavailable: 'nodes.runtimeUnavailable',
-      nvm_switch_failed: 'nodes.nvmSwitchFailed',
-      machine_path_conflict: 'nodes.pathConflictMessage',
+      controller_link_failed: 'nodes.systemNodeSwitchFailed',
       user_path_write_failed: 'nodes.userPathWriteFailed',
       machine_path_write_failed: 'nodes.machinePathWriteFailed',
       verification_failed: 'nodes.verificationFailed',
@@ -684,6 +600,9 @@ onBeforeUnmount(() => {
             <div v-if="nodeStore.systemNodeState?.nodePath" class="truncate font-mono text-xs text-slate-500 dark:text-slate-400" :title="nodeStore.systemNodeState.nodePath">
               {{ nodeStore.systemNodeState.nodePath }}
             </div>
+            <div v-if="nodeStore.systemNodeState?.available" class="mt-2 text-xs text-slate-400 dark:text-slate-500">
+              {{ t('nodes.terminalRestartHint') }}
+            </div>
             <div v-if="!nodeStore.systemNodeSwitchSupported" class="mt-2 text-xs text-amber-600 dark:text-amber-300">
               {{ t('nodes.systemSwitchUnsupported') }}
             </div>
@@ -741,7 +660,7 @@ onBeforeUnmount(() => {
           <div v-if="nvmRoots.length" class="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
             <span class="font-medium text-emerald-600 dark:text-emerald-300">{{ t('nodes.nvmDetected') }}</span>
             <span v-for="root in nvmRoots" :key="root" class="font-mono">{{ root }}</span>
-            <span>{{ t('nodes.nvmVersionCount', { count: nvmRuntimes.length }) }}</span>
+            <span>{{ t('nodes.nvmVersionCount', { count: sourceCounts.nvm }) }}</span>
           </div>
           <div v-else class="mt-4 text-xs text-slate-400">{{ t('nodes.nvmNotDetected') }}</div>
         </section>
@@ -770,11 +689,9 @@ onBeforeUnmount(() => {
               </el-table-column>
               <el-table-column :label="t('nodes.source')" :min-width="runtimeListMode === 'table' ? 170 : 125">
                 <template #default="{ row }">
-                  <div class="flex min-w-0 flex-wrap gap-1">
-                    <el-tag v-for="summary in summarizeRuntimeSources(row.runtimes)" :key="summary.source" :type="sourceTone(summary.source)" effect="plain" size="small">
-                      {{ sourceSummaryLabel(summary.source, summary.count) }}
-                    </el-tag>
-                  </div>
+                  <el-tag :type="sourceTone(row.effectiveRuntime.source)" effect="plain" size="small">
+                    {{ sourceLabel(row.effectiveRuntime.source) }}
+                  </el-tag>
                 </template>
               </el-table-column>
               <el-table-column v-if="runtimeListMode === 'table'" :label="t('nodes.status')" width="110">
@@ -794,7 +711,7 @@ onBeforeUnmount(() => {
               </el-table-column>
               <el-table-column :label="t('nodes.actions')" :width="runtimeListMode === 'table' ? 275 : 190" fixed="right" align="right">
                 <template #default="{ row }">
-                  <div class="runtime-table-actions flex flex-wrap items-center justify-end gap-1">
+                  <div class="runtime-table-actions flex flex-nowrap items-center justify-end gap-1 whitespace-nowrap">
                     <el-tooltip v-if="groupProjectsUsingRuntime(row).length" :content="t('nodes.viewUsage')" placement="top">
                       <el-button text circle size="small" @click="showGroupUsage(row)">
                         <div class="i-mdi-account-multiple-outline" />
@@ -857,9 +774,9 @@ onBeforeUnmount(() => {
                     <el-tag v-if="groupHasAppDefault(row)" type="success" effect="plain" size="small">{{ t('nodes.projectManagerDefault') }}</el-tag>
                     <el-tag v-if="groupHasSystemCurrent(row)" type="info" effect="plain" size="small">{{ t('nodes.systemCurrent') }}</el-tag>
                   </div>
-                  <div class="mt-2 flex min-w-0 flex-wrap gap-1">
-                    <el-tag v-for="summary in summarizeRuntimeSources(row.runtimes)" :key="summary.source" :type="sourceTone(summary.source)" effect="plain" size="small">
-                      {{ sourceSummaryLabel(summary.source, summary.count) }}
+                  <div class="mt-2 flex min-w-0 gap-1">
+                    <el-tag :type="sourceTone(row.effectiveRuntime.source)" effect="plain" size="small">
+                      {{ sourceLabel(row.effectiveRuntime.source) }}
                     </el-tag>
                   </div>
                 </div>
@@ -909,33 +826,6 @@ onBeforeUnmount(() => {
 
     <AddNodeModal v-model="showAddModal" />
     <InstallNodeModal v-model="showInstallModal" />
-
-    <el-dialog v-model="showRuntimeChoiceDialog" :title="t('nodes.chooseRuntimeTitle')" width="520px" align-center destroy-on-close>
-      <div class="mb-3 text-sm text-slate-500 dark:text-slate-400">
-        {{ selectedRuntimeAction === 'system-node' ? t('nodes.chooseSystemRuntimeHint') : t('nodes.chooseProjectManagerRuntimeHint') }}
-      </div>
-      <el-radio-group v-model="selectedRuntimeId" class="flex w-full flex-col items-stretch gap-2">
-        <el-radio
-          v-for="runtime in selectedRuntimeGroup?.runtimes || []"
-          :key="getNodeRuntimeId(runtime)"
-          :value="getNodeRuntimeId(runtime)"
-          :disabled="!runtimeIsAvailable(runtime)"
-          class="!mr-0 rounded-md border border-slate-200 px-3 py-3 dark:border-slate-700"
-        >
-          <div class="min-w-0">
-            <div class="flex items-center gap-2">
-              <span class="font-medium">{{ sourceLabel(runtime.source) }}</span>
-              <span v-if="!runtimeIsAvailable(runtime)" class="text-xs text-amber-500">{{ t('nodes.unavailable') }}</span>
-            </div>
-            <div class="mt-1 truncate font-mono text-xs text-slate-500 dark:text-slate-400" :title="runtime.path">{{ runtime.path }}</div>
-          </div>
-        </el-radio>
-      </el-radio-group>
-      <template #footer>
-        <el-button @click="showRuntimeChoiceDialog = false">{{ t('common.cancel') }}</el-button>
-        <el-button type="primary" :disabled="!selectedRuntimeId" @click="submitRuntimeChoice">{{ t('common.confirm') }}</el-button>
-      </template>
-    </el-dialog>
 
     <el-dialog v-model="showStorageDialog" :title="t('nodes.changeLocation')" width="560px" align-center destroy-on-close>
       <el-form label-position="top">
@@ -1034,6 +924,12 @@ onBeforeUnmount(() => {
   overflow-x: auto;
 }
 
+.runtime-table-actions {
+  flex-wrap: nowrap;
+  min-width: max-content;
+  white-space: nowrap;
+}
+
 .runtime-card-list {
   display: grid;
   gap: 8px;
@@ -1061,9 +957,11 @@ onBeforeUnmount(() => {
 .runtime-card__actions {
   display: flex;
   min-width: 0;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 6px;
+  overflow-x: auto;
+  white-space: nowrap;
 }
 
 @container (max-width: 1100px) {

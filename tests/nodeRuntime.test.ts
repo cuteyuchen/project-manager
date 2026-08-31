@@ -53,9 +53,12 @@ const unavailable = resolveProjectRuntime(
   project({ nodeRuntimeId: 'nvm:c:/missing/v20.11.1' }),
   versions,
 );
-assert.equal(unavailable.runtime, null);
-assert.equal(unavailable.unavailable, true);
-assert.equal(resolveProjectNodePath(project({ nodeRuntimeId: 'nvm:c:/missing/v20.11.1' }), versions), '');
+assert.equal(unavailable.runtime?.source, 'managed', 'a missing exact binding should fall back to the version effective Runtime');
+assert.equal(unavailable.unavailable, false);
+assert.equal(
+  resolveProjectNodePath(project({ nodeRuntimeId: 'nvm:c:/missing/v20.11.1' }), versions),
+  'C:/app/runtimes/node/v20.11.1',
+);
 
 assert.equal(
   resolveProjectNodePath(project({ nodeVersion: 'Default' }), versions, {

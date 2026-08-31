@@ -356,8 +356,8 @@ export const useProjectStore = defineStore('project', () => {
       await nodeStore.loadRuntimes();
     }
 
-    const nodePath = resolveProjectNodePath(project, nodeStore.versions, nodeStore.appDefault);
-    const defaultNodePath = resolveAppDefaultNodePath(nodeStore.versions, nodeStore.appDefault);
+    const nodePath = resolveProjectNodePath(project, nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime);
+    const defaultNodePath = resolveAppDefaultNodePath(nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime);
 
     const source = project.packageManagerSource || 'project';
 
@@ -380,7 +380,7 @@ export const useProjectStore = defineStore('project', () => {
       await nodeStore.loadRuntimes();
     }
 
-    const initialResolution = resolveProjectRuntime(project, nodeStore.versions, nodeStore.appDefault);
+    const initialResolution = resolveProjectRuntime(project, nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime);
     let nodePath = initialResolution.runtime?.path || '';
 
     if (initialResolution.unavailable && project.nodeRuntimeId) {
@@ -395,7 +395,7 @@ export const useProjectStore = defineStore('project', () => {
         ElMessage.info({ message: `正在自动安装 Node ${version}...`, duration: 3000 });
         await nodeStore.installManagedNode(version);
         ElMessage.success({ message: `Node ${version} 自动安装完成`, duration: 3000 });
-        nodePath = resolveProjectNodePath(project, nodeStore.versions, nodeStore.appDefault);
+        nodePath = resolveProjectNodePath(project, nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime);
       } catch (installError) {
         ElMessage.error(`Node ${version} 自动安装失败: ${String(installError)}`);
         console.error('Failed to auto-install node version for project run', installError);
@@ -406,7 +406,7 @@ export const useProjectStore = defineStore('project', () => {
       try {
         const info = await api.scanProject(project.path);
         const hint = projectNodeVersionHint(info);
-        nodePath = resolveNodePathFromVersion(hint, nodeStore.versions, nodeStore.appDefault);
+        nodePath = resolveNodePathFromVersion(hint, nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime);
         if (nodePath && hint) {
           const runtime = nodeStore.versions.find(item => item.path === nodePath);
           project.nodeVersion = runtime?.version || hint;
@@ -432,7 +432,7 @@ export const useProjectStore = defineStore('project', () => {
       // 当来源为 default 时，需要将默认 Node 目录传给后端加入 PATH
       const source = project.packageManagerSource || 'project';
       if (source === 'default') {
-        pmNodePath = resolveAppDefaultNodePath(nodeStore.versions, nodeStore.appDefault) || undefined;
+        pmNodePath = resolveAppDefaultNodePath(nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime) || undefined;
       }
     }
 

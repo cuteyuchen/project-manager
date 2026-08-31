@@ -14,7 +14,9 @@ const nodeManager = readFileSync(resolve(process.cwd(), 'src/views/NodeManager.v
 assert.match(nodeManager, /new ResizeObserver/);
 assert.match(nodeManager, /runtimeListMode !== 'card'/);
 assert.match(nodeManager, /runtime-card-list/);
-assert.match(nodeManager, /summarizeRuntimeSources\(row\.runtimes\)/);
+assert.match(nodeManager, /row\.effectiveRuntime\.source/);
+assert.match(nodeManager, /runtime-table-actions[\s\S]*flex-wrap: nowrap/);
+assert.match(nodeManager, /runtime-card__actions[\s\S]*flex-wrap: nowrap/);
 assert.match(nodeManager, /@container \(max-width: 1100px\)/);
 assert.match(nodeManager, /@container \(max-width: 700px\)/);
 

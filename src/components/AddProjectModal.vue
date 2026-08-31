@@ -7,7 +7,7 @@ import type { Project, CustomCommand, ProjectQuickCommand } from '../types';
 import type { ProjectInfo, ImportNode } from '../api/types';
 import { useNodeStore } from '../stores/node';
 import { normalizeNodeVersion, projectNodeVersionHint } from '../utils/nvm';
-import { getRuntimesByVersion, resolveAppDefaultNodePath, resolveProjectNodePath, resolveProjectRuntime } from '../utils/nodeRuntime';
+import { getNodeRuntimeId, normalizeRuntimeVersion, resolveAppDefaultNodePath, resolveProjectNodePath, resolveProjectRuntime } from '../utils/nodeRuntime';
 import { ensureNodeInstallCommand, getInstallDependenciesCommand, buildJavaPresetCommands, isWindowsPlatform } from '../utils/projectCommands';
 import { getCustomCommandDisplayName } from '../utils/projectCommands';
 import { useSettingsStore } from '../stores/settings';
@@ -95,26 +95,13 @@ const editorHint = computed(() => defaultEditor.value
   ? `${t('project.editorHint')}：${defaultEditor.value.name || defaultEditor.value.path}`
   : t('project.editorHint'));
 
-const nodeVersions = ref<string[]>([]);
 const loading = ref(false);
-
-const runtimeOptions = computed(() => nodeStore.versions.filter(runtime =>
-  runtime.status !== 'broken' && runtime.status !== 'unavailable',
-));
-const missingRuntimeOption = computed(() => {
-  if (!form.value.nodeRuntimeId || runtimeOptions.value.some(runtime => runtime.runtimeId === form.value.nodeRuntimeId)) return null;
-  return {
-    runtimeId: form.value.nodeRuntimeId,
-    version: form.value.nodeVersion || t('nodes.unavailable'),
-    source: 'custom',
-    status: 'unavailable' as const,
-  };
-});
 
 function runtimeSourceLabel(source: string): string {
   if (source === 'managed') return t('nodes.sourceManaged');
   if (source === 'nvm') return t('nodes.sourceNvm');
   if (source === 'system') return t('nodes.sourceSystem');
+  if (source === 'external') return t('nodes.sourceExternal');
   return t('nodes.sourceCustom');
 }
 
@@ -220,6 +207,35 @@ const form = ref<ProjectForm>({
   terminalInjectNode: true,
 });
 
+const selectedExistingRuntime = computed(() => {
+  const runtimeId = form.value.nodeRuntimeId;
+  if (!runtimeId) return undefined;
+  return nodeStore.versions.find(runtime => getNodeRuntimeId(runtime) === runtimeId);
+});
+
+const runtimeOptions = computed(() => nodeStore.versionEntries
+  .map(entry => {
+    const selected = selectedExistingRuntime.value;
+    const selectedVersion = selected && normalizeRuntimeVersion(selected.version).toLowerCase();
+    const entryVersion = normalizeRuntimeVersion(entry.version).toLowerCase();
+    // Preserve an existing exact project binding while editing, but keep one
+    // option per version and use the effective Runtime for new selections.
+    return selected && selectedVersion === entryVersion
+      ? { ...selected, version: entry.version }
+      : { ...entry.effectiveRuntime, version: entry.version };
+  })
+  .filter(runtime => runtime.status !== 'broken' && runtime.status !== 'unavailable'));
+
+const missingRuntimeOption = computed(() => {
+  if (!form.value.nodeRuntimeId || runtimeOptions.value.some(runtime => runtime.runtimeId === form.value.nodeRuntimeId)) return null;
+  return {
+    runtimeId: form.value.nodeRuntimeId,
+    version: form.value.nodeVersion || t('nodes.unavailable'),
+    source: selectedExistingRuntime.value?.source || 'custom',
+    status: 'unavailable' as const,
+  };
+});
+
 /***********************标签输入处理*********************/
 /** 所有项目已使用标签，用于新增/编辑项目时复用同一个标签 */
 const allProjectTags = computed(() => collectProjectTags(projectStore.projects));
@@ -253,29 +269,17 @@ function buildEmptyForm(): ProjectForm {
   };
 }
 
-function setNodeVersionOptions(list: string[], preserveCurrent = true) {
-  const current = form.value.nodeVersion;
-  const next = [...list];
-
-  if (preserveCurrent && current && !next.includes(current)) {
-    next.unshift(current);
-  }
-
-  nodeVersions.value = next;
-
-  if (!form.value.nodeVersion) {
-    form.value.nodeVersion = next[0] || '';
-  }
-}
-
 async function refreshNodeVersions() {
   try {
     await nodeStore.loadRuntimes();
-    setNodeVersionOptions(nodeStore.versions.map((item) => item.version));
   } catch (error) {
     console.error('Failed to load node versions', error);
-    setNodeVersionOptions([]);
   }
+}
+
+function effectiveRuntimeForVersion(version: string): typeof runtimeOptions.value[number] | undefined {
+  const normalized = normalizeRuntimeVersion(version).toLowerCase();
+  return runtimeOptions.value.find(runtime => normalizeRuntimeVersion(runtime.version).toLowerCase() === normalized);
 }
 
 function resetRepoConfigState() {
@@ -302,7 +306,7 @@ async function applyDetectedNodeVersion(rawVersion?: string | null) {
     return;
   }
 
-  let installed = getRuntimesByVersion(nodeStore.versions, normalizedNvmVersion)[0];
+  let installed = effectiveRuntimeForVersion(normalizedNvmVersion);
 
   if (!installed && nodeStore.managedSupported) {
     try {
@@ -310,7 +314,7 @@ async function applyDetectedNodeVersion(rawVersion?: string | null) {
       await nodeStore.installManagedNode(normalizedNvmVersion);
       ElMessage.success(t('project.autoInstallSuccess', { version: normalizedNvmVersion }));
       await refreshNodeVersions();
-      installed = getRuntimesByVersion(nodeStore.versions, normalizedNvmVersion)[0];
+      installed = effectiveRuntimeForVersion(normalizedNvmVersion);
     } catch (installError) {
       ElMessage.error(`${t('project.autoInstallFailed', { version: normalizedNvmVersion })}: ${String(installError)}`);
       console.error('Failed to auto-install node version', installError);
@@ -369,7 +373,7 @@ async function applyScanResult(info: ProjectInfo, options: { preferDetectedName?
 }
 
 function hydrateFormFromProject(project: Project) {
-  const resolvedRuntime = resolveProjectRuntime(project, nodeStore.versions, nodeStore.appDefault).runtime;
+  const resolvedRuntime = resolveProjectRuntime(project, nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime).runtime;
   form.value = {
     id: project.id,
     name: project.name,
@@ -380,7 +384,7 @@ function hydrateFormFromProject(project: Project) {
     gitConfigured: !!project.gitConfigured,
     gitRemoteUrl: project.gitRemoteUrl || '',
     gitBranch: project.gitBranch || '',
-    nodeRuntimeId: project.nodeRuntimeId || resolvedRuntime?.runtimeId || '',
+    nodeRuntimeId: resolvedRuntime?.runtimeId || project.nodeRuntimeId || '',
     nodeVersion: project.nodeVersion || '',
     packageManager: project.packageManager || 'npm',
     packageManagerSource: project.packageManagerSource || 'project',
@@ -457,7 +461,7 @@ watch(() => form.value.nodeVersion, () => {
 
 watch(() => form.value.nodeRuntimeId, (runtimeId) => {
   if (!runtimeId) {
-    if (form.value.nodeVersion && !getRuntimesByVersion(nodeStore.versions, form.value.nodeVersion).length) {
+    if (form.value.nodeVersion && !effectiveRuntimeForVersion(form.value.nodeVersion)) {
       form.value.nodeVersion = '';
     }
     return;
@@ -496,8 +500,9 @@ async function refreshPmAvailability() {
       },
       nodeStore.versions,
       nodeStore.appDefault,
+      nodeStore.systemNodeRuntime,
     );
-    const defaultNodePath = resolveAppDefaultNodePath(nodeStore.versions, nodeStore.appDefault);
+    const defaultNodePath = resolveAppDefaultNodePath(nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime);
 
     const allPms: Array<'npm' | 'yarn' | 'pnpm' | 'cnpm'> = ['npm', 'yarn', 'pnpm', 'cnpm'];
     const results: Record<string, PackageManagerResolveResult> = {};
@@ -554,7 +559,7 @@ async function installPMForNode(pm: string, nodeVersion: string, nodePath: strin
     console.error('Failed to install PM for selected node:', error);
     // Fallback: try to install using default node version's npm
     try {
-      const defaultNodePath = resolveAppDefaultNodePath(nodeStore.versions, nodeStore.appDefault);
+      const defaultNodePath = resolveAppDefaultNodePath(nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime);
       if (defaultNodePath) {
         await api.installPm(defaultNodePath, pm);
         ElMessage.warning(t('project.pmInstallFallback', { pm, version: nodeVersion }));

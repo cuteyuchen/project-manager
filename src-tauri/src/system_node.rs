@@ -13,19 +13,20 @@ use crate::node_runtime::{node_executable, validate_node_version};
 const INTEGRATION_FILE: &str = "system-node-integration.json";
 const OPERATION_DIRECTORY: &str = "node-system";
 const APP_DATA_DIRECTORY_IDENTIFIER: &str = "com.cuteyuchen.project-manager";
-const OPERATION_SCHEMA_VERSION: u32 = 1;
+const OPERATION_SCHEMA_VERSION: u32 = 2;
 const OPERATION_ARGUMENT: &str = "--elevated-node-operation";
 #[cfg(windows)]
 const ELEVATED_OPERATION_TIMEOUT_MS: u32 = 45_000;
 
 #[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SystemNodeCandidate {
     pub path: String,
     pub version: Option<String>,
+    pub canonical_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,9 +41,10 @@ pub struct SystemNodeState {
     pub path_scope: Option<String>,
     pub nvm_symlink: Option<String>,
     pub nvm_target_path: Option<String>,
+    pub canonical_node_path: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeRuntimeTarget {
     pub runtime_id: Option<String>,
@@ -57,6 +59,7 @@ pub struct NodeRuntimeTarget {
 pub struct SystemNodeSwitchOptions {
     #[serde(default)]
     pub elevated: bool,
+    /// Kept for API compatibility. Elevated Controller operations repair priority internally.
     #[serde(default)]
     pub repair_path_priority: bool,
 }
@@ -78,10 +81,27 @@ pub struct SystemNodeSwitchResult {
 #[serde(rename_all = "camelCase")]
 struct SystemNodeIntegrationState {
     managed_runtime_id: Option<String>,
+    controller_mode: Option<String>,
+    controller_link_path: Option<String>,
+    previous_target: Option<String>,
+    managed_path_entry: Option<String>,
+    /// Legacy R2.2 entries. They are only used for one-time safe cleanup.
     user_path_entry: Option<String>,
     machine_path_entry: Option<String>,
     user_path_backup: Option<String>,
     machine_path_backup: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SystemNodeControllerKind {
+    ExistingNodeLink,
+    ProjectManagerLink,
+}
+
+#[derive(Debug, Clone)]
+struct SystemNodeController {
+    link_path: PathBuf,
+    kind: SystemNodeControllerKind,
 }
 
 #[derive(Debug, Clone)]
@@ -89,18 +109,30 @@ struct ResolvedTarget {
     runtime_id: Option<String>,
     version: String,
     source: String,
-    runtime_root: Option<String>,
     directory: PathBuf,
     executable: PathBuf,
 }
 
 #[derive(Debug, Clone)]
+struct LinkSnapshot {
+    existed: bool,
+    target: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+struct PathIntegrationResult {
+    state: SystemNodeIntegrationState,
+    user_backup: Option<PathSnapshot>,
+    machine_backup: Option<PathSnapshot>,
+}
+
+#[derive(Debug, Clone)]
 enum SwitchFailure {
     RuntimeUnavailable(String),
-    NvmNotFound,
     Permission(String),
-    NvmSwitchFailed(String),
+    Controller(String),
     PathWrite { scope: &'static str, detail: String },
+    MachinePathConflict(String),
     Verification(String),
     IntegrationState(String),
     Rollback(String),
@@ -113,25 +145,29 @@ impl SwitchFailure {
         match self {
             Self::RuntimeUnavailable(detail)
             | Self::Permission(detail)
-            | Self::NvmSwitchFailed(detail)
+            | Self::Controller(detail)
+            | Self::MachinePathConflict(detail)
             | Self::Verification(detail)
             | Self::IntegrationState(detail)
             | Self::Rollback(detail)
             | Self::ElevatedOperationTimeout(detail) => detail.clone(),
-            Self::NvmNotFound => "NVM for Windows executable was not found".to_string(),
             Self::PathWrite { scope, detail } => format!("Failed to write {scope} PATH: {detail}"),
-            Self::Unsupported => "System Node switching is only supported on Windows desktop".to_string(),
+            Self::Unsupported => {
+                "System Node switching is only supported on Windows desktop".to_string()
+            }
         }
     }
 
     fn error_code(&self) -> &'static str {
         match self {
             Self::RuntimeUnavailable(_) => "runtime_unavailable",
-            Self::NvmNotFound => "nvm_not_found",
             Self::Permission(_) => "elevation_required",
-            Self::NvmSwitchFailed(_) => "nvm_switch_failed",
+            Self::Controller(_) => "controller_link_failed",
+            Self::MachinePathConflict(_) => "machine_path_conflict",
             Self::PathWrite { scope: "user", .. } => "user_path_write_failed",
-            Self::PathWrite { scope: "machine", .. } => "machine_path_write_failed",
+            Self::PathWrite {
+                scope: "machine", ..
+            } => "machine_path_write_failed",
             Self::PathWrite { .. } => "path_write_failed",
             Self::Verification(_) => "verification_failed",
             Self::IntegrationState(_) => "integration_state_failed",
@@ -139,6 +175,10 @@ impl SwitchFailure {
             Self::ElevatedOperationTimeout(_) => "elevated_operation_timeout",
             Self::Unsupported => "unsupported_platform",
         }
+    }
+
+    fn requires_elevation(&self) -> bool {
+        matches!(self, Self::Permission(_) | Self::MachinePathConflict(_))
     }
 }
 
@@ -156,22 +196,18 @@ struct RegistryStringType(winreg::enums::RegType);
 #[derive(Debug, Clone)]
 struct RegistryStringType;
 
+/// Fixed, non-shell operation schema for the one-shot elevated helper.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "kebab-case")]
 enum ElevatedNodeOperation {
-    NvmUse {
+    Switch {
         schema_version: u32,
         operation_id: String,
+        target_runtime_id: Option<String>,
         target_version: String,
-        runtime_root: Option<String>,
-        remove_machine_path_entry: Option<String>,
-    },
-    MachinePathApply {
-        schema_version: u32,
-        operation_id: String,
         target_path: String,
-        target_version: String,
-        previous_machine_path_entry: Option<String>,
+        target_source: String,
+        target_runtime_root: Option<String>,
     },
 }
 
@@ -208,17 +244,22 @@ pub(crate) fn detect_system_node_state() -> SystemNodeState {
         .iter()
         .map(|path| SystemNodeCandidate {
             path: path.to_string_lossy().to_string(),
-            version: run_node_version(path).ok().and_then(|raw| normalize_version(&raw)),
+            version: run_node_version(path)
+                .ok()
+                .and_then(|raw| normalize_version(&raw)),
+            canonical_path: canonicalize_for_compare(path)
+                .map(|value| value.to_string_lossy().to_string()),
         })
         .collect::<Vec<_>>();
 
     let nvm_symlink = discover_nvm_symlink();
     let nvm_target_path = nvm_symlink
         .as_deref()
-        .and_then(|path| fs::canonicalize(path).ok())
+        .and_then(|path| canonicalize_for_compare(Path::new(path)))
         .map(|path| path.to_string_lossy().to_string());
     let first = candidates.first();
     let first_path = first.map(|candidate| candidate.path.clone());
+    let canonical_node_path = first.and_then(|candidate| candidate.canonical_path.clone());
     let path_scope = first_path
         .as_deref()
         .map(|path| classify_path_scope(Path::new(path), nvm_symlink.as_deref()));
@@ -231,7 +272,9 @@ pub(crate) fn detect_system_node_state() -> SystemNodeState {
     };
 
     SystemNodeState {
-        available: first.and_then(|candidate| candidate.version.as_ref()).is_some(),
+        available: first
+            .and_then(|candidate| candidate.version.as_ref())
+            .is_some(),
         version: first.and_then(|candidate| candidate.version.clone()),
         node_path: first_path,
         runtime_id: None,
@@ -240,13 +283,20 @@ pub(crate) fn detect_system_node_state() -> SystemNodeState {
         path_scope,
         nvm_symlink,
         nvm_target_path,
+        canonical_node_path,
     }
 }
 
 #[cfg(windows)]
 fn latest_windows_path() -> String {
-    let machine = read_machine_path().ok().map(|snapshot| snapshot.text).unwrap_or_default();
-    let user = read_user_path().ok().map(|snapshot| snapshot.text).unwrap_or_default();
+    let machine = read_machine_path()
+        .ok()
+        .map(|snapshot| snapshot.text)
+        .unwrap_or_default();
+    let user = read_user_path()
+        .ok()
+        .map(|snapshot| snapshot.text)
+        .unwrap_or_default();
     let raw = join_registry_paths(&machine, &user);
     if raw.is_empty() {
         return env::var("PATH").unwrap_or_default();
@@ -291,7 +341,10 @@ fn find_node_candidates(path_value: &str) -> Vec<PathBuf> {
         return Vec::new();
     }
 
-    parse_node_candidate_paths(&String::from_utf8_lossy(&output.stdout), env::current_dir().ok().as_deref())
+    parse_node_candidate_paths(
+        &String::from_utf8_lossy(&output.stdout),
+        env::current_dir().ok().as_deref(),
+    )
 }
 
 fn parse_node_candidate_paths(output: &str, current_dir: Option<&Path>) -> Vec<PathBuf> {
@@ -320,14 +373,19 @@ fn parse_node_candidate_paths(output: &str, current_dir: Option<&Path>) -> Vec<P
 
 fn run_node_version(executable: &Path) -> Result<String, String> {
     let mut command = Command::new(executable);
-    command.arg("-v").stdout(Stdio::piped()).stderr(Stdio::piped());
+    command
+        .arg("-v")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
         command.creation_flags(CREATE_NO_WINDOW);
     }
 
-    let mut child = command.spawn().map_err(|error| format!("failed to start node executable: {error}"))?;
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("failed to start node executable: {error}"))?;
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
         match child.try_wait() {
@@ -376,14 +434,26 @@ fn normalize_path_string(path: &Path) -> String {
     value
 }
 
+fn canonicalize_for_compare(path: &Path) -> Option<PathBuf> {
+    fs::canonicalize(path).ok().map(|value| {
+        let mut normalized = value;
+        #[cfg(windows)]
+        {
+            if let Ok(stripped) = normalized.strip_prefix(r"\\?\") {
+                normalized = stripped.to_path_buf();
+            }
+        }
+        normalized
+    })
+}
+
 fn path_strings_equal(left: &Path, right: &Path) -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        normalize_path_string(left) == normalize_path_string(right)
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        left == right
+    match (
+        canonicalize_for_compare(left),
+        canonicalize_for_compare(right),
+    ) {
+        (Some(left), Some(right)) => normalize_path_string(&left) == normalize_path_string(&right),
+        _ => normalize_path_string(left) == normalize_path_string(right),
     }
 }
 
@@ -395,10 +465,22 @@ fn classify_path_scope(executable: &Path, nvm_symlink: Option<&str>) -> String {
             return "nvm".to_string();
         }
     }
-    if path_value_contains_executable(&read_machine_path().ok().map(|value| value.text).unwrap_or_default(), executable) {
+    if path_value_contains_executable(
+        &read_machine_path()
+            .ok()
+            .map(|value| value.text)
+            .unwrap_or_default(),
+        executable,
+    ) {
         return "machine".to_string();
     }
-    if path_value_contains_executable(&read_user_path().ok().map(|value| value.text).unwrap_or_default(), executable) {
+    if path_value_contains_executable(
+        &read_user_path()
+            .ok()
+            .map(|value| value.text)
+            .unwrap_or_default(),
+        executable,
+    ) {
         return "user".to_string();
     }
     "unknown".to_string()
@@ -415,7 +497,9 @@ fn path_value_contains_executable(path_value: &str, executable: &Path) -> bool {
         .split(';')
         .filter(|entry| !entry.trim().is_empty())
         .any(|entry| {
-            let entry = expand_windows_environment(entry.trim()).trim_matches('"').to_string();
+            let entry = expand_windows_environment(entry.trim())
+                .trim_matches('"')
+                .to_string();
             let path = Path::new(&entry);
             let candidate = if path.extension().is_some() && path_strings_equal(path, executable) {
                 path.to_path_buf()
@@ -424,6 +508,11 @@ fn path_value_contains_executable(path_value: &str, executable: &Path) -> bool {
             };
             path_strings_equal(&candidate, executable)
         })
+}
+
+#[cfg(not(windows))]
+fn path_value_contains_executable(_path_value: &str, _executable: &Path) -> bool {
+    false
 }
 
 #[cfg(windows)]
@@ -461,7 +550,11 @@ fn join_path_entries(entries: &[String]) -> String {
 }
 
 fn normalize_path_entry(value: &str) -> String {
-    let mut normalized = value.trim().trim_matches('"').replace('/', "\\").to_lowercase();
+    let mut normalized = value
+        .trim()
+        .trim_matches('"')
+        .replace('/', "\\")
+        .to_lowercase();
     while normalized.ends_with('\\') && normalized.len() > 3 {
         normalized.pop();
     }
@@ -472,21 +565,31 @@ fn path_entries_equal(left: &str, right: &str) -> bool {
     normalize_path_entry(left) == normalize_path_entry(right)
 }
 
-fn remove_owned_path_entry(entries: &mut Vec<String>, owned: Option<&str>) -> bool {
-    let Some(owned) = owned else {
-        return false;
-    };
-    let Some(index) = entries.iter().position(|entry| path_entries_equal(entry, owned)) else {
-        return false;
-    };
-    entries.remove(index);
-    true
+fn remove_owned_path_entries(entries: &mut Vec<String>, owned: &[Option<&str>]) -> bool {
+    let before = entries.len();
+    entries.retain(|entry| {
+        !owned
+            .iter()
+            .flatten()
+            .any(|value| path_entries_equal(entry, value))
+    });
+    entries.len() != before
 }
 
-fn integrate_path_value(original: &str, owned: Option<&str>, target: &str) -> (String, bool) {
+fn remove_owned_path_entry(entries: &mut Vec<String>, owned: Option<&str>) -> bool {
+    remove_owned_path_entries(entries, &[owned])
+}
+
+fn integrate_path_value_with_owned(
+    original: &str,
+    owned: &[Option<&str>],
+    target: &str,
+) -> (String, bool, bool) {
     let mut entries = split_path_entries(original);
-    remove_owned_path_entry(&mut entries, owned);
-    let existing_index = entries.iter().position(|entry| path_entries_equal(entry, target));
+    let removed = remove_owned_path_entries(&mut entries, owned);
+    let existing_index = entries
+        .iter()
+        .position(|entry| path_entries_equal(entry, target));
     let already_present = existing_index.is_some();
     if !already_present {
         entries.insert(0, target.to_string());
@@ -494,7 +597,17 @@ fn integrate_path_value(original: &str, owned: Option<&str>, target: &str) -> (S
         let existing = entries.remove(existing_index.expect("existing target index"));
         entries.insert(0, existing);
     }
-    (join_path_entries(&entries), !already_present)
+    let value = join_path_entries(&entries);
+    (
+        value.clone(),
+        value != original,
+        removed || !already_present,
+    )
+}
+
+fn integrate_path_value(original: &str, owned: Option<&str>, target: &str) -> (String, bool) {
+    let (value, changed, _) = integrate_path_value_with_owned(original, &[owned], target);
+    (value, changed)
 }
 
 fn remove_path_entry_value(original: &str, owned: Option<&str>) -> (String, bool) {
@@ -513,35 +626,47 @@ fn join_registry_paths(machine: &str, user: &str) -> String {
 }
 
 fn resolve_target(target: &NodeRuntimeTarget) -> Result<ResolvedTarget, SwitchFailure> {
-    if !matches!(target.source.as_str(), "managed" | "nvm" | "custom" | "system") {
+    if !matches!(
+        target.source.as_str(),
+        "managed" | "nvm" | "custom" | "system"
+    ) {
         return Err(SwitchFailure::RuntimeUnavailable(format!(
             "Unsupported Node Runtime source: {}",
             target.source
         )));
     }
-    let expected = validate_node_version(&target.version)
-        .map_err(|error| SwitchFailure::RuntimeUnavailable(error.to_string()))?;
+    let expected =
+        validate_node_version(&target.version).map_err(SwitchFailure::RuntimeUnavailable)?;
     let raw_path = target.path.trim();
     if raw_path.is_empty() {
-        return Err(SwitchFailure::RuntimeUnavailable("Node Runtime path is empty".to_string()));
+        return Err(SwitchFailure::RuntimeUnavailable(
+            "Node Runtime path is empty".to_string(),
+        ));
     }
     let path = PathBuf::from(raw_path);
     let executable = if path.is_file() {
         path.clone()
     } else {
         node_executable(&path).ok_or_else(|| {
-            SwitchFailure::RuntimeUnavailable(format!("Node executable was not found: {}", path.display()))
+            SwitchFailure::RuntimeUnavailable(format!(
+                "Node executable was not found: {}",
+                path.display()
+            ))
         })?
     };
-    let directory = executable
-        .parent()
-        .map(Path::to_path_buf)
-        .ok_or_else(|| SwitchFailure::RuntimeUnavailable("Node executable has no parent directory".to_string()))?;
+    let directory = executable.parent().map(Path::to_path_buf).ok_or_else(|| {
+        SwitchFailure::RuntimeUnavailable("Node executable has no parent directory".to_string())
+    })?;
+    let directory = canonicalize_for_compare(&directory).unwrap_or(directory);
+    let executable = canonicalize_for_compare(&executable).unwrap_or(executable);
     let actual = run_node_version(&executable)
-        .map_err(|error| SwitchFailure::RuntimeUnavailable(error.to_string()))
+        .map_err(SwitchFailure::RuntimeUnavailable)
         .and_then(|raw| {
             normalize_version(&raw).ok_or_else(|| {
-                SwitchFailure::RuntimeUnavailable(format!("Invalid Node version returned by {}", executable.display()))
+                SwitchFailure::RuntimeUnavailable(format!(
+                    "Invalid Node version returned by {}",
+                    executable.display()
+                ))
             })
         })?;
     if actual != expected {
@@ -553,7 +678,6 @@ fn resolve_target(target: &NodeRuntimeTarget) -> Result<ResolvedTarget, SwitchFa
         runtime_id: target.runtime_id.clone(),
         version: expected,
         source: target.source.clone(),
-        runtime_root: target.runtime_root.clone(),
         directory,
         executable,
     })
@@ -563,48 +687,14 @@ fn target_is_active(state: &SystemNodeState, target: &ResolvedTarget) -> bool {
     if !state.available || state.version.as_deref() != Some(target.version.as_str()) {
         return false;
     }
-    let Some(current_path) = state.node_path.as_deref() else {
+    let Some(current_path) = state
+        .canonical_node_path
+        .as_deref()
+        .or(state.node_path.as_deref())
+    else {
         return false;
     };
-    let current = Path::new(current_path);
-    if target.source == "nvm" {
-        if state.path_scope.as_deref() == Some("nvm") {
-            if let Some(nvm_target) = state.nvm_target_path.as_deref() {
-                if path_strings_equal(Path::new(nvm_target), &target.directory) {
-                    return true;
-                }
-            }
-            return path_strings_equal(current, &target.executable);
-        }
-        return path_strings_equal(current, &target.executable);
-    }
-    path_strings_equal(current, &target.executable)
-}
-
-#[cfg(windows)]
-fn nvm_path_target(target: &ResolvedTarget) -> Option<ResolvedTarget> {
-    let symlink = discover_nvm_symlink()?;
-    let directory = PathBuf::from(&symlink);
-    let executable = node_executable(&directory)?;
-    let actual = run_node_version(&executable)
-        .ok()
-        .and_then(|raw| normalize_version(&raw))?;
-    if actual != target.version {
-        return None;
-    }
-    Some(ResolvedTarget {
-        runtime_id: target.runtime_id.clone(),
-        version: target.version.clone(),
-        source: "nvm".to_string(),
-        runtime_root: target.runtime_root.clone(),
-        directory,
-        executable,
-    })
-}
-
-#[cfg(not(windows))]
-fn nvm_path_target(_target: &ResolvedTarget) -> Option<ResolvedTarget> {
-    None
+    path_strings_equal(Path::new(current_path), &target.executable)
 }
 
 fn result(
@@ -635,53 +725,35 @@ fn failure_result(
     failure: &SwitchFailure,
 ) -> SystemNodeSwitchResult {
     let current = detect_system_node_state();
-    let status = if matches!(failure, SwitchFailure::Permission(_)) {
-        "elevation-required"
-    } else {
-        "failed"
-    };
     result(
         false,
-        status,
+        if failure.requires_elevation() {
+            "elevation-required"
+        } else {
+            "failed"
+        },
         previous,
-        current,
+        current.clone(),
         operation,
         Some(failure.error_code()),
         Some(failure.message()),
-        None,
+        if matches!(failure, SwitchFailure::MachinePathConflict(_)) {
+            current.node_path
+        } else {
+            None
+        },
     )
 }
 
-fn conflict_result(
-    previous: SystemNodeState,
-    operation: &str,
-    target: &ResolvedTarget,
-    error_code: &str,
-) -> SystemNodeSwitchResult {
-    let current = detect_system_node_state();
-    let conflict = current.node_path.clone();
-    result(
-        false,
-        "path-conflict",
-        previous,
-        current,
-        Some(operation),
-        Some(error_code),
-        Some(format!(
-            "Windows PATH resolves another Node before {}",
-            target.executable.display()
-        )),
-        conflict,
-    )
+fn integration_path(app: &AppHandle) -> Result<PathBuf, SwitchFailure> {
+    crate::app_config_file_path(app, INTEGRATION_FILE).map_err(SwitchFailure::IntegrationState)
 }
 
-fn read_integration_state(app: &AppHandle) -> Result<SystemNodeIntegrationState, SwitchFailure> {
-    let path = crate::app_config_file_path(app, INTEGRATION_FILE)
-        .map_err(SwitchFailure::IntegrationState)?;
+fn read_integration_state_at(path: &Path) -> Result<SystemNodeIntegrationState, SwitchFailure> {
     if !path.exists() {
         return Ok(SystemNodeIntegrationState::default());
     }
-    let content = fs::read_to_string(&path).map_err(|error| {
+    let content = fs::read_to_string(path).map_err(|error| {
         SwitchFailure::IntegrationState(format!("failed to read {}: {error}", path.display()))
     })?;
     if content.trim().is_empty() {
@@ -692,32 +764,29 @@ fn read_integration_state(app: &AppHandle) -> Result<SystemNodeIntegrationState,
     })
 }
 
-fn write_integration_state(
-    app: &AppHandle,
+fn write_integration_state_at(
+    path: &Path,
     state: &SystemNodeIntegrationState,
 ) -> Result<(), SwitchFailure> {
-    let path = crate::app_config_file_path(app, INTEGRATION_FILE)
-        .map_err(SwitchFailure::IntegrationState)?;
     let content = serde_json::to_string_pretty(state)
         .map_err(|error| SwitchFailure::IntegrationState(error.to_string()))?;
-    crate::atomic_write_config(&path, &content).map_err(SwitchFailure::IntegrationState)
+    crate::atomic_write_config(path, &content).map_err(SwitchFailure::IntegrationState)
 }
 
 #[cfg(windows)]
 fn read_user_path() -> Result<PathSnapshot, String> {
     use winreg::types::FromRegValue;
-    let key = match winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
-        .open_subkey(USER_ENVIRONMENT_KEY)
-    {
-        Ok(key) => key,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Ok(PathSnapshot {
-                text: String::new(),
-                value_type: RegistryStringType(winreg::enums::REG_EXPAND_SZ),
-            });
-        }
-        Err(error) => return Err(error.to_string()),
-    };
+    let key =
+        match winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER).open_subkey("Environment") {
+            Ok(key) => key,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Ok(PathSnapshot {
+                    text: String::new(),
+                    value_type: RegistryStringType(winreg::enums::REG_EXPAND_SZ),
+                });
+            }
+            Err(error) => return Err(error.to_string()),
+        };
     match key.get_raw_value("Path") {
         Ok(value) => Ok(PathSnapshot {
             text: String::from_reg_value(&value).map_err(|error| error.to_string())?,
@@ -733,7 +802,10 @@ fn read_user_path() -> Result<PathSnapshot, String> {
 
 #[cfg(windows)]
 fn read_machine_path() -> Result<PathSnapshot, String> {
-    read_registry_path(winreg::enums::HKEY_LOCAL_MACHINE, MACHINE_ENVIRONMENT_KEY)
+    read_registry_path(
+        winreg::enums::HKEY_LOCAL_MACHINE,
+        "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
+    )
 }
 
 #[cfg(not(windows))]
@@ -753,13 +825,10 @@ fn read_machine_path() -> Result<PathSnapshot, String> {
 }
 
 #[cfg(windows)]
-const USER_ENVIRONMENT_KEY: &str = "Environment";
-
-#[cfg(windows)]
-const MACHINE_ENVIRONMENT_KEY: &str = "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment";
-
-#[cfg(windows)]
-fn read_registry_path(root: windows_sys::Win32::System::Registry::HKEY, key_name: &str) -> Result<PathSnapshot, String> {
+fn read_registry_path(
+    root: windows_sys::Win32::System::Registry::HKEY,
+    key_name: &str,
+) -> Result<PathSnapshot, String> {
     use winreg::types::FromRegValue;
     let key = winreg::RegKey::predef(root)
         .open_subkey(key_name)
@@ -781,8 +850,11 @@ fn read_registry_path(root: windows_sys::Win32::System::Registry::HKEY, key_name
 fn registry_environment_value(name: &str) -> Option<String> {
     use winreg::types::FromRegValue;
     for (root, key_name) in [
-        (winreg::enums::HKEY_CURRENT_USER, USER_ENVIRONMENT_KEY),
-        (winreg::enums::HKEY_LOCAL_MACHINE, MACHINE_ENVIRONMENT_KEY),
+        (winreg::enums::HKEY_CURRENT_USER, "Environment"),
+        (
+            winreg::enums::HKEY_LOCAL_MACHINE,
+            "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
+        ),
     ] {
         let Ok(key) = winreg::RegKey::predef(root).open_subkey(key_name) else {
             continue;
@@ -803,27 +875,41 @@ fn registry_environment_value(name: &str) -> Option<String> {
 fn write_user_path(snapshot: &PathSnapshot) -> Result<(), io::Error> {
     use winreg::enums::HKEY_CURRENT_USER;
     let key = winreg::RegKey::predef(HKEY_CURRENT_USER)
-        .create_subkey(USER_ENVIRONMENT_KEY)?
+        .create_subkey("Environment")?
         .0;
-    key.set_raw_value("Path", &registry_path_value(&snapshot.text, &snapshot.value_type.0))
+    key.set_raw_value(
+        "Path",
+        &registry_path_value(&snapshot.text, &snapshot.value_type.0),
+    )
 }
 
 #[cfg(windows)]
 fn write_machine_path(snapshot: &PathSnapshot) -> Result<(), io::Error> {
     use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE, KEY_SET_VALUE};
-    let key = winreg::RegKey::predef(HKEY_LOCAL_MACHINE)
-        .open_subkey_with_flags(MACHINE_ENVIRONMENT_KEY, KEY_QUERY_VALUE | KEY_SET_VALUE)?;
-    key.set_raw_value("Path", &registry_path_value(&snapshot.text, &snapshot.value_type.0))
+    let key = winreg::RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey_with_flags(
+        "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
+        KEY_QUERY_VALUE | KEY_SET_VALUE,
+    )?;
+    key.set_raw_value(
+        "Path",
+        &registry_path_value(&snapshot.text, &snapshot.value_type.0),
+    )
 }
 
 #[cfg(not(windows))]
 fn write_user_path(_snapshot: &PathSnapshot) -> Result<(), io::Error> {
-    Err(io::Error::new(io::ErrorKind::Unsupported, "registry PATH is only available on Windows"))
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "registry PATH is only available on Windows",
+    ))
 }
 
 #[cfg(not(windows))]
 fn write_machine_path(_snapshot: &PathSnapshot) -> Result<(), io::Error> {
-    Err(io::Error::new(io::ErrorKind::Unsupported, "registry PATH is only available on Windows"))
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "registry PATH is only available on Windows",
+    ))
 }
 
 #[cfg(windows)]
@@ -851,7 +937,10 @@ fn broadcast_environment() {
         use windows_sys::Win32::UI::WindowsAndMessaging::{
             SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG, WM_SETTINGCHANGE,
         };
-        let value: Vec<u16> = "Environment".encode_utf16().chain(std::iter::once(0)).collect();
+        let value: Vec<u16> = "Environment"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
         let mut result = 0_usize;
         unsafe {
             let _ = SendMessageTimeoutW(
@@ -865,132 +954,6 @@ fn broadcast_environment() {
             );
         }
     }
-}
-
-fn apply_user_integration(
-    state: &SystemNodeIntegrationState,
-    target: &ResolvedTarget,
-) -> Result<(SystemNodeIntegrationState, PathSnapshot), SwitchFailure> {
-    let original = read_user_path().map_err(|detail| SwitchFailure::PathWrite {
-        scope: "user",
-        detail,
-    })?;
-    let (next_value, inserted) = integrate_path_value(
-        &original.text,
-        state.user_path_entry.as_deref(),
-        &target.directory.to_string_lossy(),
-    );
-    if next_value != original.text {
-        let next = path_snapshot_with_text(&original, next_value.clone());
-        write_user_path(&next).map_err(|error| {
-            if is_permission_error(&error) {
-                SwitchFailure::Permission(error.to_string())
-            } else {
-                SwitchFailure::PathWrite {
-                    scope: "user",
-                    detail: error.to_string(),
-                }
-            }
-        })?;
-        broadcast_environment();
-    }
-    let mut next_state = state.clone();
-    next_state.managed_runtime_id = target.runtime_id.clone();
-    next_state.user_path_entry = inserted.then(|| target.directory.to_string_lossy().to_string());
-    if next_value != original.text {
-        next_state.user_path_backup = Some(original.text.clone());
-    }
-    Ok((next_state, original))
-}
-
-fn apply_machine_integration(
-    state: &SystemNodeIntegrationState,
-    target: &ResolvedTarget,
-) -> Result<(SystemNodeIntegrationState, PathSnapshot, bool), SwitchFailure> {
-    let original = read_machine_path().map_err(|detail| SwitchFailure::PathWrite {
-        scope: "machine",
-        detail,
-    })?;
-    let (next_value, inserted) = integrate_path_value(
-        &original.text,
-        state.machine_path_entry.as_deref(),
-        &target.directory.to_string_lossy(),
-    );
-    if next_value != original.text {
-        let next = path_snapshot_with_text(&original, next_value.clone());
-        write_machine_path(&next).map_err(|error| {
-            if is_permission_error(&error) {
-                SwitchFailure::Permission(error.to_string())
-            } else {
-                SwitchFailure::PathWrite {
-                    scope: "machine",
-                    detail: error.to_string(),
-                }
-            }
-        })?;
-        broadcast_environment();
-    }
-    let mut next_state = state.clone();
-    next_state.managed_runtime_id = target.runtime_id.clone();
-    next_state.machine_path_entry = inserted.then(|| target.directory.to_string_lossy().to_string());
-    if next_value != original.text {
-        next_state.machine_path_backup = Some(original.text.clone());
-    }
-    Ok((next_state, original.clone(), next_value != original.text))
-}
-
-fn remove_user_integration(
-    state: &SystemNodeIntegrationState,
-) -> Result<(SystemNodeIntegrationState, PathSnapshot, bool), SwitchFailure> {
-    let original = read_user_path().map_err(|detail| SwitchFailure::PathWrite {
-        scope: "user",
-        detail,
-    })?;
-    let (next_value, changed) = remove_path_entry_value(&original.text, state.user_path_entry.as_deref());
-    if changed {
-        let next = path_snapshot_with_text(&original, next_value);
-        write_user_path(&next).map_err(|error| {
-            if is_permission_error(&error) {
-                SwitchFailure::Permission(error.to_string())
-            } else {
-                SwitchFailure::PathWrite {
-                    scope: "user",
-                    detail: error.to_string(),
-                }
-            }
-        })?;
-        broadcast_environment();
-    }
-    let mut next_state = state.clone();
-    next_state.user_path_entry = None;
-    Ok((next_state, original, changed))
-}
-
-fn remove_machine_integration(
-    state: &SystemNodeIntegrationState,
-) -> Result<(SystemNodeIntegrationState, PathSnapshot, bool), SwitchFailure> {
-    let original = read_machine_path().map_err(|detail| SwitchFailure::PathWrite {
-        scope: "machine",
-        detail,
-    })?;
-    let (next_value, changed) = remove_path_entry_value(&original.text, state.machine_path_entry.as_deref());
-    if changed {
-        let next = path_snapshot_with_text(&original, next_value);
-        write_machine_path(&next).map_err(|error| {
-            if is_permission_error(&error) {
-                SwitchFailure::Permission(error.to_string())
-            } else {
-                SwitchFailure::PathWrite {
-                    scope: "machine",
-                    detail: error.to_string(),
-                }
-            }
-        })?;
-        broadcast_environment();
-    }
-    let mut next_state = state.clone();
-    next_state.machine_path_entry = None;
-    Ok((next_state, original, changed))
 }
 
 fn rollback_path_snapshot(
@@ -1009,560 +972,594 @@ fn rollback_path_snapshot(
     Ok(())
 }
 
-fn switch_nvm(
-    app: &AppHandle,
-    previous: SystemNodeState,
-    target: ResolvedTarget,
-    options: &SystemNodeSwitchOptions,
-) -> SystemNodeSwitchResult {
-    let state = match read_integration_state(app) {
-        Ok(state) => state,
-        Err(error) => return failure_result(previous, Some("nvm-use"), &error),
-    };
-    let previous_state = state.clone();
-    let (mut working_state, user_backup, _) = match remove_user_integration(&state) {
-        Ok(value) => value,
-        Err(error) => return failure_result(previous, Some("nvm-use"), &error),
-    };
+fn owned_path_values(state: &SystemNodeIntegrationState) -> [Option<&str>; 3] {
+    [
+        state.managed_path_entry.as_deref(),
+        state.user_path_entry.as_deref(),
+        state.machine_path_entry.as_deref(),
+    ]
+}
 
-    let machine_entry_exists = state.machine_path_entry.as_deref().is_some_and(|entry| {
-        read_machine_path()
-            .ok()
-            .map(|path| split_path_entries(&path.text).iter().any(|item| path_entries_equal(item, entry)))
-            .unwrap_or(false)
-    });
+fn apply_controller_path_integration(
+    state: &SystemNodeIntegrationState,
+    controller: &SystemNodeController,
+    force_machine: bool,
+) -> Result<PathIntegrationResult, SwitchFailure> {
+    let user_original = read_user_path().map_err(|detail| SwitchFailure::PathWrite {
+        scope: "user",
+        detail,
+    })?;
+    let machine_original = read_machine_path().map_err(|detail| SwitchFailure::PathWrite {
+        scope: "machine",
+        detail,
+    })?;
+    let owned = owned_path_values(state);
+    let controller_entry = controller.link_path.to_string_lossy().to_string();
+    let machine_has_controller = split_path_entries(&machine_original.text)
+        .iter()
+        .position(|entry| path_entries_equal(entry, &controller_entry));
 
-    let mut machine_backup: Option<PathSnapshot> = None;
-    if machine_entry_exists && !options.elevated {
-        match remove_machine_integration(&working_state) {
-            Ok((next_state, backup, _)) => {
-                working_state = next_state;
-                machine_backup = Some(backup);
-            }
-            Err(SwitchFailure::Permission(_)) => {
-                let rollback = rollback_path_snapshot(Some(&user_backup), None);
-                let _ = write_integration_state(app, &previous_state);
-                if let Err(rollback_error) = rollback {
-                    return failure_result(previous, Some("nvm-use"), &rollback_error);
-                }
-                return result(
-                    false,
-                    "elevation-required",
-                    previous,
-                    detect_system_node_state(),
-                    Some("nvm-use"),
-                    Some("elevation_required"),
-                    Some("NVM switch requires administrator permission to remove Project Manager PATH integration".to_string()),
-                    None,
-                );
-            }
-            Err(error) => {
-                let rollback = rollback_path_snapshot(Some(&user_backup), None);
-                let _ = write_integration_state(app, &previous_state);
-                if let Err(rollback_error) = rollback {
-                    return failure_result(previous, Some("nvm-use"), &rollback_error);
-                }
-                return failure_result(previous, Some("nvm-use"), &error);
-            }
+    if !force_machine && machine_has_controller.is_some_and(|index| index > 0) {
+        return Err(SwitchFailure::MachinePathConflict(format!(
+            "Controller PATH entry is below another Machine PATH Node: {}",
+            controller_entry
+        )));
+    }
+
+    #[cfg(windows)]
+    if !force_machine && machine_has_controller.is_none() {
+        let machine_path = expand_windows_environment(&machine_original.text);
+        if let Some(conflict) = find_node_candidates(&machine_path).into_iter().next() {
+            return Err(SwitchFailure::MachinePathConflict(format!(
+                "Another Machine PATH Node has higher priority than the Project Manager Controller: {}",
+                conflict.display()
+            )));
         }
     }
 
-    let nvm_result = if options.elevated {
-        let operation = ElevatedNodeOperation::NvmUse {
-            schema_version: OPERATION_SCHEMA_VERSION,
-            operation_id: operation_id(),
-            target_version: target.version.clone(),
-            runtime_root: target.runtime_root.clone(),
-            remove_machine_path_entry: state.machine_path_entry.clone(),
-        };
-        match run_elevated_operation(app, &operation) {
-            Ok(()) => Ok(()),
-            Err(ElevatedFailure::Cancelled) => {
-                let _ = rollback_path_snapshot(Some(&user_backup), machine_backup.as_ref());
-                let _ = write_integration_state(app, &previous_state);
-                return result(
-                    false,
-                    "cancelled",
-                    previous,
-                    detect_system_node_state(),
-                    Some("nvm-use"),
-                    Some("uac_cancelled"),
-                    Some("User cancelled the administrator permission request".to_string()),
-                    None,
-                );
-            }
-            Err(ElevatedFailure::Operation(failure)) => Err(failure),
-        }
+    let mut user_clean = split_path_entries(&user_original.text);
+    let mut machine_clean = split_path_entries(&machine_original.text);
+    remove_owned_path_entries(&mut user_clean, &owned);
+    remove_owned_path_entries(&mut machine_clean, &owned);
+
+    let use_machine = force_machine || machine_has_controller.is_some();
+    let (user_next, user_changed_by_controller) = if use_machine {
+        (join_path_entries(&user_clean), false)
     } else {
-        run_nvm_use(&target)
+        let clean = join_path_entries(&user_clean);
+        let (value, _, inserted) = integrate_path_value_with_owned(&clean, &[], &controller_entry);
+        (value, inserted)
+    };
+    let (machine_next, machine_changed_by_controller) = if use_machine {
+        let clean = join_path_entries(&machine_clean);
+        let (value, _, inserted) = integrate_path_value_with_owned(&clean, &[], &controller_entry);
+        (value, inserted)
+    } else {
+        (join_path_entries(&machine_clean), false)
     };
 
-    if let Err(error) = nvm_result {
-        if matches!(error, SwitchFailure::Permission(_)) && !options.elevated {
-            let rollback = rollback_path_snapshot(Some(&user_backup), machine_backup.as_ref());
-            let _ = write_integration_state(app, &previous_state);
-            if let Err(rollback_error) = rollback {
-                return failure_result(previous, Some("nvm-use"), &rollback_error);
-            }
-            return result(
-                false,
-                "elevation-required",
-                previous,
-                detect_system_node_state(),
-                Some("nvm-use"),
-                Some("elevation_required"),
-                Some("切换系统 Node 需要管理员权限".to_string()),
-                None,
-            );
-        }
-        let rollback = rollback_path_snapshot(Some(&user_backup), machine_backup.as_ref());
-        let _ = write_integration_state(app, &previous_state);
-        if let Err(rollback_error) = rollback {
-            return failure_result(previous, Some("nvm-use"), &rollback_error);
-        }
-        return failure_result(previous, Some("nvm-use"), &error);
+    if !force_machine && machine_next != machine_original.text {
+        return Err(SwitchFailure::Permission(
+            "Project Manager PATH cleanup requires administrator permission".to_string(),
+        ));
     }
 
-    working_state.managed_runtime_id = None;
-    working_state.user_path_entry = None;
-    working_state.machine_path_entry = None;
-    if let Err(error) = write_integration_state(app, &working_state) {
-        return failure_result(previous, Some("nvm-use"), &error);
-    }
-    broadcast_environment();
-
-    let current = detect_system_node_state();
-    if target_is_active(&current, &target) {
-        return result(
-            true,
-            "switched",
-            previous,
-            current,
-            Some("nvm-use"),
-            None,
-            None,
-            None,
-        );
-    }
-
-    if options.repair_path_priority {
-        if let Some(path_target) = nvm_path_target(&target) {
-            return switch_path_runtime(app, previous, path_target, options);
-        }
-    }
-    conflict_result(previous, "nvm-use", &target, "path_conflict")
-}
-
-fn switch_path_runtime(
-    app: &AppHandle,
-    previous: SystemNodeState,
-    target: ResolvedTarget,
-    options: &SystemNodeSwitchOptions,
-) -> SystemNodeSwitchResult {
-    let original_state = match read_integration_state(app) {
-        Ok(state) => state,
-        Err(error) => return failure_result(previous, Some("user-path"), &error),
-    };
-    let (working_state, user_backup) = match apply_user_integration(&original_state, &target) {
-        Ok(value) => value,
-        Err(error) => return failure_result(previous, Some("user-path"), &error),
-    };
-    if let Err(error) = write_integration_state(app, &working_state) {
-        let _ = rollback_path_snapshot(Some(&user_backup), None);
-        return failure_result(previous, Some("user-path"), &error);
-    }
-
-    let current_after_user = detect_system_node_state();
-    if target_is_active(&current_after_user, &target) {
-        return result(
-            true,
-            "switched",
-            previous,
-            current_after_user,
-            Some("user-path"),
-            None,
-            None,
-            None,
-        );
-    }
-
-    if !options.repair_path_priority {
-        let rollback = rollback_path_snapshot(Some(&user_backup), None);
-        let _ = write_integration_state(app, &original_state);
-        if let Err(rollback_error) = rollback {
-            return failure_result(previous, Some("user-path"), &rollback_error);
-        }
-        return conflict_result(previous, "user-path", &target, "machine_path_conflict");
-    }
-
-    if !options.elevated {
-        let (machine_state, machine_backup, _) = match apply_machine_integration(&working_state, &target) {
-            Ok(value) => value,
-            Err(SwitchFailure::Permission(_)) => {
-                return result(
-                    false,
-                    "elevation-required",
-                    previous,
-                    current_after_user.clone(),
-                    Some("machine-path"),
-                    Some("elevation_required"),
-                    Some("修改系统 PATH 优先级需要管理员权限".to_string()),
-                    current_after_user.node_path,
-                );
-            }
-            Err(error) => {
-                let rollback = rollback_path_snapshot(Some(&user_backup), None);
-                let _ = write_integration_state(app, &original_state);
-                if let Err(rollback_error) = rollback {
-                    return failure_result(previous, Some("machine-path"), &rollback_error);
-                }
-                return failure_result(previous, Some("machine-path"), &error);
-            }
-        };
-        return finish_machine_path_switch(
-            app,
-            previous,
-            target,
-            original_state,
-            working_state,
-            user_backup,
-            machine_state,
-            machine_backup,
-        );
-    }
-
-    let machine_backup = match read_machine_path() {
-        Ok(value) => value,
-        Err(error) => {
-            let failure = SwitchFailure::PathWrite {
-                scope: "machine",
-                detail: error,
-            };
-            let rollback = rollback_path_snapshot(Some(&user_backup), None);
-            let _ = write_integration_state(app, &original_state);
-            if let Err(rollback_error) = rollback {
-                return failure_result(previous, Some("machine-path"), &rollback_error);
-            }
-            return failure_result(previous, Some("machine-path"), &failure);
-        }
-    };
-    let operation = ElevatedNodeOperation::MachinePathApply {
-        schema_version: OPERATION_SCHEMA_VERSION,
-        operation_id: operation_id(),
-        target_path: target.directory.to_string_lossy().to_string(),
-        target_version: target.version.clone(),
-        previous_machine_path_entry: working_state.machine_path_entry.clone(),
-    };
-    match run_elevated_operation(app, &operation) {
-        Ok(()) => {
-            let (machine_path_after, machine_entry_inserted) = integrate_path_value(
-                &machine_backup.text,
-                working_state.machine_path_entry.as_deref(),
-                &target.directory.to_string_lossy(),
-            );
-            let mut machine_state = working_state.clone();
-            machine_state.machine_path_entry = machine_entry_inserted.then(|| target.directory.to_string_lossy().to_string());
-            if machine_path_after != machine_backup.text {
-                machine_state.machine_path_backup = Some(machine_backup.text.clone());
-            }
-            finish_machine_path_switch(
-                app,
-                previous,
-                target,
-                original_state,
-                working_state,
-                user_backup,
-                machine_state,
-                machine_backup,
-            )
-        }
-        Err(ElevatedFailure::Cancelled) => {
-            let rollback = rollback_path_snapshot(Some(&user_backup), None);
-            let _ = write_integration_state(app, &original_state);
-            if let Err(rollback_error) = rollback {
-                return failure_result(previous, Some("machine-path"), &rollback_error);
-            }
-            result(
-                false,
-                "cancelled",
-                previous,
-                current_after_user.clone(),
-                Some("machine-path"),
-                Some("uac_cancelled"),
-                Some("User cancelled the administrator permission request".to_string()),
-                current_after_user.node_path,
-            )
-        }
-        Err(ElevatedFailure::Operation(error)) => {
-            let rollback = rollback_path_snapshot(Some(&user_backup), None);
-            let _ = write_integration_state(app, &original_state);
-            if let Err(rollback_error) = rollback {
-                return failure_result(previous, Some("machine-path"), &rollback_error);
-            }
-            failure_result(previous, Some("machine-path"), &error)
-        }
-    }
-}
-
-fn finish_machine_path_switch(
-    app: &AppHandle,
-    previous: SystemNodeState,
-    target: ResolvedTarget,
-    original_state: SystemNodeIntegrationState,
-    working_state: SystemNodeIntegrationState,
-    user_backup: PathSnapshot,
-    machine_state: SystemNodeIntegrationState,
-    machine_backup: PathSnapshot,
-) -> SystemNodeSwitchResult {
-    let user_after_machine = match read_user_path() {
-        Ok(value) => value,
-        Err(error) => {
-            let rollback = rollback_path_snapshot(Some(&user_backup), Some(&machine_backup));
-            let _ = write_integration_state(app, &original_state);
-            if let Err(rollback_error) = rollback {
-                return failure_result(previous, Some("machine-path"), &rollback_error);
-            }
-            return failure_result(
-                previous,
-                Some("machine-path"),
-                &SwitchFailure::PathWrite {
-                    scope: "user",
-                    detail: error,
-                },
-            );
-        }
-    };
-    let (user_value, user_changed) = remove_path_entry_value(
-        &user_after_machine.text,
-        working_state.user_path_entry.as_deref(),
-    );
+    let user_changed = user_next != user_original.text;
+    let machine_changed = machine_next != machine_original.text;
     if user_changed {
-        let next = path_snapshot_with_text(&user_after_machine, user_value);
-        if let Err(error) = write_user_path(&next) {
-            let rollback = rollback_path_snapshot(Some(&user_backup), Some(&machine_backup));
-            let _ = write_integration_state(app, &original_state);
+        write_user_path(&path_snapshot_with_text(&user_original, user_next.clone())).map_err(
+            |error| {
+                if is_permission_error(&error) {
+                    SwitchFailure::Permission(error.to_string())
+                } else {
+                    SwitchFailure::PathWrite {
+                        scope: "user",
+                        detail: error.to_string(),
+                    }
+                }
+            },
+        )?;
+        broadcast_environment();
+    }
+    if machine_changed {
+        if let Err(error) = write_machine_path(&path_snapshot_with_text(
+            &machine_original,
+            machine_next.clone(),
+        )) {
+            let rollback = if user_changed {
+                rollback_path_snapshot(Some(&user_original), None)
+            } else {
+                Ok(())
+            };
             if let Err(rollback_error) = rollback {
-                return failure_result(previous, Some("machine-path"), &rollback_error);
+                return Err(rollback_error);
             }
-            return failure_result(
-                previous,
-                Some("machine-path"),
-                &SwitchFailure::PathWrite {
-                    scope: "user",
+            return Err(if is_permission_error(&error) {
+                SwitchFailure::Permission(error.to_string())
+            } else {
+                SwitchFailure::PathWrite {
+                    scope: "machine",
                     detail: error.to_string(),
-                },
-            );
+                }
+            });
         }
         broadcast_environment();
     }
 
-    let mut final_state = machine_state;
-    final_state.user_path_entry = None;
-    final_state.managed_runtime_id = target.runtime_id.clone();
-    if let Err(error) = write_integration_state(app, &final_state) {
-        let rollback = rollback_path_snapshot(Some(&user_backup), Some(&machine_backup));
-        let _ = write_integration_state(app, &original_state);
-        if let Err(rollback_error) = rollback {
-            return failure_result(previous, Some("machine-path"), &rollback_error);
-        }
-        return failure_result(previous, Some("machine-path"), &error);
-    }
-
-    let current = detect_system_node_state();
-    if target_is_active(&current, &target) {
-        return result(
-            true,
-            "switched",
-            previous,
-            current,
-            Some("machine-path"),
-            None,
-            None,
-            None,
-        );
-    }
-
-    let rollback = rollback_path_snapshot(Some(&user_backup), Some(&machine_backup));
-    let _ = write_integration_state(app, &original_state);
-    if let Err(error) = rollback {
-        return failure_result(previous, Some("machine-path"), &error);
-    }
-    result(
-        false,
-        "failed",
-        previous,
-        detect_system_node_state(),
-        Some("machine-path"),
-        Some("verification_failed"),
-        Some(format!("System Node verification failed for {}", target.executable.display())),
-        None,
-    )
-}
-
-#[tauri::command]
-pub async fn switch_system_node(
-    app: AppHandle,
-    runtime: NodeRuntimeTarget,
-    options: Option<SystemNodeSwitchOptions>,
-) -> SystemNodeSwitchResult {
-    let options = options.unwrap_or_default();
-    match tauri::async_runtime::spawn_blocking(move || switch_system_node_blocking(app, runtime, options)).await {
-        Ok(result) => result,
-        Err(error) => SystemNodeSwitchResult {
-            success: false,
-            status: "failed".to_string(),
-            previous: None,
-            current: None,
-            conflicting_path: None,
-            operation: None,
-            error_code: Some("system_node_worker_failed".to_string()),
-            message: Some(format!("System Node switch worker failed: {error}")),
-        },
-    }
-}
-
-fn switch_system_node_blocking(
-    app: AppHandle,
-    runtime: NodeRuntimeTarget,
-    options: SystemNodeSwitchOptions,
-) -> SystemNodeSwitchResult {
-    let previous = detect_system_node_state();
-    if !system_node_switch_supported() {
-        return failure_result(previous, None, &SwitchFailure::Unsupported);
-    }
-    let target = match resolve_target(&runtime) {
-        Ok(target) => target,
-        Err(error) => return failure_result(previous, None, &error),
-    };
-    if target.source == "system" {
-        if target_is_active(&previous, &target) {
-            return result(
-                true,
-                "already-active",
-                previous.clone(),
-                previous,
-                None,
-                None,
-                Some("System Node is already active".to_string()),
-                None,
-            );
-        }
-        return failure_result(
-            previous,
-            None,
-            &SwitchFailure::RuntimeUnavailable("The selected System runtime is not the current OS Node".to_string()),
-        );
-    }
-    if target_is_active(&previous, &target) {
-        return result(
-            true,
-            "already-active",
-            previous.clone(),
-            previous,
-            Some(if target.source == "nvm" { "nvm-use" } else { "user-path" }),
-            None,
-            Some("System Node is already active".to_string()),
-            None,
-        );
-    }
-    if target.source == "nvm" {
-        switch_nvm(&app, previous, target, &options)
+    // An existing NVM/system link belongs to its owner, not to Project Manager.
+    // Only mark its PATH entry as owned when this operation actually inserted or
+    // restored that entry. The PM-owned controller path is always managed by PM.
+    let pm_owns_entry = matches!(
+        controller.kind,
+        SystemNodeControllerKind::ProjectManagerLink
+    ) || user_changed_by_controller
+        || machine_changed_by_controller
+        || state
+            .managed_path_entry
+            .as_deref()
+            .is_some_and(|entry| path_entries_equal(entry, &controller_entry));
+    let mut next_state = state.clone();
+    next_state.managed_path_entry = pm_owns_entry.then_some(controller_entry);
+    next_state.user_path_entry = None;
+    next_state.machine_path_entry = None;
+    next_state.user_path_backup = if user_changed {
+        Some(user_original.text.clone())
     } else {
-        switch_path_runtime(&app, previous, target, &options)
-    }
-}
+        state.user_path_backup.clone()
+    };
+    next_state.machine_path_backup = if machine_changed {
+        Some(machine_original.text.clone())
+    } else {
+        state.machine_path_backup.clone()
+    };
 
-fn run_nvm_use(target: &ResolvedTarget) -> Result<(), SwitchFailure> {
-    #[cfg(not(windows))]
-    {
-        let _ = target;
-        return Err(SwitchFailure::Unsupported);
-    }
-
-    #[cfg(windows)]
-    {
-        let Some(nvm_executable) = find_nvm_executable(target.runtime_root.as_deref()) else {
-            return Err(SwitchFailure::NvmNotFound);
-        };
-        let version = target.version.trim_start_matches(['v', 'V']);
-        let mut command = Command::new(nvm_executable);
-        command.args(["use", version]).stdout(Stdio::piped()).stderr(Stdio::piped());
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(CREATE_NO_WINDOW);
-        let output = command.output().map_err(|error| {
-            if is_permission_error(&error) {
-                SwitchFailure::Permission(error.to_string())
-            } else {
-                SwitchFailure::NvmSwitchFailed(error.to_string())
-            }
-        })?;
-        if output.status.success() {
-            return Ok(());
-        }
-        let detail = format_command_failure(&output);
-        if output_looks_permission(&detail) {
-            Err(SwitchFailure::Permission(detail))
-        } else {
-            Err(SwitchFailure::NvmSwitchFailed(detail))
-        }
-    }
+    Ok(PathIntegrationResult {
+        state: next_state,
+        user_backup: user_changed.then_some(user_original),
+        machine_backup: machine_changed.then_some(machine_original),
+    })
 }
 
 #[cfg(windows)]
-fn find_nvm_executable(runtime_root: Option<&str>) -> Option<PathBuf> {
-    let mut roots = Vec::new();
-    if let Some(root) = runtime_root {
-        roots.push(PathBuf::from(root));
-    }
-    if let Some(root) = registry_environment_value("NVM_HOME").or_else(|| env::var("NVM_HOME").ok()) {
-        roots.push(PathBuf::from(expand_windows_environment(&root)));
-    }
-    if let Some(root) = env::var_os("APPDATA") {
-        roots.push(PathBuf::from(root).join("nvm"));
-    }
-    if let Some(root) = env::var_os("LOCALAPPDATA") {
-        roots.push(PathBuf::from(root).join("nvm"));
-    }
-    let mut seen = HashSet::new();
-    for root in roots {
-        let candidate = if root.is_file() {
-            root
-        } else {
-            root.join("nvm.exe")
-        };
-        let key = normalize_path_string(&candidate);
-        if seen.insert(key) && candidate.is_file() {
-            return Some(candidate);
+fn is_reparse_directory(path: &Path) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+    let Ok(link_metadata) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    let target_is_directory = fs::metadata(path)
+        .map(|metadata| metadata.is_dir())
+        .unwrap_or(false);
+    target_is_directory && link_metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn is_reparse_directory(_path: &Path) -> bool {
+    false
+}
+
+fn read_link_snapshot(path: &Path) -> Result<LinkSnapshot, SwitchFailure> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(LinkSnapshot {
+                existed: false,
+                target: None,
+            });
         }
+        Err(error) => return Err(SwitchFailure::Controller(error.to_string())),
     }
-    None
+    if !is_reparse_directory(path) {
+        return Err(SwitchFailure::Controller(format!(
+            "Controller path is an ordinary directory and will not be taken over: {}",
+            path.display()
+        )));
+    }
+    let target = canonicalize_for_compare(path).ok_or_else(|| {
+        SwitchFailure::Controller(format!(
+            "Controller link target cannot be resolved: {}",
+            path.display()
+        ))
+    })?;
+    if !target.is_dir() {
+        return Err(SwitchFailure::Controller(format!(
+            "Controller link target is not a directory: {}",
+            target.display()
+        )));
+    }
+    Ok(LinkSnapshot {
+        existed: true,
+        target: Some(target),
+    })
 }
 
-fn format_command_failure(output: &std::process::Output) -> String {
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    if !stderr.is_empty() {
-        return stderr;
+#[cfg(windows)]
+fn create_directory_link(link_path: &Path, target_path: &Path) -> Result<(), io::Error> {
+    use std::os::windows::ffi::OsStrExt;
+    use std::ptr::{null, null_mut};
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES,
+        OPEN_EXISTING,
+    };
+    use windows_sys::Win32::System::IO::DeviceIoControl;
+    use windows_sys::Win32::System::Ioctl::FSCTL_SET_REPARSE_POINT;
+    use windows_sys::Win32::System::SystemServices::IO_REPARSE_TAG_MOUNT_POINT;
+
+    if !target_path.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Junction target is not a directory: {}", target_path.display()),
+        ));
     }
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if !stdout.is_empty() {
-        return stdout;
+
+    // A mount-point reparse buffer is the native representation used by a
+    // directory junction. The substitute name is an NT path; the print name
+    // is only for display and diagnostics.
+    let target = target_path.to_string_lossy().to_string();
+    let target_without_extended_prefix = target.strip_prefix(r"\\?\").unwrap_or(&target);
+    let substitute = if let Some(unc_path) = target_without_extended_prefix.strip_prefix(r"\\")
+    {
+        format!(r"\??\UNC\{unc_path}")
+    } else {
+        format!(r"\??\{target_without_extended_prefix}")
+    };
+    let substitute_units: Vec<u16> = substitute.encode_utf16().collect();
+    let print_units: Vec<u16> = target_without_extended_prefix.encode_utf16().collect();
+    let mut path_units = Vec::with_capacity(substitute_units.len() + print_units.len() + 2);
+    path_units.extend_from_slice(&substitute_units);
+    path_units.push(0);
+    path_units.extend_from_slice(&print_units);
+    path_units.push(0);
+
+    let substitute_length = substitute_units
+        .len()
+        .checked_mul(2)
+        .and_then(|value| u16::try_from(value).ok())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Junction target path is too long"))?;
+    let print_offset = substitute_units
+        .len()
+        .checked_add(1)
+        .and_then(|value| value.checked_mul(2))
+        .and_then(|value| u16::try_from(value).ok())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Junction target path is too long"))?;
+    let print_length = print_units
+        .len()
+        .checked_mul(2)
+        .and_then(|value| u16::try_from(value).ok())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Junction target path is too long"))?;
+    let reparse_data_length = 8usize
+        .checked_add(path_units.len().saturating_mul(2))
+        .and_then(|value| u16::try_from(value).ok())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Junction target path is too long"))?;
+    let buffer_length = 8usize
+        .checked_add(usize::from(reparse_data_length))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Junction target path is too long"))?;
+    let mut buffer = vec![0u8; buffer_length];
+    buffer[0..4].copy_from_slice(&IO_REPARSE_TAG_MOUNT_POINT.to_le_bytes());
+    buffer[4..6].copy_from_slice(&reparse_data_length.to_le_bytes());
+    buffer[8..10].copy_from_slice(&0u16.to_le_bytes());
+    buffer[10..12].copy_from_slice(&substitute_length.to_le_bytes());
+    buffer[12..14].copy_from_slice(&print_offset.to_le_bytes());
+    buffer[14..16].copy_from_slice(&print_length.to_le_bytes());
+    for (index, unit) in path_units.iter().enumerate() {
+        let offset = 16 + index * 2;
+        buffer[offset..offset + 2].copy_from_slice(&unit.to_le_bytes());
     }
-    format!("process exited with {}", output.status)
+
+    fs::create_dir(link_path)?;
+    let link: Vec<u16> = link_path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    // SAFETY: `link` is a NUL-terminated UTF-16 path. All optional pointers
+    // are null, and the returned handle is checked before it is used.
+    let handle = unsafe {
+        CreateFileW(
+            link.as_ptr(),
+            FILE_WRITE_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            null(),
+            OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
+            null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        let error = io::Error::from_raw_os_error(unsafe { GetLastError() } as i32);
+        let _ = fs::remove_dir(link_path);
+        return Err(error);
+    }
+
+    let mut bytes_returned = 0u32;
+    // SAFETY: the reparse buffer is alive and immutable for the duration of
+    // the synchronous call; the output and OVERLAPPED pointers are null.
+    let result = unsafe {
+        DeviceIoControl(
+            handle,
+            FSCTL_SET_REPARSE_POINT,
+            buffer.as_ptr().cast(),
+            buffer.len() as u32,
+            null_mut(),
+            0,
+            &mut bytes_returned,
+            null_mut(),
+        )
+    };
+    let error = if result == 0 {
+        Some(io::Error::from_raw_os_error(unsafe { GetLastError() } as i32))
+    } else {
+        None
+    };
+    // SAFETY: `handle` was returned by CreateFileW and has not been closed.
+    unsafe { CloseHandle(handle) };
+
+    if let Some(error) = error {
+        let _ = fs::remove_dir(link_path);
+        return Err(error);
+    }
+    Ok(())
 }
 
-fn is_permission_error(error: &io::Error) -> bool {
-    error.kind() == io::ErrorKind::PermissionDenied
-        || error.raw_os_error() == Some(5)
-        || output_looks_permission(&error.to_string())
+#[cfg(not(windows))]
+fn create_directory_link(_link_path: &Path, _target_path: &Path) -> Result<(), io::Error> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "directory links are only managed on Windows",
+    ))
 }
 
-fn output_looks_permission(value: &str) -> bool {
-    let lower = value.to_lowercase();
-    lower.contains("access is denied")
-        || lower.contains("access denied")
-        || lower.contains("permission denied")
-        || lower.contains("os error 5")
-        || lower.contains("symlink") && lower.contains("permission")
+fn remove_controller_link(path: &Path) -> Result<(), SwitchFailure> {
+    if !is_reparse_directory(path) {
+        return Err(SwitchFailure::Controller(format!(
+            "Refusing to remove non-link Controller path: {}",
+            path.display()
+        )));
+    }
+    fs::remove_dir(path).map_err(|error| {
+        if is_permission_error(&error) {
+            SwitchFailure::Permission(error.to_string())
+        } else {
+            SwitchFailure::Controller(format!(
+                "Failed to remove Controller link {}: {error}",
+                path.display()
+            ))
+        }
+    })
+}
+
+fn restore_link_snapshot(path: &Path, snapshot: &LinkSnapshot) -> Result<(), SwitchFailure> {
+    if let Ok(metadata) = fs::symlink_metadata(path) {
+        if !metadata.is_dir() || !is_reparse_directory(path) {
+            return Err(SwitchFailure::Rollback(format!(
+                "Cannot rollback Controller because {} is no longer a link",
+                path.display()
+            )));
+        }
+        remove_controller_link(path)?;
+    }
+    if snapshot.existed {
+        let target = snapshot.target.as_ref().ok_or_else(|| {
+            SwitchFailure::Rollback(format!(
+                "Previous Controller target is missing for {}",
+                path.display()
+            ))
+        })?;
+        create_directory_link(path, target).map_err(|error| {
+            if is_permission_error(&error) {
+                SwitchFailure::Rollback(error.to_string())
+            } else {
+                SwitchFailure::Rollback(format!("Failed to restore Controller link: {error}"))
+            }
+        })?;
+    }
+    Ok(())
+}
+
+fn repoint_controller(
+    controller: &SystemNodeController,
+    target: &ResolvedTarget,
+) -> Result<LinkSnapshot, SwitchFailure> {
+    let snapshot = read_link_snapshot(&controller.link_path)?;
+    if snapshot
+        .target
+        .as_ref()
+        .is_some_and(|current| path_strings_equal(current, &target.directory))
+    {
+        return Ok(snapshot);
+    }
+    if snapshot.existed {
+        remove_controller_link(&controller.link_path)?;
+    } else if let Some(parent) = controller.link_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            if is_permission_error(&error) {
+                SwitchFailure::Permission(error.to_string())
+            } else {
+                SwitchFailure::Controller(error.to_string())
+            }
+        })?;
+    }
+    if let Err(error) = create_directory_link(&controller.link_path, &target.directory) {
+        let failure = if is_permission_error(&error) {
+            SwitchFailure::Permission(error.to_string())
+        } else {
+            SwitchFailure::Controller(format!("Failed to create Controller link: {error}"))
+        };
+        if snapshot.existed {
+            restore_link_snapshot(&controller.link_path, &snapshot).map_err(|rollback| {
+                SwitchFailure::Rollback(format!(
+                    "{}; original switch error: {}",
+                    rollback.message(),
+                    failure.message()
+                ))
+            })?;
+        }
+        return Err(failure);
+    }
+    Ok(snapshot)
+}
+
+fn path_contains_controller(path: &Path) -> bool {
+    let executable = path.join("node.exe");
+    read_machine_path()
+        .ok()
+        .is_some_and(|snapshot| path_value_contains_executable(&snapshot.text, &executable))
+        || read_user_path()
+            .ok()
+            .is_some_and(|snapshot| path_value_contains_executable(&snapshot.text, &executable))
+}
+
+fn safe_existing_node_link(path: &Path) -> bool {
+    if !is_reparse_directory(path) {
+        return false;
+    }
+    let Ok(snapshot) = read_link_snapshot(path) else {
+        return false;
+    };
+    snapshot.existed && path_contains_controller(path)
+}
+
+fn project_manager_controller_path(app_data: &Path) -> PathBuf {
+    app_data.join("system-node").join("current")
+}
+
+fn resolve_controller(app_data: &Path, state: &SystemNodeIntegrationState) -> SystemNodeController {
+    let project_manager_path = project_manager_controller_path(app_data);
+    if state.controller_mode.as_deref() == Some("project-manager-link")
+        && state
+            .controller_link_path
+            .as_deref()
+            .is_some_and(|path| path_strings_equal(Path::new(path), &project_manager_path))
+    {
+        return SystemNodeController {
+            link_path: project_manager_path,
+            kind: SystemNodeControllerKind::ProjectManagerLink,
+        };
+    }
+
+    if state.controller_mode.as_deref() == Some("existing-link")
+        && state
+            .controller_link_path
+            .as_deref()
+            .is_some_and(|path| safe_existing_node_link(Path::new(path)))
+    {
+        return SystemNodeController {
+            link_path: PathBuf::from(state.controller_link_path.as_deref().unwrap_or_default()),
+            kind: SystemNodeControllerKind::ExistingNodeLink,
+        };
+    }
+
+    #[cfg(windows)]
+    if let Some(path) = discover_nvm_symlink()
+        .map(PathBuf::from)
+        .filter(|path| safe_existing_node_link(path))
+    {
+        return SystemNodeController {
+            link_path: path,
+            kind: SystemNodeControllerKind::ExistingNodeLink,
+        };
+    }
+
+    SystemNodeController {
+        link_path: project_manager_path,
+        kind: SystemNodeControllerKind::ProjectManagerLink,
+    }
+}
+
+fn controller_mode(controller: &SystemNodeController) -> &'static str {
+    match controller.kind {
+        SystemNodeControllerKind::ExistingNodeLink => "existing-link",
+        SystemNodeControllerKind::ProjectManagerLink => "project-manager-link",
+    }
+}
+
+fn perform_controller_switch(
+    state_path: &Path,
+    target: &ResolvedTarget,
+    force_machine_path: bool,
+) -> Result<SystemNodeState, SwitchFailure> {
+    let original_state = read_integration_state_at(state_path)?;
+    let app_data = state_path.parent().ok_or_else(|| {
+        SwitchFailure::IntegrationState("System Node state has no parent directory".to_string())
+    })?;
+    let controller = resolve_controller(app_data, &original_state);
+    let link_snapshot = match repoint_controller(&controller, target) {
+        Ok(snapshot) => snapshot,
+        Err(error) => return Err(error),
+    };
+
+    let path_result =
+        match apply_controller_path_integration(&original_state, &controller, force_machine_path) {
+            Ok(value) => value,
+            Err(error) => {
+                if let Err(rollback) = restore_link_snapshot(&controller.link_path, &link_snapshot)
+                {
+                    return Err(rollback);
+                }
+                return Err(error);
+            }
+        };
+
+    let mut next_state = path_result.state;
+    next_state.managed_runtime_id = target.runtime_id.clone();
+    next_state.controller_mode = Some(controller_mode(&controller).to_string());
+    next_state.controller_link_path = Some(controller.link_path.to_string_lossy().to_string());
+    next_state.previous_target = link_snapshot
+        .target
+        .as_ref()
+        .map(|path| path.to_string_lossy().to_string());
+
+    if let Err(error) = write_integration_state_at(state_path, &next_state) {
+        let path_rollback = rollback_path_snapshot(
+            path_result.user_backup.as_ref(),
+            path_result.machine_backup.as_ref(),
+        );
+        let link_rollback = restore_link_snapshot(&controller.link_path, &link_snapshot);
+        let _ = write_integration_state_at(state_path, &original_state);
+        let mut rollback_errors = Vec::new();
+        if let Err(rollback_error) = path_rollback {
+            rollback_errors.push(rollback_error.message());
+        }
+        if let Err(rollback_error) = link_rollback {
+            rollback_errors.push(rollback_error.message());
+        }
+        if !rollback_errors.is_empty() {
+            return Err(SwitchFailure::Rollback(rollback_errors.join("; ")));
+        }
+        return Err(error);
+    }
+
+    broadcast_environment();
+    let current = detect_system_node_state();
+    if target_is_active(&current, target) {
+        return Ok(current);
+    }
+
+    let path_rollback = rollback_path_snapshot(
+        path_result.user_backup.as_ref(),
+        path_result.machine_backup.as_ref(),
+    );
+    let link_rollback = restore_link_snapshot(&controller.link_path, &link_snapshot);
+    let state_rollback = write_integration_state_at(state_path, &original_state);
+    let mut rollback_errors = Vec::new();
+    if let Err(error) = path_rollback {
+        rollback_errors.push(error.message());
+    }
+    if let Err(error) = link_rollback {
+        rollback_errors.push(error.message());
+    }
+    if let Err(error) = state_rollback {
+        rollback_errors.push(error.message());
+    }
+    if !rollback_errors.is_empty() {
+        return Err(SwitchFailure::Rollback(rollback_errors.join("; ")));
+    }
+    Err(SwitchFailure::Verification(format!(
+        "System Node verification failed for {}",
+        target.executable.display()
+    )))
 }
 
 fn operation_id() -> String {
@@ -1575,8 +1572,7 @@ fn operation_id() -> String {
 
 fn operation_id_of(operation: &ElevatedNodeOperation) -> &str {
     match operation {
-        ElevatedNodeOperation::NvmUse { operation_id, .. }
-        | ElevatedNodeOperation::MachinePathApply { operation_id, .. } => operation_id,
+        ElevatedNodeOperation::Switch { operation_id, .. } => operation_id,
     }
 }
 
@@ -1586,7 +1582,10 @@ enum ElevatedFailure {
     Operation(SwitchFailure),
 }
 
-fn operation_path(app: &AppHandle, operation: &ElevatedNodeOperation) -> Result<PathBuf, SwitchFailure> {
+fn operation_path(
+    app: &AppHandle,
+    operation: &ElevatedNodeOperation,
+) -> Result<PathBuf, SwitchFailure> {
     let directory = app
         .path()
         .app_data_dir()
@@ -1595,7 +1594,10 @@ fn operation_path(app: &AppHandle, operation: &ElevatedNodeOperation) -> Result<
         .join(OPERATION_DIRECTORY);
     fs::create_dir_all(&directory)
         .map_err(|error| SwitchFailure::IntegrationState(error.to_string()))?;
-    let path = directory.join(format!("node-operation-{}.json", operation_id_of(operation)));
+    let path = directory.join(format!(
+        "node-operation-{}.json",
+        operation_id_of(operation)
+    ));
     let content = serde_json::to_string(operation)
         .map_err(|error| SwitchFailure::IntegrationState(error.to_string()))?;
     crate::atomic_write_config(&path, &content).map_err(SwitchFailure::IntegrationState)?;
@@ -1630,15 +1632,34 @@ fn launch_elevated_helper(operation_path: &Path) -> Result<(), ElevatedFailure> 
     use windows_sys::Win32::System::Threading::{
         GetExitCodeProcess, TerminateProcess, WaitForSingleObject,
     };
-    use windows_sys::Win32::UI::Shell::{ShellExecuteExW, SHELLEXECUTEINFOW, SEE_MASK_NOCLOSEPROCESS};
+    use windows_sys::Win32::UI::Shell::{
+        ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
+    };
 
-    let executable = env::current_exe().map_err(|error| ElevatedFailure::Operation(SwitchFailure::IntegrationState(error.to_string())))?;
+    let executable = env::current_exe().map_err(|error| {
+        ElevatedFailure::Operation(SwitchFailure::IntegrationState(error.to_string()))
+    })?;
     let parent = executable.parent().unwrap_or_else(|| Path::new("."));
     let verb: Vec<u16> = "runas".encode_utf16().chain(std::iter::once(0)).collect();
-    let file: Vec<u16> = executable.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect();
-    let parameters_string = format!("{} \"{}\"", OPERATION_ARGUMENT, operation_path.to_string_lossy());
-    let parameters: Vec<u16> = parameters_string.encode_utf16().chain(std::iter::once(0)).collect();
-    let directory: Vec<u16> = parent.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect();
+    let file: Vec<u16> = executable
+        .to_string_lossy()
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let parameters_string = format!(
+        "{} \"{}\"",
+        OPERATION_ARGUMENT,
+        operation_path.to_string_lossy()
+    );
+    let parameters: Vec<u16> = parameters_string
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let directory: Vec<u16> = parent
+        .to_string_lossy()
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
 
     let mut info: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
     info.cbSize = size_of::<SHELLEXECUTEINFOW>() as u32;
@@ -1654,9 +1675,9 @@ fn launch_elevated_helper(operation_path: &Path) -> Result<(), ElevatedFailure> 
         if error == ERROR_CANCELLED {
             return Err(ElevatedFailure::Cancelled);
         }
-        return Err(ElevatedFailure::Operation(SwitchFailure::Permission(format!(
-            "ShellExecuteExW failed with Windows error {error}"
-        ))));
+        return Err(ElevatedFailure::Operation(SwitchFailure::Permission(
+            format!("ShellExecuteExW failed with Windows error {error}"),
+        )));
     }
     if info.hProcess.is_null() {
         return Err(ElevatedFailure::Operation(SwitchFailure::Verification(
@@ -1668,36 +1689,30 @@ fn launch_elevated_helper(operation_path: &Path) -> Result<(), ElevatedFailure> 
         WAIT_OBJECT_0 => {}
         WAIT_TIMEOUT => {
             let _ = unsafe { TerminateProcess(info.hProcess, 1) };
-            unsafe {
-                CloseHandle(info.hProcess);
-            }
-            return Err(ElevatedFailure::Operation(SwitchFailure::ElevatedOperationTimeout(
-                "Elevated Node operation timed out after 45 seconds".to_string(),
-            )));
+            unsafe { CloseHandle(info.hProcess) };
+            return Err(ElevatedFailure::Operation(
+                SwitchFailure::ElevatedOperationTimeout(
+                    "Elevated Node operation timed out after 45 seconds".to_string(),
+                ),
+            ));
         }
         WAIT_FAILED => {
             let error = unsafe { GetLastError() };
-            unsafe {
-                CloseHandle(info.hProcess);
-            }
-            return Err(ElevatedFailure::Operation(SwitchFailure::Verification(format!(
-                "Failed to wait for elevated helper: Windows error {error}"
-            ))));
+            unsafe { CloseHandle(info.hProcess) };
+            return Err(ElevatedFailure::Operation(SwitchFailure::Verification(
+                format!("Failed to wait for elevated helper: Windows error {error}"),
+            )));
         }
         other => {
-            unsafe {
-                CloseHandle(info.hProcess);
-            }
-            return Err(ElevatedFailure::Operation(SwitchFailure::Verification(format!(
-                "Elevated helper returned unexpected wait result {other}"
-            ))));
+            unsafe { CloseHandle(info.hProcess) };
+            return Err(ElevatedFailure::Operation(SwitchFailure::Verification(
+                format!("Elevated helper returned unexpected wait result {other}"),
+            )));
         }
     }
     let mut exit_code = 1_u32;
     let exit_read = unsafe { GetExitCodeProcess(info.hProcess, &mut exit_code) };
-    unsafe {
-        CloseHandle(info.hProcess);
-    }
+    unsafe { CloseHandle(info.hProcess) };
     if exit_read == 0 {
         return Err(ElevatedFailure::Operation(SwitchFailure::Verification(
             "Failed to read elevated helper exit code".to_string(),
@@ -1705,18 +1720,167 @@ fn launch_elevated_helper(operation_path: &Path) -> Result<(), ElevatedFailure> 
     }
     match exit_code {
         0 => Ok(()),
-        10 => Err(ElevatedFailure::Operation(SwitchFailure::Verification("Invalid elevated operation".to_string()))),
-        11 => Err(ElevatedFailure::Operation(SwitchFailure::NvmNotFound)),
-        12 => Err(ElevatedFailure::Operation(SwitchFailure::Permission("Elevated operation was denied".to_string()))),
-        13 => Err(ElevatedFailure::Operation(SwitchFailure::NvmSwitchFailed("Elevated NVM switch failed".to_string()))),
-        14 => Err(ElevatedFailure::Operation(SwitchFailure::PathWrite { scope: "machine", detail: "Elevated Machine PATH write failed".to_string() })),
-        15 => Err(ElevatedFailure::Operation(SwitchFailure::Rollback("Elevated PATH rollback failed".to_string()))),
-        17 => Err(ElevatedFailure::Operation(SwitchFailure::ElevatedOperationTimeout(
-            "Elevated Node operation timed out after 45 seconds".to_string(),
+        12 => Err(ElevatedFailure::Operation(SwitchFailure::Permission(
+            "Elevated Controller operation was denied".to_string(),
         ))),
-        _ => Err(ElevatedFailure::Operation(SwitchFailure::Verification(format!(
-            "Elevated helper exited with code {exit_code}"
-        )))),
+        14 => Err(ElevatedFailure::Operation(SwitchFailure::PathWrite {
+            scope: "machine",
+            detail: "Elevated Machine PATH write failed".to_string(),
+        })),
+        15 => Err(ElevatedFailure::Operation(SwitchFailure::Rollback(
+            "Elevated Controller rollback failed".to_string(),
+        ))),
+        17 => Err(ElevatedFailure::Operation(
+            SwitchFailure::ElevatedOperationTimeout(
+                "Elevated Node operation timed out after 45 seconds".to_string(),
+            ),
+        )),
+        _ => Err(ElevatedFailure::Operation(SwitchFailure::Verification(
+            format!("Elevated helper exited with code {exit_code}"),
+        ))),
+    }
+}
+
+#[tauri::command]
+pub async fn switch_system_node(
+    app: AppHandle,
+    runtime: NodeRuntimeTarget,
+    options: Option<SystemNodeSwitchOptions>,
+) -> SystemNodeSwitchResult {
+    let options = options.unwrap_or_default();
+    match tauri::async_runtime::spawn_blocking(move || {
+        switch_system_node_blocking(app, runtime, options)
+    })
+    .await
+    {
+        Ok(result) => result,
+        Err(error) => SystemNodeSwitchResult {
+            success: false,
+            status: "failed".to_string(),
+            previous: None,
+            current: None,
+            conflicting_path: None,
+            operation: None,
+            error_code: Some("system_node_worker_failed".to_string()),
+            message: Some(format!("System Node switch worker failed: {error}")),
+        },
+    }
+}
+
+fn switch_system_node_blocking(
+    app: AppHandle,
+    runtime: NodeRuntimeTarget,
+    options: SystemNodeSwitchOptions,
+) -> SystemNodeSwitchResult {
+    let previous = detect_system_node_state();
+    if !system_node_switch_supported() {
+        return failure_result(previous, None, &SwitchFailure::Unsupported);
+    }
+    let target = match resolve_target(&runtime) {
+        Ok(target) => target,
+        Err(error) => return failure_result(previous, None, &error),
+    };
+    if target.source == "system" {
+        return if target_is_active(&previous, &target) {
+            result(
+                true,
+                "already-active",
+                previous.clone(),
+                previous,
+                None,
+                None,
+                Some("System Node is already active".to_string()),
+                None,
+            )
+        } else {
+            failure_result(
+                previous,
+                None,
+                &SwitchFailure::RuntimeUnavailable(
+                    "The selected System runtime is not the current OS Node".to_string(),
+                ),
+            )
+        };
+    }
+    if target_is_active(&previous, &target) {
+        return result(
+            true,
+            "already-active",
+            previous.clone(),
+            previous,
+            Some("controller"),
+            None,
+            Some("System Node is already active".to_string()),
+            None,
+        );
+    }
+
+    let state_path = match integration_path(&app) {
+        Ok(path) => path,
+        Err(error) => return failure_result(previous, Some("controller"), &error),
+    };
+    if options.elevated {
+        let operation = ElevatedNodeOperation::Switch {
+            schema_version: OPERATION_SCHEMA_VERSION,
+            operation_id: operation_id(),
+            target_runtime_id: target.runtime_id.clone(),
+            target_version: target.version.clone(),
+            target_path: target.directory.to_string_lossy().to_string(),
+            target_source: target.source.clone(),
+            target_runtime_root: runtime.runtime_root.clone(),
+        };
+        return match run_elevated_operation(&app, &operation) {
+            Ok(()) => {
+                let current = detect_system_node_state();
+                if target_is_active(&current, &target) {
+                    result(
+                        true,
+                        "switched",
+                        previous,
+                        current,
+                        Some("controller"),
+                        None,
+                        None,
+                        None,
+                    )
+                } else {
+                    failure_result(
+                        previous,
+                        Some("controller"),
+                        &SwitchFailure::Verification(
+                            "Elevated Controller completed without verification".to_string(),
+                        ),
+                    )
+                }
+            }
+            Err(ElevatedFailure::Cancelled) => result(
+                false,
+                "cancelled",
+                previous,
+                detect_system_node_state(),
+                Some("controller"),
+                Some("uac_cancelled"),
+                Some("User cancelled the administrator permission request".to_string()),
+                None,
+            ),
+            Err(ElevatedFailure::Operation(error)) => {
+                failure_result(previous, Some("controller"), &error)
+            }
+        };
+    }
+
+    match perform_controller_switch(&state_path, &target, false) {
+        Ok(current) => result(
+            true,
+            "switched",
+            previous,
+            current,
+            Some("controller"),
+            None,
+            None,
+            None,
+        ),
+        Err(error) => failure_result(previous, Some("controller"), &error),
     }
 }
 
@@ -1731,10 +1895,10 @@ pub fn run_elevated_node_operation(path: &str) -> i32 {
     {
         match execute_elevated_operation(Path::new(path)) {
             Ok(()) => 0,
-            Err(SwitchFailure::NvmNotFound) => 11,
-            Err(SwitchFailure::Permission(_)) => 12,
-            Err(SwitchFailure::NvmSwitchFailed(_)) => 13,
-            Err(SwitchFailure::PathWrite { .. }) => 14,
+            Err(SwitchFailure::Permission(_)) | Err(SwitchFailure::MachinePathConflict(_)) => 12,
+            Err(SwitchFailure::PathWrite {
+                scope: "machine", ..
+            }) => 14,
             Err(SwitchFailure::Rollback(_)) => 15,
             Err(SwitchFailure::ElevatedOperationTimeout(_)) => 17,
             Err(error) => {
@@ -1747,131 +1911,140 @@ pub fn run_elevated_node_operation(path: &str) -> i32 {
 
 #[cfg(windows)]
 fn execute_elevated_operation(path: &Path) -> Result<(), SwitchFailure> {
-    let file_name = path.file_name().and_then(|value| value.to_str()).unwrap_or_default();
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
     let Some(file_id) = file_name
         .strip_prefix("node-operation-")
         .and_then(|value| value.strip_suffix(".json"))
     else {
-        return Err(SwitchFailure::Verification("Invalid elevated operation file location".to_string()));
+        return Err(SwitchFailure::Verification(
+            "Invalid elevated operation file location".to_string(),
+        ));
     };
-    if file_id.is_empty() || !file_id.chars().all(|value| value.is_ascii_digit() || value == '-') {
-        return Err(SwitchFailure::Verification("Invalid elevated operation file name".to_string()));
+    if file_id.is_empty()
+        || !file_id
+            .chars()
+            .all(|value| value.is_ascii_digit() || value == '-')
+    {
+        return Err(SwitchFailure::Verification(
+            "Invalid elevated operation file name".to_string(),
+        ));
     }
-    let canonical_path = fs::canonicalize(path)
-        .map_err(|error| SwitchFailure::Verification(error.to_string()))?;
-    let canonical_parent = canonical_path
-        .parent()
-        .ok_or_else(|| SwitchFailure::Verification("Invalid elevated operation parent".to_string()))?;
-    let expected_parent = expected_operation_directory()
-        .ok_or_else(|| SwitchFailure::Verification("Application data directory is unavailable".to_string()))?;
+    let canonical_path =
+        fs::canonicalize(path).map_err(|error| SwitchFailure::Verification(error.to_string()))?;
+    let canonical_parent = canonical_path.parent().ok_or_else(|| {
+        SwitchFailure::Verification("Invalid elevated operation parent".to_string())
+    })?;
+    let expected_parent = expected_operation_directory().ok_or_else(|| {
+        SwitchFailure::Verification("Application data directory is unavailable".to_string())
+    })?;
     let expected_parent = fs::canonicalize(expected_parent)
         .map_err(|error| SwitchFailure::Verification(error.to_string()))?;
     if !path_strings_equal(canonical_parent, &expected_parent) {
-        return Err(SwitchFailure::Verification("Invalid elevated operation file location".to_string()));
+        return Err(SwitchFailure::Verification(
+            "Invalid elevated operation file location".to_string(),
+        ));
     }
-    let content = fs::read_to_string(path).map_err(|error| SwitchFailure::Verification(error.to_string()))?;
-    let operation: ElevatedNodeOperation = serde_json::from_str(&content)
-        .map_err(|error| SwitchFailure::Verification(format!("Invalid elevated operation: {error}")))?;
+    let content =
+        fs::read_to_string(path).map_err(|error| SwitchFailure::Verification(error.to_string()))?;
+    let operation: ElevatedNodeOperation = serde_json::from_str(&content).map_err(|error| {
+        SwitchFailure::Verification(format!("Invalid elevated operation: {error}"))
+    })?;
     if operation_id_of(&operation) != file_id {
-        return Err(SwitchFailure::Verification("Elevated operation ID does not match its file name".to_string()));
+        return Err(SwitchFailure::Verification(
+            "Elevated operation ID does not match its file name".to_string(),
+        ));
     }
+
     match operation {
-        ElevatedNodeOperation::NvmUse {
+        ElevatedNodeOperation::Switch {
             schema_version,
             operation_id,
+            target_runtime_id,
             target_version,
-            runtime_root,
-            remove_machine_path_entry,
-        } => {
-            validate_operation_metadata(schema_version, &operation_id)?;
-            let target_version = validate_node_version(&target_version)
-                .map_err(|error| SwitchFailure::RuntimeUnavailable(error.to_string()))?;
-            let target = ResolvedTarget {
-                runtime_id: None,
-                version: target_version,
-                source: "nvm".to_string(),
-                runtime_root,
-                directory: PathBuf::new(),
-                executable: PathBuf::new(),
-            };
-            let machine_backup = if remove_machine_path_entry.is_some() {
-                Some(read_machine_path().map_err(|error| SwitchFailure::PathWrite {
-                    scope: "machine",
-                    detail: error,
-                })?)
-            } else {
-                None
-            };
-            if let Some(entry) = remove_machine_path_entry {
-                let Some(snapshot) = machine_backup.as_ref() else {
-                    return Err(SwitchFailure::Verification(
-                        "Missing Machine PATH backup for elevated NVM operation".to_string(),
-                    ));
-                };
-                let (next, changed) = remove_path_entry_value(&snapshot.text, Some(&entry));
-                if changed {
-                    write_machine_path(&path_snapshot_with_text(&snapshot, next))
-                        .map_err(|error| SwitchFailure::PathWrite { scope: "machine", detail: error.to_string() })?;
-                    broadcast_environment();
-                }
-            }
-            let result = run_nvm_use(&target);
-            if result.is_err() {
-                if let Some(snapshot) = machine_backup.as_ref() {
-                    rollback_path_snapshot(None, Some(snapshot))?;
-                }
-            }
-            result
-        }
-        ElevatedNodeOperation::MachinePathApply {
-            schema_version,
-            operation_id,
             target_path,
-            target_version,
-            previous_machine_path_entry,
+            target_source,
+            target_runtime_root,
         } => {
             validate_operation_metadata(schema_version, &operation_id)?;
-            let expected = validate_node_version(&target_version)
-                .map_err(|error| SwitchFailure::RuntimeUnavailable(error.to_string()))?;
-            let directory = PathBuf::from(target_path);
-            let executable = node_executable(&directory).ok_or_else(|| {
-                SwitchFailure::RuntimeUnavailable("Elevated target Node executable was not found".to_string())
-            })?;
-            let actual = run_node_version(&executable)
-                .map_err(SwitchFailure::RuntimeUnavailable)
-                .and_then(|raw| normalize_version(&raw).ok_or_else(|| SwitchFailure::RuntimeUnavailable("Invalid target Node version".to_string())))?;
-            if actual != expected {
-                return Err(SwitchFailure::RuntimeUnavailable("Elevated target Node version mismatch".to_string()));
+            if target_source == "system" {
+                return Err(SwitchFailure::RuntimeUnavailable(
+                    "System Node state cannot be used as an elevated switch target".to_string(),
+                ));
             }
-            let snapshot = read_machine_path().map_err(|error| SwitchFailure::PathWrite { scope: "machine", detail: error })?;
-            let (next, _) = integrate_path_value(&snapshot.text, previous_machine_path_entry.as_deref(), &directory.to_string_lossy());
-            if next != snapshot.text {
-                write_machine_path(&path_snapshot_with_text(&snapshot, next))
-                    .map_err(|error| SwitchFailure::PathWrite { scope: "machine", detail: error.to_string() })?;
-                broadcast_environment();
+            let target = NodeRuntimeTarget {
+                runtime_id: target_runtime_id,
+                version: target_version,
+                path: target_path,
+                source: target_source,
+                runtime_root: target_runtime_root,
+            };
+            let target = resolve_target(&target)?;
+            let app_data = expected_parent
+                .parent()
+                .and_then(Path::parent)
+                .ok_or_else(|| {
+                    SwitchFailure::Verification(
+                        "Application data directory is unavailable".to_string(),
+                    )
+                })?;
+            let state_path = app_data.join(INTEGRATION_FILE);
+            let current = perform_controller_switch(&state_path, &target, true)?;
+            if target_is_active(&current, &target) {
+                Ok(())
+            } else {
+                Err(SwitchFailure::Verification(
+                    "Elevated Controller verification failed".to_string(),
+                ))
             }
-            Ok(())
         }
     }
 }
 
 #[cfg(windows)]
 fn expected_operation_directory() -> Option<PathBuf> {
-    env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .map(|root| root.join(APP_DATA_DIRECTORY_IDENTIFIER).join("tmp").join(OPERATION_DIRECTORY))
+    env::var_os("APPDATA").map(PathBuf::from).map(|root| {
+        root.join(APP_DATA_DIRECTORY_IDENTIFIER)
+            .join("tmp")
+            .join(OPERATION_DIRECTORY)
+    })
 }
 
 #[cfg(windows)]
-fn validate_operation_metadata(schema_version: u32, operation_id: &str) -> Result<(), SwitchFailure> {
+fn validate_operation_metadata(
+    schema_version: u32,
+    operation_id: &str,
+) -> Result<(), SwitchFailure> {
     if schema_version != OPERATION_SCHEMA_VERSION
         || operation_id.trim().is_empty()
         || operation_id.len() > 128
-        || !operation_id.chars().all(|value| value.is_ascii_digit() || value == '-')
+        || !operation_id
+            .chars()
+            .all(|value| value.is_ascii_digit() || value == '-')
     {
-        return Err(SwitchFailure::Verification("Invalid elevated operation metadata".to_string()));
+        return Err(SwitchFailure::Verification(
+            "Invalid elevated operation metadata".to_string(),
+        ));
     }
     Ok(())
+}
+
+fn is_permission_error(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::PermissionDenied
+        || error.raw_os_error() == Some(5)
+        || error.raw_os_error() == Some(1314)
+        || output_looks_permission(&error.to_string())
+}
+
+fn output_looks_permission(value: &str) -> bool {
+    let lower = value.to_lowercase();
+    lower.contains("access is denied")
+        || lower.contains("access denied")
+        || lower.contains("permission denied")
+        || lower.contains("os error 5")
+        || (lower.contains("reparse") && lower.contains("permission"))
 }
 
 #[cfg(test)]
@@ -1904,77 +2077,31 @@ mod tests {
     }
 
     #[test]
-    fn path_integration_does_not_duplicate_existing_target() {
-        let (value, inserted) = integrate_path_value(
-            "D:\\new-pm;C:\\tool",
+    fn path_integration_keeps_environment_expressions() {
+        let (value, _) = integrate_path_value(
+            "%USERPROFILE%\\bin;C:\\Program Files\\Git\\cmd",
             None,
-            "d:/NEW-PM/",
+            "D:\\system-node\\current",
         );
-        assert!(!inserted);
-        assert_eq!(value, "D:\\new-pm;C:\\tool");
-    }
-
-    #[test]
-    fn path_integration_promotes_existing_target_without_duplicating_it() {
-        let (value, inserted) = integrate_path_value(
-            "C:\\other-node;D:\\target;C:\\tool",
-            None,
-            "d:/TARGET/",
+        assert_eq!(
+            value,
+            "D:\\system-node\\current;%USERPROFILE%\\bin;C:\\Program Files\\Git\\cmd"
         );
-        assert!(!inserted);
-        assert_eq!(value, "D:\\target;C:\\other-node;C:\\tool");
     }
 
     #[test]
-    fn path_entry_removal_keeps_other_node_entries() {
-        let (value, changed) = remove_path_entry_value(
-            "C:\\pm-owned;C:\\Program Files\\nodejs;D:\\nvm\\nodejs",
-            Some("c:/PM-OWNED/"),
-        );
-        assert!(changed);
-        assert_eq!(value, "C:\\Program Files\\nodejs;D:\\nvm\\nodejs");
-    }
-
-    #[test]
-    fn registry_paths_use_machine_then_user_order() {
-        assert_eq!(join_registry_paths("MACHINE", "USER"), "MACHINE;USER");
-        assert_eq!(join_registry_paths("", "USER"), "USER");
-    }
-
-    #[test]
-    fn nvm_same_version_without_target_resolution_is_not_assumed_active() {
-        let state = SystemNodeState {
-            available: true,
-            version: Some("v20.19.1".to_string()),
-            node_path: Some("D:\\node\\node.exe".to_string()),
-            runtime_id: None,
-            source: Some("nvm".to_string()),
-            candidates: Vec::new(),
-            path_scope: Some("nvm".to_string()),
-            nvm_symlink: Some("D:\\node".to_string()),
-            nvm_target_path: None,
+    fn controller_operation_has_no_nvm_switch_variant() {
+        let operation = ElevatedNodeOperation::Switch {
+            schema_version: OPERATION_SCHEMA_VERSION,
+            operation_id: "1-2".to_string(),
+            target_runtime_id: Some("nvm:v20.19.1".to_string()),
+            target_version: "v20.19.1".to_string(),
+            target_path: "D:\\nvm\\v20.19.1".to_string(),
+            target_source: "nvm".to_string(),
+            target_runtime_root: None,
         };
-        let target = ResolvedTarget {
-            runtime_id: Some("nvm:d:/nvm/v20.19.1".to_string()),
-            version: "v20.19.1".to_string(),
-            source: "nvm".to_string(),
-            runtime_root: Some("D:\\nvm\\nvm".to_string()),
-            directory: PathBuf::from("D:\\nvm\\nvm\\v20.19.1"),
-            executable: PathBuf::from("D:\\nvm\\nvm\\v20.19.1\\node.exe"),
-        };
-        assert!(!target_is_active(&state, &target));
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn where_output_keeps_first_candidate_and_deduplicates() {
-        let paths = parse_node_candidate_paths(
-            "D:\\node\\node.exe\r\nC:\\Program Files\\nodejs\\node.exe\r\nD:\\node\\node.exe\r\nINFO: Could not find files",
-            Some(Path::new("C:\\workspace")),
-        );
-        assert_eq!(paths.len(), 2);
-        assert_eq!(normalize_path_string(&paths[0]), "d:\\node\\node.exe");
-        assert_eq!(normalize_path_string(&paths[1]), "c:\\program files\\nodejs\\node.exe");
-        assert_eq!(normalize_version("v20.19.1"), Some("v20.19.1".to_string()));
+        let serialized = serde_json::to_string(&operation).expect("serialize operation");
+        assert!(serialized.contains("switch"));
+        assert!(!serialized.contains("nvm-use"));
     }
 }
