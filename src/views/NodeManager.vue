@@ -3,12 +3,11 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { useI18n } from 'vue-i18n';
 import { api } from '../api';
-import type { ManagedRuntimeLocationMode, NodeVersion, Project } from '../types';
+import type { CanonicalNodeRuntime, ManagedRuntimeLocationMode, NodeVersion, Project } from '../types';
 import { useNodeStore } from '../stores/node';
 import { useProjectStore } from '../stores/project';
 import { useSettingsStore } from '../stores/settings';
 import { getNodeRuntimeId } from '../utils/nodeRuntime';
-import { isRuntimeSystemCurrent } from '../utils/systemNode';
 import { groupNodeRuntimesByVersion, type NodeRuntimeGroup } from '../utils/nodeRuntimeGrouping';
 import { getRuntimeListMode, type NodeRuntimeListMode } from '../utils/nodeRuntimeLayout';
 import { getProjectsUsingRuntime, type ProjectRuntimeUsage, type RuntimeUsageReason } from '../utils/nodeRuntimeUsage';
@@ -29,8 +28,12 @@ const showAddModal = ref(false);
 const showInstallModal = ref(false);
 const showStorageDialog = ref(false);
 const showUsageDialog = ref(false);
+const showRuntimeDetailsDialog = ref(false);
 const selectedUsageRuntime = ref<NodeVersion | null>(null);
 const selectedUsageGroup = ref<NodeRuntimeGroup | null>(null);
+const selectedUsageCanonical = ref<CanonicalNodeRuntime | null>(null);
+const selectedRuntimeDetailsGroup = ref<NodeRuntimeGroup | null>(null);
+const selectedRuntimeDetails = computed(() => selectedRuntimeDetailsGroup.value?.canonicalRuntimes || []);
 const usageSearchQuery = ref('');
 const storageMode = ref<ManagedRuntimeLocationMode>('app-data');
 const customStoragePath = ref('');
@@ -107,10 +110,11 @@ const managedStorageText = computed(() => {
   return t('nodes.storageUsage', { size: formatBytes(nodeStore.managedLocation.sizeBytes) });
 });
 
-function sourceLabel(source: NodeVersion['source']): string {
+function sourceLabel(source: NodeVersion['source'] | 'external'): string {
   if (source === 'managed') return t('nodes.sourceManaged');
   if (source === 'nvm') return t('nodes.sourceNvm');
   if (source === 'system') return t('nodes.sourceSystem');
+  if (source === 'external') return t('nodes.sourceExternal');
   return t('nodes.sourceCustom');
 }
 
@@ -120,10 +124,11 @@ function systemSourceLabel(source: NodeVersion['source'] | 'external' | 'unknown
   return sourceLabel(source);
 }
 
-function sourceTone(source: NodeVersion['source']): string {
+function sourceTone(source: NodeVersion['source'] | 'external'): string {
   if (source === 'managed') return 'success';
   if (source === 'nvm') return 'warning';
   if (source === 'system') return 'info';
+  if (source === 'external') return 'info';
   return 'primary';
 }
 
@@ -170,8 +175,7 @@ function groupHasSystemCurrent(group: NodeRuntimeGroup): boolean {
 }
 
 function groupCanSetSystemNode(group: NodeRuntimeGroup): boolean {
-  return runtimeIsAvailable(group.effectiveRuntime)
-    && !isRuntimeSystemCurrent(group.effectiveRuntime, nodeStore.systemNodeState);
+  return runtimeIsAvailable(group.effectiveRuntime) && !group.isSystemCurrent;
 }
 
 function progressText(runtime: NodeVersion): string {
@@ -207,6 +211,16 @@ function runtimeUsages(runtime: NodeVersion): ProjectRuntimeUsage[] {
   );
 }
 
+function canonicalRuntimeUsages(canonical: CanonicalNodeRuntime): ProjectRuntimeUsage[] {
+  const usages = new Map<string, ProjectRuntimeUsage>();
+  for (const runtime of canonical.variants) {
+    for (const usage of runtimeUsages(runtime)) {
+      if (!usages.has(usage.project.id)) usages.set(usage.project.id, usage);
+    }
+  }
+  return [...usages.values()];
+}
+
 function projectsUsingRuntime(runtime: NodeVersion): Project[] {
   return runtimeUsages(runtime).map(usage => usage.project);
 }
@@ -236,6 +250,27 @@ function groupUsageLabel(group: NodeRuntimeGroup): string {
   if (!projects.length) return t('nodes.noProjectUsage');
   const running = projects.filter(projectIsRunning).length;
   return running ? t('nodes.projectUsageRunning', { count: projects.length, running }) : t('nodes.projectUsage', { count: projects.length });
+}
+
+function canonicalStatusLabel(canonical: CanonicalNodeRuntime): string {
+  if (canonical.variants.some(runtime => runtime.status === 'installing' || nodeStore.installProgress[runtime.version])) {
+    return t('nodes.installing');
+  }
+  return canonical.variants.some(runtimeIsAvailable) ? t('nodes.available') : t('nodes.broken');
+}
+
+function canonicalStatusTone(canonical: CanonicalNodeRuntime): string {
+  if (canonical.variants.some(runtime => runtime.status === 'installing' || nodeStore.installProgress[runtime.version])) {
+    return 'text-blue-500';
+  }
+  return canonical.variants.some(runtimeIsAvailable)
+    ? 'text-emerald-600 dark:text-emerald-300'
+    : 'text-amber-600 dark:text-amber-300';
+}
+
+function showRuntimeDetails(group: NodeRuntimeGroup): void {
+  selectedRuntimeDetailsGroup.value = group;
+  showRuntimeDetailsDialog.value = true;
 }
 
 function openFolder(path: string): void {
@@ -375,6 +410,7 @@ async function copyPath(path: string): Promise<void> {
 function showUsage(runtime: NodeVersion, group: NodeRuntimeGroup | null = null): void {
   selectedUsageRuntime.value = runtime;
   selectedUsageGroup.value = group;
+  selectedUsageCanonical.value = null;
   usageSearchQuery.value = '';
   showUsageDialog.value = true;
 }
@@ -383,8 +419,18 @@ function showGroupUsage(group: NodeRuntimeGroup): void {
   showUsage(primaryRuntime(group), group);
 }
 
+function showCanonicalUsage(canonical: CanonicalNodeRuntime): void {
+  selectedUsageRuntime.value = canonical.runtime;
+  selectedUsageGroup.value = null;
+  selectedUsageCanonical.value = canonical;
+  usageSearchQuery.value = '';
+  showUsageDialog.value = true;
+}
+
 const selectedUsageEntries = computed<ProjectRuntimeUsage[]>(() => {
-  const usages = selectedUsageGroup.value
+  const usages = selectedUsageCanonical.value
+    ? canonicalRuntimeUsages(selectedUsageCanonical.value)
+    : selectedUsageGroup.value
     ? groupUsageEntries(selectedUsageGroup.value)
     : selectedUsageRuntime.value
       ? runtimeUsages(selectedUsageRuntime.value)
@@ -487,6 +533,7 @@ async function saveStorageLocation(): Promise<void> {
 function handleRuntimeCommand(command: string, runtime: NodeVersion, group: NodeRuntimeGroup | null = null): void {
   if (command === 'project-manager-default' && group) promptRuntimeAction('project-manager-default', group);
   if (command === 'system-node' && group) promptRuntimeAction('system-node', group);
+  if (command === 'details' && group) showRuntimeDetails(group);
   if (command === 'validate') void validateRuntime(runtime);
   if (command === 'terminal') void openRuntimeTerminal(runtime);
   if (command === 'folder') openFolder(runtime.path);
@@ -746,6 +793,7 @@ onBeforeUnmount(() => {
                           <el-button text circle size="small" :title="t('nodes.actions')"><div class="i-mdi-dots-vertical" /></el-button>
                           <template #dropdown>
                             <el-dropdown-menu>
+                              <el-dropdown-item command="details">{{ t('nodes.runtimeDetails') }}</el-dropdown-item>
                               <el-dropdown-item command="validate">{{ t('nodes.validate') }}</el-dropdown-item>
                               <el-dropdown-item command="folder">{{ t('nodes.openDirectory') }}</el-dropdown-item>
                               <el-dropdown-item v-if="primaryRuntime(row).source === 'nvm'" command="root">{{ t('nodes.openNvmDirectory') }}</el-dropdown-item>
@@ -785,6 +833,7 @@ onBeforeUnmount(() => {
                         <el-button text circle size="small" :title="t('nodes.actions')"><div class="i-mdi-dots-vertical" /></el-button>
                         <template #dropdown>
                           <el-dropdown-menu>
+                            <el-dropdown-item command="details">{{ t('nodes.runtimeDetails') }}</el-dropdown-item>
                             <el-dropdown-item v-if="groupCanSetAppDefault(row)" command="project-manager-default">{{ t('nodes.setProjectManagerDefault') }}</el-dropdown-item>
                             <el-dropdown-item v-if="groupCanSetSystemNode(row)" command="system-node">{{ t('nodes.setSystemNode') }}</el-dropdown-item>
                             <el-dropdown-item command="validate">{{ t('nodes.validate') }}</el-dropdown-item>
@@ -842,6 +891,7 @@ onBeforeUnmount(() => {
                   <el-button text circle size="small" :title="t('nodes.actions')"><div class="i-mdi-dots-vertical" /></el-button>
                   <template #dropdown>
                     <el-dropdown-menu>
+                      <el-dropdown-item command="details">{{ t('nodes.runtimeDetails') }}</el-dropdown-item>
                       <el-dropdown-item v-if="groupCanSetAppDefault(row)" command="project-manager-default">{{ t('nodes.setProjectManagerDefault') }}</el-dropdown-item>
                       <el-dropdown-item v-if="groupCanSetSystemNode(row)" command="system-node">{{ t('nodes.setSystemNode') }}</el-dropdown-item>
                       <el-dropdown-item command="validate">{{ t('nodes.validate') }}</el-dropdown-item>
@@ -928,6 +978,58 @@ onBeforeUnmount(() => {
       <div v-else class="py-8 text-center text-sm text-slate-400">
         {{ usageSearchQuery ? t('nodes.usageNoMatch') : t('nodes.noProjectUsage') }}
       </div>
+    </el-dialog>
+
+    <el-dialog v-model="showRuntimeDetailsDialog" :title="t('nodes.runtimeDetails')" width="820px" align-center class="runtime-details-dialog">
+      <div v-if="selectedRuntimeDetailsGroup" class="mb-3 flex items-center justify-between gap-3">
+        <div class="min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="font-mono text-base font-semibold text-slate-800 dark:text-slate-100">{{ selectedRuntimeDetailsGroup.version }}</span>
+            <span class="text-xs text-slate-500 dark:text-slate-400">{{ t('nodes.runtimeDetailsHint') }}</span>
+          </div>
+        </div>
+        <div class="i-mdi-source-branch shrink-0 text-xl text-slate-400" />
+      </div>
+      <div v-if="selectedRuntimeDetails.length" class="runtime-details-list">
+        <article v-for="canonical in selectedRuntimeDetails" :key="canonical.canonicalId" class="runtime-details-item">
+          <div class="runtime-details-item__main">
+            <div class="flex min-w-0 flex-wrap items-center gap-2">
+              <el-tag :type="sourceTone(canonical.preferredSource)" effect="plain" size="small">{{ sourceLabel(canonical.preferredSource) }}</el-tag>
+              <el-tag v-if="canonical.isProjectManagerDefault" type="success" effect="plain" size="small">{{ t('nodes.projectManagerDefault') }}</el-tag>
+              <el-tag v-if="canonical.isSystemCurrent" type="info" effect="plain" size="small">{{ t('nodes.systemCurrent') }}</el-tag>
+              <span :class="canonicalStatusTone(canonical)" class="text-xs">{{ canonicalStatusLabel(canonical) }}</span>
+            </div>
+            <div class="mt-2 truncate font-mono text-xs text-slate-600 dark:text-slate-300" :title="canonical.runtimePath">{{ canonical.runtimePath }}</div>
+            <div class="mt-1 text-xs text-slate-400">
+              {{ canonicalRuntimeUsages(canonical).length ? t('nodes.projectUsage', { count: canonicalRuntimeUsages(canonical).length }) : t('nodes.noProjectUsage') }}
+            </div>
+          </div>
+          <div class="runtime-details-item__actions">
+            <el-button size="small" @click="openFolder(canonical.runtimePath)">
+              <el-icon><div class="i-mdi-folder-open-outline" /></el-icon>{{ t('nodes.openDirectory') }}
+            </el-button>
+            <el-button v-if="canonical.preferredSource === 'nvm'" size="small" @click="openFolder(canonical.runtime.runtimeRoot || canonical.runtimePath)">
+              <el-icon><div class="i-mdi-folder-network-outline" /></el-icon>{{ t('nodes.openNvmDirectory') }}
+            </el-button>
+            <el-button size="small" @click="copyPath(canonical.runtimePath)">
+              <el-icon><div class="i-mdi-content-copy" /></el-icon>{{ t('nodes.copyRuntimePath') }}
+            </el-button>
+            <el-button size="small" @click="validateRuntime(canonical.runtime)">
+              <el-icon><div class="i-mdi-shield-check-outline" /></el-icon>{{ t('nodes.validate') }}
+            </el-button>
+            <el-button size="small" @click="showCanonicalUsage(canonical)">
+              <el-icon><div class="i-mdi-account-multiple-outline" /></el-icon>{{ t('nodes.viewUsage') }}
+            </el-button>
+            <el-button v-if="canonical.preferredSource === 'managed'" size="small" type="danger" plain @click="removeRuntime(canonical.runtime)">
+              <el-icon><div class="i-mdi-delete-outline" /></el-icon>{{ t('nodes.uninstall') }}
+            </el-button>
+            <el-button v-if="canonical.preferredSource === 'custom'" size="small" type="danger" plain @click="removeRuntime(canonical.runtime)">
+              <el-icon><div class="i-mdi-delete-outline" /></el-icon>{{ t('nodes.removeCustom') }}
+            </el-button>
+          </div>
+        </article>
+      </div>
+      <div v-else class="py-8 text-center text-sm text-slate-400">{{ t('nodes.noNodes') }}</div>
     </el-dialog>
   </div>
 </template>
@@ -1059,6 +1161,41 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
 }
 
+.runtime-details-list {
+  display: grid;
+  max-height: 70vh;
+  gap: 10px;
+  overflow-y: auto;
+  padding: 1px 4px 4px 1px;
+}
+
+.runtime-details-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  min-width: 0;
+  align-items: center;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.runtime-details-item__main {
+  min-width: 0;
+}
+
+.runtime-details-item__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+::deep(.runtime-details-dialog) {
+  max-width: calc(100vw - 24px);
+}
+
 @container (max-width: 1100px) {
   .runtime-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1133,6 +1270,14 @@ onBeforeUnmount(() => {
 @media (max-width: 520px) {
   .runtime-usage-list {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .runtime-details-item {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .runtime-details-item__actions {
+    justify-content: flex-start;
   }
 }
 </style>

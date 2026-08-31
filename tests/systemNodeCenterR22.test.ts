@@ -11,6 +11,8 @@ const tauriAdapter = read('src/api/adapters/tauri.ts');
 const runner = read('src-tauri/src/runner.rs');
 
 assert.match(rust, /where\.exe/);
+assert.match(rust, /pub async fn get_system_node_state\(/);
+assert.match(rust, /spawn_blocking\(detect_system_node_state\)/);
 assert.match(rust, /fn run_node_version\(executable: &Path\)/);
 assert.match(rust, /\.arg\("-v"\)/);
 assert.match(rust, /FSCTL_SET_REPARSE_POINT/);
@@ -29,6 +31,8 @@ assert.match(rust, /WM_SETTINGCHANGE/);
 assert.match(rust, /write_user_path/);
 assert.match(rust, /write_machine_path/);
 assert.match(rust, /machine_path_conflict/);
+assert.match(rust, /find_machine_path_node_before_controller/);
+assert.doesNotMatch(rust, /machine_has_controller\.is_some_and\(\|index\| index > 0\)/);
 assert.match(rust, /--elevated-node-operation/);
 
 assert.match(store, /systemNodeState/);
@@ -47,6 +51,8 @@ assert.match(nodeManager, /group\.effectiveRuntime/);
 assert.match(nodeManager, /flex-wrap: nowrap/);
 assert.match(nodeManager, /groupCanSetAppDefault/);
 assert.match(nodeManager, /groupCanSetSystemNode/);
+assert.match(nodeManager, /!group\.isSystemCurrent/);
+assert.match(nodeManager, /runtimeDetails/);
 assert.match(store, /source !== 'system'/);
 assert.match(read('src/components/AddProjectModal.vue'), /selectedExistingRuntime/);
 

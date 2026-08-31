@@ -405,6 +405,8 @@
     nvmVersionCount: '{count} 个版本',
     nvmNotDetected: '未检测到 NVM',
     allRuntimes: '所有 Runtime',
+    runtimeDetails: 'Runtime 详情',
+    runtimeDetailsHint: '该版本的实际 Runtime 副本',
     runtimeListHint: '同版本 Runtime 按版本合并展示，操作统一放在最右侧。',
     actions: '操作',
     runtimeGroupPartial: '{available}/{total} 个来源可用',

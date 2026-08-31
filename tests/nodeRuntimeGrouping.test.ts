@@ -142,4 +142,35 @@ assert.deepEqual(
   assert.equal(entries[0].isSystemCurrent, true);
 }
 
+{
+  const managed = runtime('v20.19.1', 'D:/Managed/v20.19.1', 'managed', 'D:/Managed/v20.19.1');
+  const nvm = runtime('v20.19.1', 'D:/nvm/v20.19.1', 'nvm', 'D:/nvm/v20.19.1');
+  const entries = buildNodeVersionEntries([managed, nvm], {
+    appDefault: {
+      runtimeId: managed.runtimeId,
+      source: 'managed',
+      version: managed.version,
+      path: managed.path,
+    },
+    systemNodeState: {
+      available: true,
+      version: 'v20.19.1',
+      nodePath: 'D:/node/node.exe',
+      canonicalNodePath: 'D:/nvm/v20.19.1/node.exe',
+      runtimeId: nvm.runtimeId,
+      source: 'nvm',
+      candidates: [{
+        path: 'D:/node/node.exe',
+        canonicalPath: 'D:/nvm/v20.19.1/node.exe',
+        version: 'v20.19.1',
+      }],
+      pathScope: 'nvm',
+    },
+  });
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].effectiveRuntime.source, 'managed', 'App Default remains the effective operation target');
+  assert.equal(entries[0].isProjectManagerDefault, true);
+  assert.equal(entries[0].isSystemCurrent, true, 'System Current is version-level state, independent of effectiveRuntime');
+}
+
 console.log('nodeRuntimeGrouping tests passed');

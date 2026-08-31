@@ -215,9 +215,30 @@ pub fn system_node_switch_supported() -> bool {
     cfg!(target_os = "windows")
 }
 
+fn unavailable_system_node_state() -> SystemNodeState {
+    SystemNodeState {
+        available: false,
+        version: None,
+        node_path: None,
+        runtime_id: None,
+        source: Some("unknown".to_string()),
+        candidates: Vec::new(),
+        path_scope: Some("unknown".to_string()),
+        nvm_symlink: None,
+        nvm_target_path: None,
+        canonical_node_path: None,
+    }
+}
+
 #[tauri::command]
-pub fn get_system_node_state() -> SystemNodeState {
-    detect_system_node_state()
+pub async fn get_system_node_state() -> SystemNodeState {
+    match tauri::async_runtime::spawn_blocking(detect_system_node_state).await {
+        Ok(state) => state,
+        Err(error) => {
+            eprintln!("System Node detection worker failed: {error}");
+            unavailable_system_node_state()
+        }
+    }
 }
 
 #[tauri::command]
@@ -345,6 +366,18 @@ fn find_node_candidates(path_value: &str) -> Vec<PathBuf> {
         &String::from_utf8_lossy(&output.stdout),
         env::current_dir().ok().as_deref(),
     )
+}
+
+#[cfg(windows)]
+fn resolve_node_candidate_for_path_entry(entry: &str) -> Option<PathBuf> {
+    let expanded = expand_windows_environment(entry.trim().trim_matches('"'));
+    if expanded.is_empty() {
+        return None;
+    }
+    let expected = Path::new(&expanded).join("node.exe");
+    find_node_candidates(&expanded)
+        .into_iter()
+        .find(|candidate| path_strings_equal(candidate, &expected))
 }
 
 fn parse_node_candidate_paths(output: &str, current_dir: Option<&Path>) -> Vec<PathBuf> {
@@ -563,6 +596,32 @@ fn normalize_path_entry(value: &str) -> String {
 
 fn path_entries_equal(left: &str, right: &str) -> bool {
     normalize_path_entry(left) == normalize_path_entry(right)
+}
+
+fn find_machine_path_node_before_controller<F>(
+    machine_path: &str,
+    controller_entry: &str,
+    mut resolve_node: F,
+) -> Option<PathBuf>
+where
+    F: FnMut(&str) -> Option<PathBuf>,
+{
+    // Only an actual Node candidate before the controller can shadow it.
+    let entries = split_path_entries(machine_path);
+    let limit = entries
+        .iter()
+        .position(|entry| path_entries_equal(entry, controller_entry))
+        .unwrap_or(entries.len());
+
+    for entry in entries.into_iter().take(limit) {
+        let entry = entry.trim();
+        if !entry.is_empty() {
+            if let Some(candidate) = resolve_node(entry) {
+                return Some(candidate);
+            }
+        }
+    }
+    None
 }
 
 fn remove_owned_path_entries(entries: &mut Vec<String>, owned: &[Option<&str>]) -> bool {
@@ -999,17 +1058,13 @@ fn apply_controller_path_integration(
         .iter()
         .position(|entry| path_entries_equal(entry, &controller_entry));
 
-    if !force_machine && machine_has_controller.is_some_and(|index| index > 0) {
-        return Err(SwitchFailure::MachinePathConflict(format!(
-            "Controller PATH entry is below another Machine PATH Node: {}",
-            controller_entry
-        )));
-    }
-
     #[cfg(windows)]
-    if !force_machine && machine_has_controller.is_none() {
-        let machine_path = expand_windows_environment(&machine_original.text);
-        if let Some(conflict) = find_node_candidates(&machine_path).into_iter().next() {
+    if !force_machine {
+        if let Some(conflict) = find_machine_path_node_before_controller(
+            &machine_original.text,
+            &controller_entry,
+            resolve_node_candidate_for_path_entry,
+        ) {
             return Err(SwitchFailure::MachinePathConflict(format!(
                 "Another Machine PATH Node has higher priority than the Project Manager Controller: {}",
                 conflict.display()
@@ -2092,6 +2147,66 @@ mod tests {
     }
 
     #[test]
+    fn machine_path_conflict_ignores_non_node_entries_before_controller() {
+        let result = find_machine_path_node_before_controller(
+            r"C:\Windows\System32;C:\Program Files\Git\cmd;D:\pm-controller",
+            r"D:\pm-controller",
+            |entry| {
+                entry
+                    .eq_ignore_ascii_case(r"C:\OtherNode")
+                    .then(|| PathBuf::from(r"C:\OtherNode\node.exe"))
+            },
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn machine_path_conflict_detects_node_before_controller() {
+        let result = find_machine_path_node_before_controller(
+            r"C:\OtherNode;C:\Program Files\Git\cmd;D:\pm-controller",
+            r"D:\pm-controller",
+            |entry| {
+                entry
+                    .eq_ignore_ascii_case(r"C:\OtherNode")
+                    .then(|| PathBuf::from(r"C:\OtherNode\node.exe"))
+            },
+        );
+        assert_eq!(result, Some(PathBuf::from(r"C:\OtherNode\node.exe")));
+    }
+
+    #[test]
+    fn machine_path_conflict_does_not_inspect_controller_or_later_entries() {
+        let result = find_machine_path_node_before_controller(
+            r"C:\Windows\System32;D:\pm-controller;C:\OtherNode",
+            r"D:\pm-controller",
+            |entry| {
+                if entry.eq_ignore_ascii_case(r"D:\pm-controller") {
+                    Some(PathBuf::from(r"D:\pm-controller\node.exe"))
+                } else if entry.eq_ignore_ascii_case(r"C:\OtherNode") {
+                    Some(PathBuf::from(r"C:\OtherNode\node.exe"))
+                } else {
+                    None
+                }
+            },
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn machine_path_without_controller_still_detects_a_machine_node() {
+        let result = find_machine_path_node_before_controller(
+            r"C:\OtherNode;C:\Program Files\Git\cmd",
+            r"D:\pm-controller",
+            |entry| {
+                entry
+                    .eq_ignore_ascii_case(r"C:\OtherNode")
+                    .then(|| PathBuf::from(r"C:\OtherNode\node.exe"))
+            },
+        );
+        assert_eq!(result, Some(PathBuf::from(r"C:\OtherNode\node.exe")));
+    }
+
+    #[test]
     fn controller_operation_has_no_nvm_switch_variant() {
         let operation = ElevatedNodeOperation::Switch {
             schema_version: OPERATION_SCHEMA_VERSION,
@@ -2124,5 +2239,98 @@ mod tests {
 
         restore_link_snapshot(&link, &snapshot).expect("restore junction snapshot");
         assert!(path_strings_equal(&link, &old_target));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn controller_repoints_nvm_and_managed_targets_without_nvm_cli() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let nvm_old = temp.path().join("nvm-v24");
+        let nvm_new = temp.path().join("nvm-v20");
+        let managed = temp.path().join("managed-v24");
+        let link = temp.path().join("current");
+        fs::create_dir_all(&nvm_old).expect("old NVM target");
+        fs::create_dir_all(&nvm_new).expect("new NVM target");
+        fs::create_dir_all(&managed).expect("Managed target");
+        create_directory_link(&link, &nvm_old).expect("create initial junction");
+
+        let controller = SystemNodeController {
+            link_path: link.clone(),
+            kind: SystemNodeControllerKind::ExistingNodeLink,
+        };
+        let nvm_target = ResolvedTarget {
+            runtime_id: Some("nvm:v20".to_string()),
+            version: "v20.19.1".to_string(),
+            source: "nvm".to_string(),
+            directory: nvm_new.clone(),
+            executable: nvm_new.join("node.exe"),
+        };
+        let snapshot = repoint_controller(&controller, &nvm_target).expect("repoint to NVM");
+        assert!(path_strings_equal(&link, &nvm_new));
+        restore_link_snapshot(&link, &snapshot).expect("rollback to old NVM target");
+        assert!(path_strings_equal(&link, &nvm_old));
+
+        let managed_target = ResolvedTarget {
+            runtime_id: Some("managed:v24".to_string()),
+            version: "v24.20.0".to_string(),
+            source: "managed".to_string(),
+            directory: managed.clone(),
+            executable: managed.join("node.exe"),
+        };
+        repoint_controller(&controller, &managed_target).expect("repoint to Managed");
+        assert!(path_strings_equal(&link, &managed));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn controller_creation_failure_restores_previous_target() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let old_target = temp.path().join("old-target");
+        let missing_target = temp.path().join("missing-target");
+        let link = temp.path().join("current");
+        fs::create_dir_all(&old_target).expect("old target");
+        create_directory_link(&link, &old_target).expect("create initial junction");
+
+        let controller = SystemNodeController {
+            link_path: link.clone(),
+            kind: SystemNodeControllerKind::ExistingNodeLink,
+        };
+        let target = ResolvedTarget {
+            runtime_id: Some("nvm:v20".to_string()),
+            version: "v20.19.1".to_string(),
+            source: "nvm".to_string(),
+            directory: missing_target.clone(),
+            executable: missing_target.join("node.exe"),
+        };
+
+        assert!(repoint_controller(&controller, &target).is_err());
+        assert!(path_strings_equal(&link, &old_target));
+    }
+
+    #[test]
+    fn project_manager_controller_state_resolves_to_app_data_link() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let expected = project_manager_controller_path(temp.path());
+        let state = SystemNodeIntegrationState {
+            controller_mode: Some("project-manager-link".to_string()),
+            controller_link_path: Some(expected.to_string_lossy().to_string()),
+            ..SystemNodeIntegrationState::default()
+        };
+
+        let controller = resolve_controller(temp.path(), &state);
+        assert_eq!(controller.kind, SystemNodeControllerKind::ProjectManagerLink);
+        assert!(path_strings_equal(&controller.link_path, &expected));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ordinary_controller_directory_is_never_taken_over() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let link = temp.path().join("current");
+        fs::create_dir_all(&link).expect("ordinary controller directory");
+
+        let error = read_link_snapshot(&link).expect_err("ordinary directory must be rejected");
+        assert!(error.message().contains("ordinary directory"));
+        assert!(link.is_dir(), "the ordinary user directory must remain intact");
     }
 }

@@ -406,6 +406,8 @@ export default {
     nvmVersionCount: '{count} version(s)',
     nvmNotDetected: 'NVM not detected',
     allRuntimes: 'All Runtimes',
+    runtimeDetails: 'Runtime Details',
+    runtimeDetailsHint: 'Physical Runtime copies for this version',
     runtimeListHint: 'Same-version runtimes are grouped, with actions in the rightmost column.',
     actions: 'Actions',
     runtimeGroupPartial: '{available}/{total} sources available',
