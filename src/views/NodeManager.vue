@@ -28,6 +28,7 @@ const showInstallModal = ref(false);
 const showStorageDialog = ref(false);
 const showUsageDialog = ref(false);
 const selectedUsageRuntime = ref<NodeVersion | null>(null);
+const selectedUsageGroup = ref<NodeRuntimeGroup | null>(null);
 const usageSearchQuery = ref('');
 const storageMode = ref<ManagedRuntimeLocationMode>('app-data');
 const customStoragePath = ref('');
@@ -114,13 +115,6 @@ function sourceTone(source: NodeVersion['source']): string {
   return 'primary';
 }
 
-function statusLabel(runtime: NodeVersion): string {
-  if (runtime.status === 'installing' || nodeStore.installProgress[runtime.version]) return t('nodes.installing');
-  if (runtime.status === 'broken') return t('nodes.broken');
-  if (runtime.status === 'unavailable') return t('nodes.unavailable');
-  return t('nodes.available');
-}
-
 function runtimeIsAvailable(runtime: NodeVersion): boolean {
   return !nodeStore.installProgress[runtime.version]
     && (runtime.status === undefined || runtime.status === 'available');
@@ -145,6 +139,10 @@ function groupStatusTone(group: NodeRuntimeGroup): string {
 function groupProgressText(group: NodeRuntimeGroup): string {
   const runtime = group.runtimes.find(item => nodeStore.installProgress[item.version]);
   return runtime ? progressText(runtime) : '';
+}
+
+function primaryRuntime(group: NodeRuntimeGroup): NodeVersion {
+  return group.runtimes[0];
 }
 
 function groupHasDefault(group: NodeRuntimeGroup): boolean {
@@ -182,23 +180,22 @@ function projectsUsingRuntime(runtime: NodeVersion): Project[] {
   return runtimeUsages(runtime).map(usage => usage.project);
 }
 
-function usageLabel(runtime: NodeVersion): string {
-  const usages = runtimeUsages(runtime);
-  if (!usages.length) return t('nodes.noProjectUsage');
-  const running = usages.filter(usage => projectIsRunning(usage.project)).length;
-  return running ? t('nodes.projectUsageRunning', { count: usages.length, running }) : t('nodes.projectUsage', { count: usages.length });
-}
-
 function runtimeIsRunning(runtime: NodeVersion): boolean {
   return projectsUsingRuntime(runtime).some(projectIsRunning);
 }
 
 function groupProjectsUsingRuntime(group: NodeRuntimeGroup): Project[] {
-  const projects = new Map<string, Project>();
+  return groupUsageEntries(group).map(usage => usage.project);
+}
+
+function groupUsageEntries(group: NodeRuntimeGroup): ProjectRuntimeUsage[] {
+  const usages = new Map<string, ProjectRuntimeUsage>();
   for (const runtime of group.runtimes) {
-    for (const project of projectsUsingRuntime(runtime)) projects.set(project.id, project);
+    for (const usage of runtimeUsages(runtime)) {
+      if (!usages.has(usage.project.id)) usages.set(usage.project.id, usage);
+    }
   }
-  return [...projects.values()];
+  return [...usages.values()];
 }
 
 function groupUsageLabel(group: NodeRuntimeGroup): string {
@@ -264,17 +261,25 @@ async function copyPath(path: string): Promise<void> {
   }
 }
 
-function showUsage(runtime: NodeVersion): void {
+function showUsage(runtime: NodeVersion, group: NodeRuntimeGroup | null = null): void {
   selectedUsageRuntime.value = runtime;
+  selectedUsageGroup.value = group;
   usageSearchQuery.value = '';
   showUsageDialog.value = true;
 }
 
+function showGroupUsage(group: NodeRuntimeGroup): void {
+  showUsage(primaryRuntime(group), group);
+}
+
 const selectedUsageEntries = computed<ProjectRuntimeUsage[]>(() => {
-  const runtime = selectedUsageRuntime.value;
-  if (!runtime) return [];
+  const usages = selectedUsageGroup.value
+    ? groupUsageEntries(selectedUsageGroup.value)
+    : selectedUsageRuntime.value
+      ? runtimeUsages(selectedUsageRuntime.value)
+      : [];
   const query = usageSearchQuery.value.trim().toLowerCase();
-  return runtimeUsages(runtime).filter(({ project }) => {
+  return usages.filter(({ project }) => {
     if (!query) return true;
     return `${project.name} ${project.path}`.toLowerCase().includes(query);
   });
@@ -368,14 +373,14 @@ async function saveStorageLocation(): Promise<void> {
   }
 }
 
-function handleRuntimeCommand(command: string, runtime: NodeVersion): void {
+function handleRuntimeCommand(command: string, runtime: NodeVersion, group: NodeRuntimeGroup | null = null): void {
   if (command === 'validate') void validateRuntime(runtime);
   if (command === 'terminal') void openRuntimeTerminal(runtime);
   if (command === 'folder') openFolder(runtime.path);
   if (command === 'root') openFolder(runtime.runtimeRoot || runtime.path);
   if (command === 'copy-node') void copyPath(runtime.path);
   if (command === 'copy-root') void copyPath(runtime.runtimeRoot || runtime.path);
-  if (command === 'usage') showUsage(runtime);
+  if (command === 'usage') showUsage(runtime, group);
   if (command === 'remove') void removeRuntime(runtime);
 }
 
@@ -502,55 +507,9 @@ onMounted(() => {
               <h2 class="text-base font-semibold text-slate-800 dark:text-slate-100">{{ t('nodes.allRuntimes') }}</h2>
               <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">{{ t('nodes.runtimeListHint') }}</p>
             </div>
-            <span class="text-xs text-slate-400">{{ displayRuntimes.length }}</span>
+            <span class="text-xs text-slate-400">{{ runtimeGroups.length }}</span>
           </div>
           <el-table :data="runtimeGroups" row-key="key" style="width: 100%" :row-style="{ background: 'transparent' }" class="custom-table">
-            <el-table-column type="expand" width="44">
-              <template #default="{ row }">
-                <div class="runtime-source-list">
-                  <div v-for="runtime in row.runtimes" :key="getNodeRuntimeId(runtime)" class="runtime-source-row">
-                    <div class="min-w-0 flex-1">
-                      <div class="flex flex-wrap items-center gap-2">
-                        <el-tag :type="sourceTone(runtime.source)" effect="plain" size="small">{{ sourceLabel(runtime.source) }}</el-tag>
-                        <el-tag v-if="runtime.isDefault" type="success" effect="plain" size="small">{{ t('nodes.default') }}</el-tag>
-                        <span :class="runtimeIsAvailable(runtime) ? 'text-emerald-600 dark:text-emerald-300' : 'text-amber-600 dark:text-amber-300'" class="text-xs">{{ statusLabel(runtime) }}</span>
-                      </div>
-                      <div class="mt-1 truncate font-mono text-xs text-slate-600 dark:text-slate-300" :title="runtime.path">{{ runtime.path || t('nodes.installing') }}</div>
-                      <div v-if="runtime.runtimeRoot && runtime.runtimeRoot !== runtime.path" class="truncate text-[11px] text-slate-400" :title="runtime.runtimeRoot">{{ runtime.runtimeRoot }}</div>
-                    </div>
-                    <div class="flex shrink-0 items-center gap-1">
-                      <el-button v-if="projectsUsingRuntime(runtime).length" text type="primary" size="small" @click="showUsage(runtime)">
-                        {{ usageLabel(runtime) }}
-                      </el-button>
-                      <el-button v-if="!runtime.isDefault && runtimeIsAvailable(runtime)" text type="primary" size="small" @click="setDefault(runtime)">
-                        {{ t('nodes.setDefault') }}
-                      </el-button>
-                      <el-tooltip :content="t('nodes.openTerminal')" placement="top">
-                        <el-button text circle size="small" :disabled="!runtimeIsAvailable(runtime)" @click="openRuntimeTerminal(runtime)">
-                          <div class="i-mdi-console" />
-                        </el-button>
-                      </el-tooltip>
-                      <el-dropdown trigger="click" @command="(command: string) => handleRuntimeCommand(command, runtime)">
-                        <el-button text circle size="small"><div class="i-mdi-dots-vertical" /></el-button>
-                        <template #dropdown>
-                          <el-dropdown-menu>
-                            <el-dropdown-item command="validate">{{ t('nodes.validate') }}</el-dropdown-item>
-                            <el-dropdown-item command="folder">{{ t('nodes.openDirectory') }}</el-dropdown-item>
-                            <el-dropdown-item v-if="runtime.source === 'nvm'" command="root">{{ t('nodes.openNvmDirectory') }}</el-dropdown-item>
-                            <el-dropdown-item command="copy-node">{{ t('nodes.copyNodePath') }}</el-dropdown-item>
-                            <el-dropdown-item command="copy-root">{{ t('nodes.copyRuntimePath') }}</el-dropdown-item>
-                            <el-dropdown-item command="usage">{{ t('nodes.viewUsage') }}</el-dropdown-item>
-                            <el-dropdown-item v-if="runtime.source === 'managed' || runtime.source === 'custom'" divided command="remove">
-                              {{ runtime.source === 'managed' ? t('nodes.uninstall') : t('nodes.removeCustom') }}
-                            </el-dropdown-item>
-                          </el-dropdown-menu>
-                        </template>
-                      </el-dropdown>
-                    </div>
-                  </div>
-                </div>
-              </template>
-            </el-table-column>
             <el-table-column :label="t('nodes.version')" min-width="150">
               <template #default="{ row }">
                 <div class="flex min-w-0 flex-col gap-1">
@@ -564,9 +523,7 @@ onMounted(() => {
             </el-table-column>
             <el-table-column :label="t('nodes.source')" min-width="190">
               <template #default="{ row }">
-                <div class="flex flex-wrap gap-1">
-                  <el-tag v-for="source in row.sources" :key="source" :type="sourceTone(source)" effect="plain" size="small">{{ sourceLabel(source) }}</el-tag>
-                </div>
+                <el-tag :type="sourceTone(primaryRuntime(row).source)" effect="plain" size="small">{{ sourceLabel(primaryRuntime(row).source) }}</el-tag>
               </template>
             </el-table-column>
             <el-table-column :label="t('nodes.status')" width="130">
@@ -576,14 +533,47 @@ onMounted(() => {
             </el-table-column>
             <el-table-column :label="t('nodes.path')" min-width="220" show-overflow-tooltip>
               <template #default="{ row }">
-                <span class="text-xs text-slate-500 dark:text-slate-400">{{ t('nodes.runtimeSourceCount', { count: row.runtimes.length }) }}</span>
-                <span v-if="row.runtimes.length > 1" class="ml-1 text-[11px] text-slate-400">{{ t('nodes.expandForPaths') }}</span>
-                <span v-else class="ml-1 truncate font-mono text-xs text-slate-500 dark:text-slate-400" :title="row.runtimes[0]?.path">{{ row.runtimes[0]?.path || t('nodes.installing') }}</span>
+                <span class="truncate font-mono text-xs text-slate-500 dark:text-slate-400" :title="primaryRuntime(row).path">{{ primaryRuntime(row).path || t('nodes.installing') }}</span>
               </template>
             </el-table-column>
             <el-table-column :label="t('nodes.usage')" min-width="150">
               <template #default="{ row }">
                 <span :class="groupProjectsUsingRuntime(row).length ? 'text-slate-600 dark:text-slate-300' : 'text-slate-400'" class="text-xs">{{ groupUsageLabel(row) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column :label="t('nodes.actions')" width="190" fixed="right" align="right">
+              <template #default="{ row }">
+                <div class="flex items-center justify-end gap-1">
+                  <el-tooltip v-if="groupProjectsUsingRuntime(row).length" :content="t('nodes.viewUsage')" placement="top">
+                    <el-button text circle size="small" @click="showGroupUsage(row)">
+                      <div class="i-mdi-account-multiple-outline" />
+                    </el-button>
+                  </el-tooltip>
+                  <el-button v-if="!groupHasDefault(row) && runtimeIsAvailable(primaryRuntime(row))" text type="primary" size="small" @click="setDefault(primaryRuntime(row))">
+                    {{ t('nodes.setDefault') }}
+                  </el-button>
+                  <el-tooltip :content="t('nodes.openTerminal')" placement="top">
+                    <el-button text circle size="small" :disabled="!runtimeIsAvailable(primaryRuntime(row))" @click="openRuntimeTerminal(primaryRuntime(row))">
+                      <div class="i-mdi-console" />
+                    </el-button>
+                  </el-tooltip>
+                  <el-dropdown trigger="click" @command="(command: string) => handleRuntimeCommand(command, primaryRuntime(row), row)">
+                    <el-button text circle size="small" :title="t('nodes.actions')"><div class="i-mdi-dots-vertical" /></el-button>
+                    <template #dropdown>
+                      <el-dropdown-menu>
+                        <el-dropdown-item command="validate">{{ t('nodes.validate') }}</el-dropdown-item>
+                        <el-dropdown-item command="folder">{{ t('nodes.openDirectory') }}</el-dropdown-item>
+                        <el-dropdown-item v-if="primaryRuntime(row).source === 'nvm'" command="root">{{ t('nodes.openNvmDirectory') }}</el-dropdown-item>
+                        <el-dropdown-item command="copy-node">{{ t('nodes.copyNodePath') }}</el-dropdown-item>
+                        <el-dropdown-item command="copy-root">{{ t('nodes.copyRuntimePath') }}</el-dropdown-item>
+                        <el-dropdown-item command="usage">{{ t('nodes.viewUsage') }}</el-dropdown-item>
+                        <el-dropdown-item v-if="primaryRuntime(row).source === 'managed' || primaryRuntime(row).source === 'custom'" divided command="remove">
+                          {{ primaryRuntime(row).source === 'managed' ? t('nodes.uninstall') : t('nodes.removeCustom') }}
+                        </el-dropdown-item>
+                      </el-dropdown-menu>
+                    </template>
+                  </el-dropdown>
+                </div>
               </template>
             </el-table-column>
           </el-table>
@@ -632,7 +622,7 @@ onMounted(() => {
             <el-tag :type="sourceTone(selectedUsageRuntime.source)" effect="plain" size="small">{{ sourceLabel(selectedUsageRuntime.source) }}</el-tag>
           </div>
           <div class="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            {{ t('nodes.usageSummary', { count: runtimeUsages(selectedUsageRuntime).length }) }}
+            {{ t('nodes.usageSummary', { count: selectedUsageEntries.length }) }}
           </div>
         </div>
         <div class="i-mdi-account-multiple-outline shrink-0 text-xl text-slate-400" />
@@ -673,38 +663,27 @@ onMounted(() => {
   background-color: var(--app-primary-soft) !important;
 }
 
-.runtime-source-list {
-  border-left: 2px solid var(--app-primary-soft);
-  padding: 0 12px 0 14px;
-}
-
-.runtime-source-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-height: 64px;
-  padding: 10px 0;
-}
-
-.runtime-source-row + .runtime-source-row {
-  border-top: 1px solid var(--app-border);
-}
-
 .runtime-usage-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
   max-height: max(72px, calc(70vh - 132px));
   min-height: 0;
   overflow-y: auto;
-  padding-right: 4px;
+  padding: 1px 4px 4px 1px;
 }
 
 .runtime-usage-item {
   display: flex;
   width: 100%;
-  min-height: 72px;
+  min-width: 0;
+  min-height: 82px;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
-  border-top: 1px solid var(--app-border);
-  padding: 11px 2px;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  padding: 10px;
   background: transparent;
   text-align: left;
   transition: background-color var(--app-duration-fast) var(--app-ease);
@@ -721,5 +700,11 @@ onMounted(() => {
 
 :deep(.runtime-usage-dialog) {
   max-width: calc(100vw - 24px);
+}
+
+@media (max-width: 520px) {
+  .runtime-usage-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 </style>

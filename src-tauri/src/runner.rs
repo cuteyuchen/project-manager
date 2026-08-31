@@ -33,6 +33,8 @@ use windows_sys::Win32::System::JobObjects::{
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+#[cfg(target_os = "windows")]
+const CREATE_NEW_CONSOLE: u32 = 0x00000010;
 
 #[cfg(target_os = "windows")]
 struct WindowsJobObject {
@@ -1350,8 +1352,14 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String, packa
                     "; ",
                 );
                 let executable = if is_custom_executable { terminal.as_str() } else { "powershell" };
-                let mut command = Command::new("cmd");
-                command.args(["/C", "start", "", executable, "-NoExit", "-Command", &startup_script]);
+                // 直接启动 PowerShell，避免 `cmd /C start` 再解析一次 `-Command`，导致 PATH 脚本被截断。
+                let mut command = Command::new(executable);
+                command.args(["-NoLogo", "-NoProfile", "-NoExit", "-Command", &startup_script]);
+                command.current_dir(&win_path);
+                command.creation_flags(CREATE_NEW_CONSOLE);
+                if let Some(path_env) = &terminal_path_env {
+                    command.env("PATH", path_env);
+                }
                 command.spawn().map_err(|e| e.to_string())?;
             }
             _ if is_pwsh => {
@@ -1364,8 +1372,13 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String, packa
                     "; ",
                 );
                 let executable = if is_custom_executable { terminal.as_str() } else { "pwsh" };
-                let mut command = Command::new("cmd");
-                command.args(["/C", "start", "", executable, "-NoExit", "-Command", &startup_script]);
+                let mut command = Command::new(executable);
+                command.args(["-NoLogo", "-NoProfile", "-NoExit", "-Command", &startup_script]);
+                command.current_dir(&win_path);
+                command.creation_flags(CREATE_NEW_CONSOLE);
+                if let Some(path_env) = &terminal_path_env {
+                    command.env("PATH", path_env);
+                }
                 command.spawn().map_err(|e| e.to_string())?;
             }
             "windows-terminal" => {

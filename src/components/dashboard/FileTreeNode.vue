@@ -262,6 +262,7 @@ onMounted(() => {
 }
 .explorer-file-name {
   min-width: 0;
+  font-size: 12px;
   user-select: none;
   -webkit-user-select: none;
 }
