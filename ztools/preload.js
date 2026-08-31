@@ -1197,7 +1197,7 @@ window.services = {
     scanNvmNodeRuntimes,
     getManagedNodeRuntimeLocation: async () => {
         const rootPath = path.join(platform.getPath('userData'), 'runtimes', 'node');
-        return { mode: 'app-data', rootPath, writable: true, portableAvailable: false, installedCount: 0, sizeBytes: 0, warnings: [] };
+        return { mode: 'app-data', rootPath, writable: true, portableAvailable: false, installedCount: 0, sizeBytes: 0, sizeStatus: 'ready', warnings: [] };
     },
     migrateManagedNodeRuntimeLocation: async () => {
         throw new Error('Managed Node runtime location is not supported in this plugin');

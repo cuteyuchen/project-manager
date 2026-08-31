@@ -98,6 +98,7 @@ export const useNodeStore = defineStore('node', () => {
   const registryError = ref('');
   const appDefault = ref<AppDefaultNode | null>(null);
   const managedLocation = ref<ManagedRuntimeLocationInfo | null>(null);
+  const managedLocationLoading = ref(false);
   const installProgress = ref<Record<string, NodeInstallProgress>>({});
   const persistedCustomNodes = ref<NodeVersion[]>([]);
   const hydrated = ref(false);
@@ -249,10 +250,13 @@ export const useNodeStore = defineStore('node', () => {
       applyMerged({ managed: [] });
       console.error('Failed to load managed node runtimes', error);
     }
+    managedLocationLoading.value = true;
     try {
       managedLocation.value = await api.getManagedNodeRuntimeLocation();
     } catch (error) {
       console.error('Failed to load managed runtime location', error);
+    } finally {
+      managedLocationLoading.value = false;
     }
   };
 
@@ -376,6 +380,11 @@ export const useNodeStore = defineStore('node', () => {
       versions.value = markDefault(versions.value);
       throw new Error(`默认 Node 保存失败：${String(error)}`);
     }
+    try {
+      await loadRuntimes();
+    } catch (error) {
+      throw new Error(`默认 Node 已保存，但 Runtime Registry 刷新失败：${String(error)}`);
+    }
   };
 
   /** 验证 Runtime，并把状态更新为 available/broken。 */
@@ -472,8 +481,27 @@ export const useNodeStore = defineStore('node', () => {
   ) => {
     const result = await api.migrateManagedNodeRuntimeLocation(location, migrate, runningRuntimePaths);
     managedLocation.value = result;
+    const settingsStore = useSettingsStore();
+    settingsStore.settings.managedNodeRuntimeLocation = {
+      mode: result.mode,
+      customPath: result.customPath || undefined,
+    };
+    try {
+      const { flushPendingSave } = await import('../utils/persistence');
+      await flushPendingSave();
+    } catch (error) {
+      // The backend has already switched successfully; report persistence cleanup without rolling it back.
+      result.warnings = [
+        ...(result.warnings || []),
+        `Runtime 位置已切换，但前端配置刷新失败：${String(error)}`,
+      ];
+    }
     await loadRuntimes();
     return result;
+  };
+
+  const openManagedRuntimeRoot = async () => {
+    await api.openManagedNodeRuntimeRoot();
   };
 
   const openTerminalWithRuntime = async (runtime: NodeVersion) => {
@@ -493,6 +521,7 @@ export const useNodeStore = defineStore('node', () => {
     registryError,
     appDefault,
     managedLocation,
+    managedLocationLoading,
     installProgress,
     legacyMigrationPending,
     loadRuntimes,
@@ -519,6 +548,7 @@ export const useNodeStore = defineStore('node', () => {
     uninstallManagedNode,
     uninstallNode: uninstallManagedNode,
     changeManagedRuntimeLocation,
+    openManagedRuntimeRoot,
     openTerminalWithRuntime,
   };
 });

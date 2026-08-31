@@ -367,6 +367,8 @@ export interface ManagedRuntimeLocationInfo extends ManagedRuntimeLocation {
   portableAvailable: boolean;
   installedCount: number;
   sizeBytes: number;
+  /** 目录大小统计状态；计算期间由前端保持 loading 状态。 */
+  sizeStatus?: 'calculating' | 'ready' | 'error';
   warnings?: string[];
 }
 

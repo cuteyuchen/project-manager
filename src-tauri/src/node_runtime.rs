@@ -69,6 +69,7 @@ pub struct ManagedRuntimeLocationInfo {
     pub portable_available: bool,
     pub installed_count: usize,
     pub size_bytes: u64,
+    pub size_status: String,
     pub warnings: Vec<String>,
 }
 
@@ -104,6 +105,16 @@ impl NodeRuntimeState {
             cancels: Mutex::new(HashMap::new()),
         }
     }
+}
+
+async fn run_node_runtime_task<T, F>(task: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(task)
+        .await
+        .map_err(|error| format!("Background Node runtime task failed: {error}"))?
 }
 
 /// 规范化为 `vX.Y.Z`，拒绝 nightly / 路径注入。
@@ -205,6 +216,61 @@ fn default_managed_root(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+fn resolve_managed_runtime_root_from_paths(
+    setting: &ManagedRuntimeLocationSetting,
+    app_data_dir: Option<&Path>,
+    executable_dir: Option<&Path>,
+) -> Result<PathBuf, String> {
+    match setting.mode.as_str() {
+        "app-data" => Ok(app_data_dir
+            .ok_or_else(|| "Application data directory is unavailable".to_string())?
+            .join("runtimes")
+            .join("node")),
+        "custom" => Ok(PathBuf::from(
+            setting
+                .custom_path
+                .as_deref()
+                .ok_or_else(|| "Custom Managed Node runtime location is empty".to_string())?,
+        )),
+        "portable" => Ok(executable_dir
+            .ok_or_else(|| "Application directory is unavailable".to_string())?
+            .join("data")
+            .join("runtimes")
+            .join("node")),
+        other => Err(format!("Unsupported Managed Node runtime location mode: {other}")),
+    }
+}
+
+fn normalize_managed_location_setting(
+    mode: &str,
+    custom_path: Option<&str>,
+) -> Result<ManagedRuntimeLocationSetting, String> {
+    let mode = mode.trim();
+    match mode {
+        "app-data" => Ok(ManagedRuntimeLocationSetting::default()),
+        "portable" => Ok(ManagedRuntimeLocationSetting {
+            mode: "portable".to_string(),
+            custom_path: None,
+        }),
+        "custom" => {
+            let path = custom_path.unwrap_or_default().trim();
+            if path.is_empty() {
+                return Err("Custom Managed Node runtime location is empty".to_string());
+            }
+            if !Path::new(path).is_absolute() {
+                return Err(format!(
+                    "Custom Managed Node runtime location must be absolute: {path}"
+                ));
+            }
+            Ok(ManagedRuntimeLocationSetting {
+                mode: "custom".to_string(),
+                custom_path: Some(path.to_string()),
+            })
+        }
+        other => Err(format!("Unsupported Managed Node runtime location mode: {other}")),
+    }
+}
+
 fn read_managed_location(app: &AppHandle) -> Result<ManagedRuntimeLocationSetting, String> {
     let content = crate::read_config_file_contents(app, "data.json")?;
     if content.trim().is_empty() {
@@ -222,40 +288,33 @@ fn read_managed_location(app: &AppHandle) -> Result<ManagedRuntimeLocationSettin
 
     let setting: ManagedRuntimeLocationSetting = serde_json::from_value(raw.clone())
         .map_err(|error| format!("Invalid managed Node runtime location setting: {error}"))?;
-    match setting.mode.as_str() {
-        "app-data" => Ok(ManagedRuntimeLocationSetting::default()),
-        "custom" if setting.custom_path.as_deref().unwrap_or_default().trim().is_empty() => {
-            Err("Custom Managed Node runtime location is empty".to_string())
-        }
-        "custom" | "portable" => Ok(setting),
-        other => Err(format!("Unsupported Managed Node runtime location mode: {other}")),
-    }
+    normalize_managed_location_setting(&setting.mode, setting.custom_path.as_deref())
 }
 
 fn resolve_managed_runtime_root_for_setting(
     app: &AppHandle,
     setting: &ManagedRuntimeLocationSetting,
 ) -> Result<PathBuf, String> {
-    match setting.mode.as_str() {
-        "app-data" => default_managed_root(app),
-        "custom" => Ok(PathBuf::from(
-            setting
-                .custom_path
-                .as_deref()
-                .ok_or_else(|| "Custom Managed Node runtime location is empty".to_string())?,
-        )),
-        "portable" => Ok(app
-            .path()
-            .executable_dir()
-            .map_err(|e| format!("Failed to resolve application directory: {e}"))?
-            .join("data")
-            .join("runtimes")
-            .join("node")),
-        other => Err(format!("Unsupported Managed Node runtime location mode: {other}")),
+    if setting.mode == "app-data" {
+        return default_managed_root(app);
     }
+    let executable_dir = if setting.mode == "portable" {
+        Some(
+            app.path()
+                .executable_dir()
+                .map_err(|e| format!("Failed to resolve application directory: {e}"))?,
+        )
+    } else {
+        None
+    };
+    resolve_managed_runtime_root_from_paths(
+        setting,
+        None,
+        executable_dir.as_deref(),
+    )
 }
 
-fn managed_root(app: &AppHandle) -> Result<PathBuf, String> {
+fn resolve_managed_runtime_root(app: &AppHandle) -> Result<PathBuf, String> {
     let setting = read_managed_location(app)?;
     resolve_managed_runtime_root_for_setting(app, &setting)
 }
@@ -283,8 +342,10 @@ fn path_is_within(path: &Path, parent: &Path) -> bool {
 }
 
 fn writable_probe(path: &Path) -> bool {
+    let mut created_dirs = Vec::new();
     let mut probe_dir = path.to_path_buf();
     while !probe_dir.exists() {
+        created_dirs.push(probe_dir.clone());
         let Some(parent) = probe_dir.parent() else {
             return false;
         };
@@ -293,7 +354,29 @@ fn writable_probe(path: &Path) -> bool {
         }
         probe_dir = parent.to_path_buf();
     }
+
     if !probe_dir.is_dir() {
+        for created in created_dirs {
+            let _ = fs::remove_dir(created);
+        }
+        return false;
+    }
+    if fs::create_dir_all(path).is_err() || !path.is_dir() {
+        for created in created_dirs {
+            let _ = fs::remove_dir(created);
+        }
+        return false;
+    }
+    let Ok(metadata) = fs::metadata(path) else {
+        for created in created_dirs {
+            let _ = fs::remove_dir(created);
+        }
+        return false;
+    };
+    if metadata.permissions().readonly() {
+        for created in created_dirs {
+            let _ = fs::remove_dir(created);
+        }
         return false;
     }
 
@@ -301,14 +384,23 @@ fn writable_probe(path: &Path) -> bool {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
-    let probe = probe_dir.join(format!(".project-manager-write-test-{stamp}"));
-    match File::create(&probe) {
-        Ok(_) => {
-            let _ = fs::remove_file(probe);
-            true
-        }
-        Err(_) => false,
+    let probe = path.join(format!(".project-manager-write-test-{stamp}"));
+    let result = (|| -> io::Result<()> {
+        let mut file = File::create(&probe)?;
+        file.write_all(b"project-manager")?;
+        file.sync_all()?;
+        drop(file);
+        fs::remove_file(&probe)
+    })()
+    .is_ok();
+
+    if !result {
+        let _ = fs::remove_file(&probe);
     }
+    for created in created_dirs {
+        let _ = fs::remove_dir(created);
+    }
+    result
 }
 
 fn ensure_writable_directory(path: &Path) -> Result<(), String> {
@@ -342,16 +434,45 @@ fn runtime_directory_entries(root: &Path) -> Vec<(String, PathBuf)> {
     result
 }
 
-fn directory_size(path: &Path) -> u64 {
-    if path.is_file() {
-        return fs::metadata(path).map(|meta| meta.len()).unwrap_or_default();
+fn directory_size_stats(path: &Path) -> (u64, Vec<String>) {
+    let mut total = 0_u64;
+    let mut warnings = Vec::new();
+    let mut pending = vec![path.to_path_buf()];
+
+    while let Some(current) = pending.pop() {
+        let metadata = match fs::symlink_metadata(&current) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                warnings.push(format!("{}: {error}", current.display()));
+                continue;
+            }
+        };
+        let file_type = metadata.file_type();
+        if file_type.is_file() || file_type.is_symlink() {
+            total = total.saturating_add(metadata.len());
+            continue;
+        }
+        if !file_type.is_dir() {
+            continue;
+        }
+
+        let entries = match fs::read_dir(&current) {
+            Ok(entries) => entries,
+            Err(error) => {
+                warnings.push(format!("{}: {error}", current.display()));
+                continue;
+            }
+        };
+        for entry in entries {
+            match entry {
+                Ok(entry) => pending.push(entry.path()),
+                Err(error) => warnings.push(format!("{}: {error}", current.display())),
+            }
+        }
     }
-    if !path.is_dir() {
-        return 0;
-    }
-    fs::read_dir(path)
-        .map(|entries| entries.flatten().map(|entry| directory_size(&entry.path())).sum())
-        .unwrap_or_default()
+
+    (total, warnings)
 }
 
 fn portable_root(app: &AppHandle) -> Result<PathBuf, String> {
@@ -364,23 +485,55 @@ fn portable_root(app: &AppHandle) -> Result<PathBuf, String> {
     )
 }
 
-fn managed_location_info(
+fn managed_location_info_sync(
+    setting: &ManagedRuntimeLocationSetting,
+    root: PathBuf,
+    portable: PathBuf,
+    mut warnings: Vec<String>,
+) -> Result<ManagedRuntimeLocationInfo, String> {
+    let writable = writable_probe(&root);
+    let portable_available = writable_probe(&portable);
+    if !writable {
+        warnings.push(format!(
+            "Managed Node runtime directory is not writable: {}",
+            root.display()
+        ));
+    }
+    if setting.mode == "portable" && !portable_available {
+        warnings.push("当前安装目录不可写，请选择应用数据目录或自定义目录。".to_string());
+    }
+    let (size_bytes, size_warnings) = directory_size_stats(&root);
+    let size_status = if size_warnings.is_empty() {
+        "ready"
+    } else {
+        for warning in size_warnings {
+            warnings.push(format!("无法完整计算 Managed Node 目录大小：{warning}"));
+        }
+        "error"
+    };
+
+    Ok(ManagedRuntimeLocationInfo {
+        mode: setting.mode.clone(),
+        custom_path: setting.custom_path.clone(),
+        root_path: root.to_string_lossy().to_string(),
+        writable,
+        portable_available,
+        installed_count: runtime_directory_entries(&root).len(),
+        size_bytes,
+        size_status: size_status.to_string(),
+        warnings,
+    })
+}
+
+async fn managed_location_info(
     app: &AppHandle,
     setting: &ManagedRuntimeLocationSetting,
     warnings: Vec<String>,
 ) -> Result<ManagedRuntimeLocationInfo, String> {
     let root = resolve_managed_runtime_root_for_setting(app, setting)?;
     let portable = portable_root(app)?;
-    Ok(ManagedRuntimeLocationInfo {
-        mode: setting.mode.clone(),
-        custom_path: setting.custom_path.clone(),
-        root_path: root.to_string_lossy().to_string(),
-        writable: writable_probe(&root),
-        portable_available: writable_probe(&portable),
-        installed_count: runtime_directory_entries(&root).len(),
-        size_bytes: directory_size(&root),
-        warnings,
-    })
+    let setting = setting.clone();
+    run_node_runtime_task(move || managed_location_info_sync(&setting, root, portable, warnings)).await
 }
 
 fn write_managed_location(
@@ -1082,17 +1235,10 @@ pub fn managed_node_runtime_supported() -> bool {
     true
 }
 
-#[tauri::command]
-pub async fn list_installed_node_runtimes(
-    app: AppHandle,
-    state: State<'_, NodeRuntimeState>,
+fn list_installed_node_runtimes_sync(
+    root: PathBuf,
+    busy: HashSet<String>,
 ) -> Result<Vec<NodeRuntimeInfo>, String> {
-    let root = managed_root(&app)?;
-    let busy = state
-        .installing
-        .lock()
-        .map(|set| set.clone())
-        .unwrap_or_default();
     cleanup_stale(&root, &busy);
     if !root.exists() {
         return Ok(Vec::new());
@@ -1117,24 +1263,65 @@ pub async fn list_installed_node_runtimes(
 }
 
 #[tauri::command]
-pub async fn scan_nvm_node_runtimes(app: AppHandle) -> Result<Vec<NodeRuntimeInfo>, String> {
-    Ok(scan_nvm_runtimes(&app))
+pub async fn list_installed_node_runtimes(
+    app: AppHandle,
+    state: State<'_, NodeRuntimeState>,
+) -> Result<Vec<NodeRuntimeInfo>, String> {
+    let root = resolve_managed_runtime_root(&app)?;
+    let busy = state
+        .installing
+        .lock()
+        .map(|set| set.clone())
+        .unwrap_or_default();
+    run_node_runtime_task(move || list_installed_node_runtimes_sync(root, busy)).await
 }
 
 #[tauri::command]
-pub fn get_managed_node_runtime_location(
+pub async fn scan_nvm_node_runtimes(app: AppHandle) -> Result<Vec<NodeRuntimeInfo>, String> {
+    run_node_runtime_task(move || Ok(scan_nvm_runtimes(&app))).await
+}
+
+#[tauri::command]
+pub async fn get_managed_node_runtime_location(
     app: AppHandle,
 ) -> Result<ManagedRuntimeLocationInfo, String> {
     let setting = read_managed_location(&app)?;
-    let mut warnings = Vec::new();
-    let root = resolve_managed_runtime_root_for_setting(&app, &setting)?;
-    if !writable_probe(&root) {
-        warnings.push(format!("Managed Node runtime directory is not writable: {}", root.display()));
+    managed_location_info(&app, &setting, Vec::new()).await
+}
+
+fn open_managed_runtime_root_with<F>(root: &Path, opener: F) -> Result<(), String>
+where
+    F: FnOnce(&Path) -> Result<(), String>,
+{
+    if root.as_os_str().is_empty() {
+        return Err("Managed Node runtime root is empty".to_string());
     }
-    if setting.mode == "portable" && !writable_probe(&portable_root(&app)?) {
-        warnings.push("当前安装目录不可写，请选择应用数据目录或自定义目录。".to_string());
+    if root.exists() && !root.is_dir() {
+        return Err(format!(
+            "Managed Node runtime root is not a directory: {}",
+            root.display()
+        ));
     }
-    managed_location_info(&app, &setting, warnings)
+    if !root.exists() {
+        fs::create_dir_all(root).map_err(|error| {
+            format!(
+                "Failed to create Managed Node runtime root {}: {error}",
+                root.display()
+            )
+        })?;
+    }
+    opener(root)
+}
+
+#[tauri::command]
+pub async fn open_managed_node_runtime_root(app: AppHandle) -> Result<(), String> {
+    let root = resolve_managed_runtime_root(&app)?;
+    run_node_runtime_task(move || {
+        open_managed_runtime_root_with(&root, |path| {
+            crate::runner::open_folder(path.to_string_lossy().to_string())
+        })
+    })
+    .await
 }
 
 fn copy_directory_recursive(source: &Path, target: &Path) -> Result<(), String> {
@@ -1193,6 +1380,298 @@ fn migration_stage_name() -> String {
     format!(".project-manager-runtime-migration-{stamp}")
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeMigrationPhase {
+    Prepare,
+    Scan,
+    Copy,
+    Verify,
+    Switch,
+    Cleanup,
+    Complete,
+}
+
+impl RuntimeMigrationPhase {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Prepare => "prepare",
+            Self::Scan => "scan",
+            Self::Copy => "copy",
+            Self::Verify => "verify",
+            Self::Switch => "switch",
+            Self::Cleanup => "cleanup",
+            Self::Complete => "complete",
+        }
+    }
+}
+
+fn migration_error(phase: RuntimeMigrationPhase, operation: &str, detail: &str) -> String {
+    format!(
+        "Managed Node runtime migration failed\nphase: {}\noperation: {operation}\nerror: {detail}",
+        phase.as_str()
+    )
+}
+
+#[derive(Debug)]
+struct RuntimeMigrationExecution {
+    warnings: Vec<String>,
+    phase: RuntimeMigrationPhase,
+}
+
+fn execute_runtime_migration<FCopy, FVerify, FPromote, FSwitch, FCleanup>(
+    installed: &[(String, PathBuf)],
+    stage_root: &Path,
+    new_root: &Path,
+    mut copy_runtime: FCopy,
+    mut verify_runtime: FVerify,
+    mut promote_runtime: FPromote,
+    mut switch_location: FSwitch,
+    mut cleanup_runtime: FCleanup,
+) -> Result<RuntimeMigrationExecution, String>
+where
+    FCopy: FnMut(&Path, &Path) -> Result<(), String>,
+    FVerify: FnMut(&Path, &str) -> Result<(), String>,
+    FPromote: FnMut(&Path, &Path) -> Result<(), String>,
+    FSwitch: FnMut() -> Result<(), String>,
+    FCleanup: FnMut(&Path) -> Result<(), String>,
+{
+    for (version, source_path) in installed {
+        let target_path = new_root.join(version);
+        if target_path.exists() {
+            verify_runtime(&target_path, version).map_err(|error| {
+                migration_error(
+                    RuntimeMigrationPhase::Verify,
+                    &format!("verify existing target for {version}"),
+                    &error,
+                )
+            })?;
+            continue;
+        }
+
+        let staged_path = stage_root.join(version);
+        copy_runtime(source_path, &staged_path).map_err(|error| {
+            migration_error(
+                RuntimeMigrationPhase::Copy,
+                &format!("copy {version}"),
+                &error,
+            )
+        })?;
+        verify_runtime(&staged_path, version).map_err(|error| {
+            migration_error(
+                RuntimeMigrationPhase::Verify,
+                &format!("verify copied {version}"),
+                &error,
+            )
+        })?;
+    }
+
+    for (version, _) in installed {
+        let target_path = new_root.join(version);
+        if target_path.exists() {
+            continue;
+        }
+        let staged_path = stage_root.join(version);
+        promote_runtime(&staged_path, &target_path).map_err(|error| {
+            migration_error(
+                RuntimeMigrationPhase::Switch,
+                &format!("promote {version}"),
+                &error,
+            )
+        })?;
+    }
+
+    switch_location().map_err(|error| {
+        migration_error(
+            RuntimeMigrationPhase::Switch,
+            "save Managed Runtime location",
+            &error,
+        )
+    })?;
+
+    let mut warnings = Vec::new();
+    for (_, source_path) in installed {
+        if !source_path.exists() {
+            continue;
+        }
+        if let Err(error) = cleanup_runtime(source_path) {
+            warnings.push(format!(
+                "迁移成功，但旧文件未完全删除：{} ({error})",
+                source_path.display()
+            ));
+        }
+    }
+
+    Ok(RuntimeMigrationExecution {
+        warnings,
+        phase: RuntimeMigrationPhase::Complete,
+    })
+}
+
+fn managed_location_info_for_app(
+    app: &AppHandle,
+    setting: &ManagedRuntimeLocationSetting,
+    warnings: Vec<String>,
+) -> Result<ManagedRuntimeLocationInfo, String> {
+    let root = resolve_managed_runtime_root_for_setting(app, setting)?;
+    let portable = portable_root(app)?;
+    managed_location_info_sync(setting, root, portable, warnings)
+}
+
+fn migrate_managed_node_runtime_location_sync(
+    app: &AppHandle,
+    setting: ManagedRuntimeLocationSetting,
+    migrate: bool,
+    running_runtime_paths: Vec<String>,
+) -> Result<ManagedRuntimeLocationInfo, String> {
+    let old_setting = read_managed_location(&app)?;
+    let old_root = resolve_managed_runtime_root_for_setting(&app, &old_setting)?;
+    let new_root = resolve_managed_runtime_root_for_setting(&app, &setting)?;
+
+    if paths_equal(&old_root, &new_root) {
+        ensure_writable_directory(&new_root).map_err(|error| {
+            migration_error(RuntimeMigrationPhase::Prepare, "check target directory", &error)
+        })?;
+        write_managed_location(&app, &setting).map_err(|error| {
+            migration_error(RuntimeMigrationPhase::Switch, "save Managed Runtime location", &error)
+        })?;
+        return managed_location_info_for_app(app, &setting, Vec::new());
+    }
+
+    if migrate && (path_is_within(&new_root, &old_root) || path_is_within(&old_root, &new_root)) {
+        return Err(migration_error(
+            RuntimeMigrationPhase::Prepare,
+            "validate source and target directories",
+            "Managed Node runtime migration cannot use nested source and target directories",
+        ));
+    }
+
+    ensure_writable_directory(&new_root).map_err(|error| {
+        migration_error(RuntimeMigrationPhase::Prepare, "check target directory", &error)
+    })?;
+
+    if !migrate {
+        write_managed_location(&app, &setting).map_err(|error| {
+            migration_error(RuntimeMigrationPhase::Switch, "save Managed Runtime location", &error)
+        })?;
+        return managed_location_info_for_app(app, &setting, Vec::new());
+    }
+
+    if old_root.exists() && !old_root.is_dir() {
+        return Err(migration_error(
+            RuntimeMigrationPhase::Scan,
+            "inspect current Managed Runtime root",
+            &format!("Managed Node runtime path is not a directory: {}", old_root.display()),
+        ));
+    }
+    let installed = runtime_directory_entries(&old_root);
+    if !installed.is_empty() {
+        for running_path in running_runtime_paths {
+            let running = Path::new(&running_path);
+            if installed.iter().any(|(_, runtime_path)| path_is_within(running, runtime_path)) {
+                return Err(migration_error(
+                    RuntimeMigrationPhase::Scan,
+                    "check running Managed Node runtimes",
+                    "当前有项目正在使用 Managed Node，请先停止项目，再迁移运行时目录。",
+                ));
+            }
+        }
+    }
+
+    if installed.is_empty() {
+        write_managed_location(&app, &setting).map_err(|error| {
+            migration_error(RuntimeMigrationPhase::Switch, "save Managed Runtime location", &error)
+        })?;
+        return managed_location_info_for_app(app, &setting, Vec::new());
+    }
+
+    let stage_root = new_root.join(migration_stage_name());
+    if stage_root.exists() {
+        remove_runtime_path_with_retry(
+            RuntimeMigrationPhase::Prepare.as_str(),
+            "remove previous migration staging directory",
+            &stage_root,
+        )
+        .map_err(|error| {
+            migration_error(
+                RuntimeMigrationPhase::Prepare,
+                "remove previous migration staging directory",
+                &error,
+            )
+        })?;
+    }
+    fs::create_dir_all(&stage_root).map_err(|error| {
+        migration_error(
+            RuntimeMigrationPhase::Prepare,
+            "create migration staging directory",
+            &format!("{}: {error}", stage_root.display()),
+        )
+    })?;
+
+    let migration_result = execute_runtime_migration(
+        &installed,
+        &stage_root,
+        &new_root,
+        |source, staged| copy_directory_recursive(source, staged),
+        |path, version| validate_runtime_directory(path, version),
+        |staged, target| {
+            rename_with_retry(
+                RuntimeMigrationPhase::Switch.as_str(),
+                "promote migrated Node runtime",
+                staged,
+                target,
+            )
+        },
+        || write_managed_location(&app, &setting),
+        |source| {
+            remove_runtime_path_with_retry(
+                RuntimeMigrationPhase::Cleanup.as_str(),
+                "remove old Managed Node runtime",
+                source,
+            )
+        },
+    );
+
+    let stage_cleanup_error = remove_dir_all_with_retry(
+        RuntimeMigrationPhase::Cleanup.as_str(),
+        "remove migration staging directory",
+        &stage_root,
+    )
+    .err();
+
+    let mut execution = match migration_result {
+        Ok(execution) => execution,
+        Err(mut error) => {
+            if let Some(cleanup_error) = stage_cleanup_error {
+                error.push_str(&format!("\ncleanup_error: {cleanup_error}"));
+            }
+            return Err(error);
+        }
+    };
+
+    if let Some(error) = stage_cleanup_error {
+        execution.warnings.push(format!(
+            "迁移成功，但临时目录未完全删除：{} ({error})",
+            stage_root.display()
+        ));
+    }
+
+    if old_root.exists() && installed.iter().all(|(_, path)| !path.exists()) {
+        if let Err(error) = remove_dir_all_with_retry(
+            RuntimeMigrationPhase::Cleanup.as_str(),
+            "remove old Managed Node root",
+            &old_root,
+        ) {
+            execution.warnings.push(format!(
+                "迁移成功，但旧根目录未完全删除：{} ({error})",
+                old_root.display()
+            ));
+        }
+    }
+
+    debug_assert_eq!(execution.phase, RuntimeMigrationPhase::Complete);
+    managed_location_info_for_app(app, &setting, execution.warnings)
+}
+
 #[tauri::command(rename_all = "camelCase")]
 pub async fn migrate_managed_node_runtime_location(
     app: AppHandle,
@@ -1201,111 +1680,16 @@ pub async fn migrate_managed_node_runtime_location(
     migrate: bool,
     running_runtime_paths: Vec<String>,
 ) -> Result<ManagedRuntimeLocationInfo, String> {
-    let setting = ManagedRuntimeLocationSetting {
-        mode: mode.trim().to_string(),
-        custom_path: custom_path
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty()),
-    };
-    let old_setting = read_managed_location(&app)?;
-    let old_root = resolve_managed_runtime_root_for_setting(&app, &old_setting)?;
-    let new_root = resolve_managed_runtime_root_for_setting(&app, &setting)?;
-
-    if paths_equal(&old_root, &new_root) {
-        ensure_writable_directory(&new_root)?;
-        write_managed_location(&app, &setting)?;
-        return managed_location_info(&app, &setting, Vec::new());
-    }
-
-    if migrate && (path_is_within(&new_root, &old_root) || path_is_within(&old_root, &new_root)) {
-        return Err("Managed Node runtime migration cannot use nested source and target directories".to_string());
-    }
-
-    ensure_writable_directory(&new_root)?;
-    let installed = runtime_directory_entries(&old_root);
-    if migrate && !installed.is_empty() {
-        for running_path in running_runtime_paths {
-            let running = Path::new(&running_path);
-            if installed.iter().any(|(_, runtime_path)| path_is_within(running, runtime_path)) {
-                return Err("当前有项目正在使用 Managed Node，请先停止项目，再迁移运行时目录。".to_string());
-            }
-        }
-    }
-
-    if !migrate || installed.is_empty() {
-        write_managed_location(&app, &setting)?;
-        return managed_location_info(&app, &setting, Vec::new());
-    }
-
-    let stage_root = new_root.join(migration_stage_name());
-    if stage_root.exists() {
-        remove_runtime_path_with_retry(
-            "migration",
-            "remove previous migration staging directory",
-            &stage_root,
-        )?;
-    }
-    fs::create_dir_all(&stage_root).map_err(|error| {
-        format!(
-            "Failed to create migration staging directory {}: {error}",
-            stage_root.display()
+    let setting = normalize_managed_location_setting(&mode, custom_path.as_deref())?;
+    run_node_runtime_task(move || {
+        migrate_managed_node_runtime_location_sync(
+            &app,
+            setting,
+            migrate,
+            running_runtime_paths,
         )
-    })?;
-
-    let migration_result = (|| {
-        for (version, source_path) in &installed {
-            let target_path = new_root.join(version);
-            if target_path.exists() {
-                validate_runtime_directory(&target_path, version).map_err(|error| {
-                    format!("Migration target conflict for {version}: {error}")
-                })?;
-                continue;
-            }
-            let staged_path = stage_root.join(version);
-            copy_directory_recursive(source_path, &staged_path)?;
-            validate_runtime_directory(&staged_path, version)?;
-        }
-
-        for (version, _) in &installed {
-            let target_path = new_root.join(version);
-            if target_path.exists() {
-                continue;
-            }
-            let staged_path = stage_root.join(version);
-            rename_with_retry(
-                "migration",
-                "promote migrated Node runtime",
-                &staged_path,
-                &target_path,
-            )?;
-        }
-        write_managed_location(&app, &setting)?;
-        Ok::<(), String>(())
-    })();
-
-    let _ = fs::remove_dir_all(&stage_root);
-    migration_result?;
-
-    let mut warnings = Vec::new();
-    for (_, source_path) in installed {
-        if source_path.exists() {
-            if let Err(error) = remove_runtime_path_with_retry(
-                "migration",
-                "remove old Managed Node runtime",
-                &source_path,
-            ) {
-                warnings.push(format!(
-                    "迁移成功，但旧文件未完全删除：{} ({error})",
-                    source_path.display()
-                ));
-            }
-        }
-    }
-    if old_root.exists() {
-        let _ = fs::remove_dir(&old_root);
-    }
-
-    managed_location_info(&app, &setting, warnings)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1444,7 +1828,7 @@ async fn install_managed_node_inner(
             percent: None,
         },
     );
-    let root = managed_root(app)?;
+    let root = resolve_managed_runtime_root(app)?;
     fs::create_dir_all(&root)
         .map_err(|error| fs_error("preparing", "create managed runtime directory", &root, &error))?;
     cleanup_stale(&root, busy_versions);
@@ -1739,15 +2123,19 @@ pub async fn uninstall_managed_node(
 ) -> Result<(), String> {
     let version = validate_node_version(&version)?;
     lock_version(&state, &version)?;
-    let root = managed_root(&app);
-    let result = (|| {
-        let root = root?;
-        let dir = version_dir(&root, &version);
-        if !dir.exists() {
-            return Ok(());
-        }
-        remove_runtime_path_with_retry("uninstall", "remove managed runtime", &dir)
-    })();
+    let root = resolve_managed_runtime_root(&app);
+    let version_for_task = version.clone();
+    let result = match root {
+        Err(error) => Err(error),
+        Ok(root) => run_node_runtime_task(move || {
+            let dir = version_dir(&root, &version_for_task);
+            if !dir.exists() {
+                return Ok(());
+            }
+            remove_runtime_path_with_retry("uninstall", "remove managed runtime", &dir)
+        })
+        .await,
+    };
     unlock_version(&state, &version);
     result
 }
@@ -2118,6 +2506,257 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *node-v20.11.1-
         assert!(!is_stale_runtime_temp("node-v20.11.1-win-x64.zip.part", &busy));
         assert!(is_stale_runtime_temp("extract-v22.0.0", &busy));
         assert!(!is_stale_runtime_temp("v20.11.1", &busy));
+    }
+
+    #[test]
+    fn managed_runtime_directory_size_counts_empty_single_and_multiple_versions() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("runtimes").join("node");
+        assert_eq!(directory_size_stats(&root).0, 0);
+
+        let first = root.join("v20.11.1");
+        fs::create_dir_all(first.join("bin")).unwrap();
+        fs::write(first.join("node.exe"), vec![1_u8; 7]).unwrap();
+        fs::write(first.join("bin").join("npm"), vec![2_u8; 5]).unwrap();
+        assert_eq!(directory_size_stats(&root).0, 12);
+
+        let second = root.join("v22.0.0");
+        fs::create_dir_all(&second).unwrap();
+        fs::write(second.join("node.exe"), vec![3_u8; 19]).unwrap();
+        assert_eq!(directory_size_stats(&root).0, 31);
+    }
+
+    #[test]
+    fn managed_runtime_root_resolver_covers_app_data_custom_and_portable() {
+        let temp = tempfile::tempdir().unwrap();
+        let app_data = temp.path().join("app-data");
+        let executable = temp.path().join("bin");
+        let app_data_setting = ManagedRuntimeLocationSetting::default();
+        let custom_setting = ManagedRuntimeLocationSetting {
+            mode: "custom".to_string(),
+            custom_path: Some(temp.path().join("custom").to_string_lossy().to_string()),
+        };
+        let portable_setting = ManagedRuntimeLocationSetting {
+            mode: "portable".to_string(),
+            custom_path: None,
+        };
+
+        assert_eq!(
+            resolve_managed_runtime_root_from_paths(&app_data_setting, Some(&app_data), Some(&executable)),
+            Ok(app_data.join("runtimes").join("node"))
+        );
+        assert_eq!(
+            resolve_managed_runtime_root_from_paths(&custom_setting, Some(&app_data), Some(&executable)),
+            Ok(PathBuf::from(custom_setting.custom_path.as_ref().unwrap()))
+        );
+        assert_eq!(
+            resolve_managed_runtime_root_from_paths(&portable_setting, Some(&app_data), Some(&executable)),
+            Ok(executable.join("data").join("runtimes").join("node"))
+        );
+    }
+
+    #[test]
+    fn managed_runtime_root_open_covers_app_data_custom_and_portable() {
+        let temp = tempfile::tempdir().unwrap();
+        let app_data = temp.path().join("app-data");
+        let executable = temp.path().join("bin");
+        let settings = [
+            ManagedRuntimeLocationSetting::default(),
+            ManagedRuntimeLocationSetting {
+                mode: "custom".to_string(),
+                custom_path: Some(temp.path().join("custom").to_string_lossy().to_string()),
+            },
+            ManagedRuntimeLocationSetting {
+                mode: "portable".to_string(),
+                custom_path: None,
+            },
+        ];
+
+        for setting in settings {
+            let root = resolve_managed_runtime_root_from_paths(
+                &setting,
+                Some(&app_data),
+                Some(&executable),
+            )
+            .unwrap();
+            let mut opened = None;
+            open_managed_runtime_root_with(&root, |path| {
+                opened = Some(path.to_path_buf());
+                Ok(())
+            })
+            .unwrap();
+            assert_eq!(opened, Some(root.clone()));
+            assert!(root.is_dir());
+        }
+    }
+
+    #[test]
+    fn managed_runtime_location_rejects_relative_custom_path() {
+        assert!(normalize_managed_location_setting("custom", Some("relative/node")).is_err());
+        assert_eq!(
+            normalize_managed_location_setting("app-data", Some("ignored"))
+                .unwrap()
+                .mode,
+            "app-data"
+        );
+    }
+
+    #[test]
+    fn writable_probe_creates_and_removes_a_real_probe_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let missing = temp.path().join("new").join("nested");
+        assert!(writable_probe(&missing));
+        assert!(!missing.exists(), "probe should remove directories it created");
+
+        let file = temp.path().join("not-a-directory");
+        File::create(&file).unwrap();
+        assert!(!writable_probe(&file));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let readonly = temp.path().join("readonly");
+            fs::create_dir_all(&readonly).unwrap();
+            fs::set_permissions(&readonly, fs::Permissions::from_mode(0o555)).unwrap();
+            assert!(!writable_probe(&readonly));
+            fs::set_permissions(&readonly, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let readonly = temp.path().join("readonly-attribute");
+        fs::create_dir_all(&readonly).unwrap();
+        let mut permissions = fs::metadata(&readonly).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(&readonly, permissions).unwrap();
+        assert!(!writable_probe(&readonly));
+        let mut permissions = fs::metadata(&readonly).unwrap().permissions();
+        permissions.set_readonly(false);
+        fs::set_permissions(&readonly, permissions).unwrap();
+    }
+
+    #[test]
+    fn managed_runtime_root_open_uses_the_resolved_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("custom-root");
+        let mut opened = None;
+        open_managed_runtime_root_with(&root, |path| {
+            opened = Some(path.to_path_buf());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(opened, Some(root.clone()));
+        assert!(root.is_dir());
+    }
+
+    #[test]
+    fn migration_state_machine_success_runs_all_phases() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("old").join("v20.11.1");
+        let stage = temp.path().join("new").join(".stage");
+        let target = temp.path().join("new");
+        let installed = vec![("v20.11.1".to_string(), source.clone())];
+        fs::create_dir_all(&source).unwrap();
+        use std::sync::{Arc, Mutex};
+        let phases = Arc::new(Mutex::new(Vec::new()));
+        let copy_phases = Arc::clone(&phases);
+        let verify_phases = Arc::clone(&phases);
+        let promote_phases = Arc::clone(&phases);
+        let switch_phases = Arc::clone(&phases);
+        let cleanup_phases = Arc::clone(&phases);
+
+        let result = execute_runtime_migration(
+            &installed,
+            &stage,
+            &target,
+            |_, _| {
+                copy_phases.lock().unwrap().push("copy");
+                Ok(())
+            },
+            |_, _| {
+                verify_phases.lock().unwrap().push("verify");
+                Ok(())
+            },
+            |_, _| {
+                promote_phases.lock().unwrap().push("promote");
+                Ok(())
+            },
+            || {
+                switch_phases.lock().unwrap().push("switch");
+                Ok(())
+            },
+            |_| {
+                cleanup_phases.lock().unwrap().push("cleanup");
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result.phase, RuntimeMigrationPhase::Complete);
+        assert!(result.warnings.is_empty());
+        assert_eq!(
+            *phases.lock().unwrap(),
+            ["copy", "verify", "promote", "switch", "cleanup"]
+        );
+    }
+
+    #[test]
+    fn migration_state_machine_copy_failure_keeps_error_phase() {
+        let temp = tempfile::tempdir().unwrap();
+        let installed = vec![("v20.11.1".to_string(), temp.path().join("old"))];
+        let error = execute_runtime_migration(
+            &installed,
+            &temp.path().join("stage"),
+            &temp.path().join("new"),
+            |_, _| Err("copy failed".to_string()),
+            |_, _| Ok(()),
+            |_, _| Ok(()),
+            || Ok(()),
+            |_| Ok(()),
+        )
+        .unwrap_err();
+        assert!(error.contains("phase: copy"));
+        assert!(error.contains("copy failed"));
+    }
+
+    #[test]
+    fn migration_state_machine_verify_failure_keeps_error_phase() {
+        let temp = tempfile::tempdir().unwrap();
+        let installed = vec![("v20.11.1".to_string(), temp.path().join("old"))];
+        let error = execute_runtime_migration(
+            &installed,
+            &temp.path().join("stage"),
+            &temp.path().join("new"),
+            |_, _| Ok(()),
+            |_, _| Err("verify failed".to_string()),
+            |_, _| Ok(()),
+            || Ok(()),
+            |_| Ok(()),
+        )
+        .unwrap_err();
+        assert!(error.contains("phase: verify"));
+        assert!(error.contains("verify failed"));
+    }
+
+    #[test]
+    fn migration_state_machine_cleanup_failure_is_a_warning_after_switch() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("old");
+        fs::create_dir_all(&source).unwrap();
+        let installed = vec![("v20.11.1".to_string(), source)];
+        let result = execute_runtime_migration(
+            &installed,
+            &temp.path().join("stage"),
+            &temp.path().join("new"),
+            |_, _| Ok(()),
+            |_, _| Ok(()),
+            |_, _| Ok(()),
+            || Ok(()),
+            |_| Err("cleanup failed".to_string()),
+        )
+        .unwrap();
+        assert_eq!(result.phase, RuntimeMigrationPhase::Complete);
+        assert_eq!(result.warnings.len(), 1);
+        assert!(result.warnings[0].contains("迁移成功"));
+        assert!(result.warnings[0].contains("cleanup failed"));
     }
 
     #[test]

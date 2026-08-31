@@ -878,7 +878,7 @@ watch(
             <Dashboard v-if="currentView === 'dashboard'" key="dashboard" />
             <CommitCalendar v-else-if="currentView === 'commitCalendar'" key="commitCalendar" />
             <Settings v-else-if="currentView === 'settings'" key="settings" />
-            <NodeManager v-else-if="currentView === 'nodes'" key="nodes" />
+            <NodeManager v-else-if="currentView === 'nodes'" key="nodes" @navigate-project="activateQuickSearchSelection" />
             <PortManager v-else-if="currentView === 'ports'" key="ports" />
           </KeepAlive>
           </Transition>

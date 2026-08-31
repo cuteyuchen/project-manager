@@ -82,6 +82,10 @@ export class TauriAdapter implements PlatformAPI {
         return invoke('get_managed_node_runtime_location');
     }
 
+    async openManagedNodeRuntimeRoot(): Promise<void> {
+        return invoke('open_managed_node_runtime_root');
+    }
+
     async migrateManagedNodeRuntimeLocation(
         location: ManagedRuntimeLocation,
         migrate: boolean,

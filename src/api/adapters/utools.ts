@@ -93,7 +93,17 @@ export class UToolsAdapter implements PlatformAPI {
       portableAvailable: false,
       installedCount: 0,
       sizeBytes: 0,
+      sizeStatus: 'ready',
     });
+  }
+  async openManagedNodeRuntimeRoot(): Promise<void> {
+    const service = this.service as PlatformAPI & { openManagedNodeRuntimeRoot?: () => Promise<void> };
+    if (service.openManagedNodeRuntimeRoot) {
+      return service.openManagedNodeRuntimeRoot();
+    }
+    const location = await this.getManagedNodeRuntimeLocation();
+    if (!location.rootPath) throw new Error('Managed Node runtime root is unavailable in this plugin');
+    return this.openFolder(location.rootPath);
   }
   migrateManagedNodeRuntimeLocation(
     location: ManagedRuntimeLocation,

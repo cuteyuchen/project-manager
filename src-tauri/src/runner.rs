@@ -1568,26 +1568,40 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String, packa
 
 #[tauri::command]
 pub fn open_folder(path: String) -> Result<(), String> {
+    let path = validate_open_path(&path)?;
+
     #[cfg(target_os = "windows")]
     Command::new("explorer.exe")
-        .arg(path)
+        .arg(&path)
         .creation_flags(CREATE_NO_WINDOW)
         .spawn()
         .map_err(|e| e.to_string())?;
 
     #[cfg(target_os = "macos")]
     Command::new("open")
-        .arg(path)
+        .arg(&path)
         .spawn()
         .map_err(|e| e.to_string())?;
 
     #[cfg(target_os = "linux")]
     Command::new("xdg-open")
-        .arg(path)
+        .arg(&path)
         .spawn()
         .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+fn validate_open_path(path: &str) -> Result<String, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("Path is empty".to_string());
+    }
+    let target = std::path::Path::new(trimmed);
+    if !target.exists() {
+        return Err(format!("Path does not exist: {trimmed}"));
+    }
+    Ok(target.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -1894,6 +1908,23 @@ mod tests {
     #[test]
     fn whitespace_only_package_manager_is_treated_as_empty() {
         assert_eq!(build_startup_script("", "   ", StartupShell::Cmd), "");
+    }
+
+    #[test]
+    fn open_folder_rejects_empty_and_missing_paths_but_accepts_files() {
+        assert!(validate_open_path("").is_err());
+        assert!(validate_open_path("missing-folder").is_err());
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("file.txt");
+        std::fs::write(&file, b"x").unwrap();
+        assert_eq!(
+            validate_open_path(&file.to_string_lossy()).unwrap(),
+            file.to_string_lossy()
+        );
+        assert_eq!(
+            validate_open_path(&temp.path().to_string_lossy()).unwrap(),
+            temp.path().to_string_lossy()
+        );
     }
 
     /***********************node 项目仍注入版本*********************/

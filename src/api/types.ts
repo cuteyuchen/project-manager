@@ -141,6 +141,7 @@ export interface PlatformAPI {
     getNodeVersion(path: string): Promise<string>;
     managedNodeRuntimeSupported(): Promise<boolean>;
     getManagedNodeRuntimeLocation(): Promise<ManagedRuntimeLocationInfo>;
+    openManagedNodeRuntimeRoot(): Promise<void>;
     migrateManagedNodeRuntimeLocation(
         location: ManagedRuntimeLocation,
         migrate: boolean,

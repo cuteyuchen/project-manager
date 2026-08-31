@@ -208,6 +208,7 @@ pub fn run() {
             node_runtime::managed_node_runtime_supported,
             node_runtime::scan_nvm_node_runtimes,
             node_runtime::get_managed_node_runtime_location,
+            node_runtime::open_managed_node_runtime_root,
             node_runtime::migrate_managed_node_runtime_location,
             nvm::get_nvm_list,
             nvm::install_node,
