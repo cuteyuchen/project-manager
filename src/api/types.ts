@@ -2,6 +2,9 @@ import type {
     NodeVersion,
     NodeInstallProgress,
     NodeReleaseInfo,
+    SystemNodeState,
+    SystemNodeSwitchOptions,
+    SystemNodeSwitchResult,
     GitStatusResult,
     GitBranch,
     GitCommit,
@@ -139,6 +142,9 @@ export interface PlatformAPI {
     uninstallManagedNode(version: string): Promise<void>;
     getSystemNodePath(): Promise<string>;
     getNodeVersion(path: string): Promise<string>;
+    getSystemNodeState(): Promise<SystemNodeState>;
+    switchSystemNode(runtime: NodeVersion, options?: SystemNodeSwitchOptions): Promise<SystemNodeSwitchResult>;
+    systemNodeSwitchSupported(): Promise<boolean>;
     managedNodeRuntimeSupported(): Promise<boolean>;
     getManagedNodeRuntimeLocation(): Promise<ManagedRuntimeLocationInfo>;
     openManagedNodeRuntimeRoot(): Promise<void>;

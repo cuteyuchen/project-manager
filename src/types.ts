@@ -384,6 +384,50 @@ export interface NodeVersion {
   isDefault?: boolean;
 }
 
+export type SystemNodePathScope = 'user' | 'machine' | 'nvm' | 'unknown';
+
+export interface SystemNodeCandidate {
+  path: string;
+  version?: string;
+}
+
+/** Real Node resolution from the current OS environment, never persisted as the source of truth. */
+export interface SystemNodeState {
+  available: boolean;
+  version?: string;
+  nodePath?: string;
+  runtimeId?: string;
+  source?: NodeRuntimeSource | 'unknown';
+  candidates: SystemNodeCandidate[];
+  pathScope?: SystemNodePathScope;
+  nvmSymlink?: string;
+  nvmTargetPath?: string;
+}
+
+export interface SystemNodeSwitchOptions {
+  elevated?: boolean;
+  repairPathPriority?: boolean;
+}
+
+export type SystemNodeSwitchStatus =
+  | 'switched'
+  | 'already-active'
+  | 'elevation-required'
+  | 'path-conflict'
+  | 'cancelled'
+  | 'failed';
+
+export interface SystemNodeSwitchResult {
+  success: boolean;
+  status: SystemNodeSwitchStatus;
+  previous?: SystemNodeState;
+  current?: SystemNodeState;
+  conflictingPath?: string;
+  operation?: 'nvm-use' | 'user-path' | 'machine-path';
+  errorCode?: string;
+  message?: string;
+}
+
 export interface NodeInstallProgress {
   operationId: string;
   version: string;

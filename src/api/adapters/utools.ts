@@ -14,6 +14,9 @@ import type {
   NodeVersion,
   NodeInstallProgress,
   NodeReleaseInfo,
+  SystemNodeState,
+  SystemNodeSwitchOptions,
+  SystemNodeSwitchResult,
   GitStatusResult,
   GitBranch,
   GitCommit,
@@ -78,6 +81,32 @@ export class UToolsAdapter implements PlatformAPI {
   }
   getSystemNodePath(): Promise<string> { return this.service.getSystemNodePath(); }
   getNodeVersion(path: string): Promise<string> { return this.service.getNodeVersion(path); }
+  async getSystemNodeState(): Promise<SystemNodeState> {
+    const service = this.service as PlatformAPI & { getSystemNodeState?: () => Promise<SystemNodeState> };
+    if (service.getSystemNodeState) return service.getSystemNodeState();
+    const nodePath = await this.getSystemNodePath();
+    const version = nodePath ? await this.getNodeVersion(nodePath) : '';
+    return {
+      available: !!nodePath && !!version,
+      version: version || undefined,
+      nodePath: nodePath || undefined,
+      source: 'unknown',
+      candidates: nodePath ? [{ path: nodePath, version: version || undefined }] : [],
+      pathScope: 'unknown',
+    };
+  }
+  systemNodeSwitchSupported(): Promise<boolean> {
+    const service = this.service as PlatformAPI & { systemNodeSwitchSupported?: () => Promise<boolean> };
+    return service.systemNodeSwitchSupported ? service.systemNodeSwitchSupported() : Promise.resolve(false);
+  }
+  switchSystemNode(_runtime: NodeVersion, _options: SystemNodeSwitchOptions = {}): Promise<SystemNodeSwitchResult> {
+    return Promise.resolve({
+      success: false,
+      status: 'failed',
+      errorCode: 'unsupported_platform',
+      message: 'System Node switching is only supported in the desktop app',
+    });
+  }
   managedNodeRuntimeSupported(): Promise<boolean> {
     return this.service.managedNodeRuntimeSupported
       ? this.service.managedNodeRuntimeSupported()

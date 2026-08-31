@@ -7,6 +7,9 @@ import type {
   ManagedRuntimeLocationInfo,
   NodeInstallProgress,
   NodeVersion,
+  SystemNodeState,
+  SystemNodeSwitchOptions,
+  SystemNodeSwitchResult,
 } from '../types';
 import {
   buildNodeRuntimeId,
@@ -16,6 +19,7 @@ import {
   resolveAppDefaultRuntime,
 } from '../utils/nodeRuntime';
 import { mergeNodeRuntimes, migrateLegacyNodeSource, sortNodeVersions } from '../utils/nodeDefaultState';
+import { mapSystemNodeStateToRuntime } from '../utils/systemNode';
 import { resolveTerminalCommand } from '../utils/terminalConfig';
 import { useSettingsStore } from './settings';
 
@@ -97,6 +101,10 @@ export const useNodeStore = defineStore('node', () => {
   const managedSupported = ref(true);
   const registryError = ref('');
   const appDefault = ref<AppDefaultNode | null>(null);
+  const systemNodeState = ref<SystemNodeState | null>(null);
+  const systemNodeLoading = ref(false);
+  const systemNodeSwitching = ref(false);
+  const systemNodeSwitchSupported = ref(false);
   const managedLocation = ref<ManagedRuntimeLocationInfo | null>(null);
   const managedLocationLoading = ref(false);
   const installProgress = ref<Record<string, NodeInstallProgress>>({});
@@ -198,40 +206,69 @@ export const useNodeStore = defineStore('node', () => {
     applyMerged({ custom: checked });
   };
 
+  function applySystemNodeState(state: SystemNodeState): void {
+    const mapped = mapSystemNodeStateToRuntime(state, versions.value);
+    systemNodeState.value = mapped;
+    const nodePath = mapped.nodePath || SYSTEM_NODE_PLACEHOLDER;
+    const version = mapped.version || 'System';
+    applyMerged({
+      system: ensureNodeRuntime({
+        version,
+        path: nodePath,
+        source: 'system',
+        status: mapped.available ? 'available' : 'broken',
+      }),
+    });
+  }
+
+  const refreshSystemNode = async (): Promise<SystemNodeState> => {
+    systemNodeLoading.value = true;
+    try {
+      const detected = await api.getSystemNodeState();
+      applySystemNodeState(detected);
+      return systemNodeState.value || detected;
+    } catch (error) {
+      console.error('Failed to detect system node state', error);
+      const unavailable: SystemNodeState = {
+        available: false,
+        source: 'unknown',
+        candidates: [],
+        pathScope: 'unknown',
+      };
+      applySystemNodeState(unavailable);
+      return unavailable;
+    } finally {
+      systemNodeLoading.value = false;
+    }
+  };
+
   const syncSystemNode = async (options: {
     preferredVersion?: string;
     preferredPath?: string;
   } = {}) => {
-    let resolvedPath = options.preferredPath || '';
-    if (!resolvedPath) {
-      try {
-        resolvedPath = await api.getSystemNodePath();
-      } catch (error) {
-        console.error('Failed to detect system node path', error);
-      }
+    if (!options.preferredPath) {
+      await refreshSystemNode();
+      return;
     }
-    if (!resolvedPath) resolvedPath = SYSTEM_NODE_PLACEHOLDER;
 
+    const resolvedPath = options.preferredPath;
     let resolvedVersion = options.preferredVersion || 'System';
-    let status: NodeVersion['status'] = resolvedPath === SYSTEM_NODE_PLACEHOLDER ? 'broken' : 'available';
-    if (resolvedPath !== SYSTEM_NODE_PLACEHOLDER) {
-      try {
-        const detectedVersion = await api.getNodeVersion(resolvedPath);
-        if (detectedVersion) resolvedVersion = normalizeVersionLabel(detectedVersion);
-        else status = 'broken';
-      } catch (error) {
-        console.error('Failed to detect system node version', error);
-        status = 'broken';
-      }
+    let status: NodeVersion['status'] = 'available';
+    try {
+      const detectedVersion = await api.getNodeVersion(resolvedPath);
+      if (detectedVersion) resolvedVersion = normalizeVersionLabel(detectedVersion);
+      else status = 'broken';
+    } catch (error) {
+      console.error('Failed to detect system node version', error);
+      status = 'broken';
     }
-
-    applyMerged({
-      system: ensureNodeRuntime({
-        version: resolvedVersion,
-        path: resolvedPath,
-        source: 'system',
-        status,
-      }),
+    applySystemNodeState({
+      available: status === 'available',
+      version: resolvedVersion,
+      nodePath: resolvedPath,
+      source: 'unknown',
+      candidates: [{ path: resolvedPath, version: status === 'available' ? resolvedVersion : undefined }],
+      pathScope: 'unknown',
     });
   };
 
@@ -285,11 +322,16 @@ export const useNodeStore = defineStore('node', () => {
       } catch {
         managedSupported.value = true;
       }
-      await syncSystemNode();
+      try {
+        systemNodeSwitchSupported.value = await api.systemNodeSwitchSupported();
+      } catch {
+        systemNodeSwitchSupported.value = false;
+      }
       loadCustomNodes();
       await refreshCustomRuntimes();
       await refreshManagedRuntimes();
       await refreshNvmRuntimes();
+      await refreshSystemNode();
       versions.value = sortNodeVersions(markDefault(versions.value));
       migrateDefaultRuntimeId();
     } finally {
@@ -409,6 +451,21 @@ export const useNodeStore = defineStore('node', () => {
     await syncSystemNode({ preferredPath: newPath, preferredVersion });
   };
 
+  const switchSystemNode = async (
+    runtime: NodeVersion,
+    options: SystemNodeSwitchOptions = {},
+  ): Promise<SystemNodeSwitchResult> => {
+    systemNodeSwitching.value = true;
+    try {
+      const result = await api.switchSystemNode(runtime, options);
+      if (result.current) applySystemNodeState(result.current);
+      await loadRuntimes();
+      return result;
+    } finally {
+      systemNodeSwitching.value = false;
+    }
+  };
+
   function applyProgress(progress: NodeInstallProgress) {
     const version = normalizeVersionLabel(progress.version);
     const nextProgress = { ...progress, version };
@@ -520,6 +577,10 @@ export const useNodeStore = defineStore('node', () => {
     managedSupported,
     registryError,
     appDefault,
+    systemNodeState,
+    systemNodeLoading,
+    systemNodeSwitching,
+    systemNodeSwitchSupported,
     managedLocation,
     managedLocationLoading,
     installProgress,
@@ -540,6 +601,8 @@ export const useNodeStore = defineStore('node', () => {
     replaceCustomNodes,
     updateSystemNode,
     syncSystemNode,
+    refreshSystemNode,
+    switchSystemNode,
     setAppDefaultNode,
     validateRuntime,
     installManagedNode,

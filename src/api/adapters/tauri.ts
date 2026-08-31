@@ -19,6 +19,9 @@ import type {
     NodeVersion,
     NodeInstallProgress,
     NodeReleaseInfo,
+    SystemNodeState,
+    SystemNodeSwitchOptions,
+    SystemNodeSwitchResult,
     GitStatusResult,
     GitBranch,
     GitCommit,
@@ -72,6 +75,18 @@ export class TauriAdapter implements PlatformAPI {
 
     async getNodeVersion(path: string): Promise<string> {
         return invoke('get_node_version', { path });
+    }
+
+    async getSystemNodeState(): Promise<SystemNodeState> {
+        return invoke('get_system_node_state');
+    }
+
+    async switchSystemNode(runtime: NodeVersion, options: SystemNodeSwitchOptions = {}): Promise<SystemNodeSwitchResult> {
+        return invoke('switch_system_node', { runtime, options });
+    }
+
+    async systemNodeSwitchSupported(): Promise<boolean> {
+        return invoke('system_node_switch_supported_command');
     }
 
     async managedNodeRuntimeSupported(): Promise<boolean> {

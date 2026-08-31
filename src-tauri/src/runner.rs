@@ -7,6 +7,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::system_node;
+
 /// 包管理器解析结果
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1139,8 +1141,13 @@ fn normalize_path_str(s: &str) -> String {
 }
 
 fn build_terminal_path_env(node_path: &str) -> Option<String> {
-    let node_dir = resolve_terminal_node_dir(node_path)?;
-    let current_path = std::env::var("PATH").unwrap_or_default();
+    let current_path = system_node::latest_effective_path();
+    let node_dir = resolve_terminal_node_dir(node_path);
+
+    if node_dir.is_none() {
+        return (!current_path.trim().is_empty()).then_some(current_path);
+    }
+    let node_dir = node_dir?;
 
     #[cfg(target_os = "windows")]
     let separator = ";";

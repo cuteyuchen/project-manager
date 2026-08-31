@@ -1191,6 +1191,22 @@ async function scanNvmNodeRuntimes() {
     return result.sort((a, b) => b.version.localeCompare(a.version) || a.path.localeCompare(b.path));
 }
 
+async function getPluginSystemNodeState() {
+    let nodePath = '';
+    try {
+        nodePath = String(await runCmd('node -e "console.log(process.execPath)"') || '').trim();
+    } catch (_) {}
+    const version = nodePath ? await readNodeVersion(nodePath) : '';
+    return {
+        available: !!nodePath && !!version,
+        version: version || undefined,
+        nodePath: nodePath || undefined,
+        source: 'unknown',
+        candidates: nodePath ? [{ path: nodePath, version: version || undefined }] : [],
+        pathScope: 'unknown',
+    };
+}
+
 window.services = {
     managedNodeRuntimeSupported: async () => false,
     listInstalledNodeRuntimes: async () => [],
@@ -1227,6 +1243,14 @@ window.services = {
             return null;
         }
     },
+    getSystemNodeState: getPluginSystemNodeState,
+    systemNodeSwitchSupported: async () => false,
+    switchSystemNode: async () => ({
+        success: false,
+        status: 'failed',
+        errorCode: 'unsupported_platform',
+        message: 'System Node switching is only supported in the desktop app',
+    }),
 
     getNodeVersion: async (nodePath) => {
         return new Promise(resolve => {

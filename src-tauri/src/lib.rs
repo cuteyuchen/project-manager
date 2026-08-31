@@ -4,6 +4,7 @@ mod nvm;
 mod project;
 mod runner;
 mod system;
+mod system_node;
 mod workspace;
 
 use std::{
@@ -167,6 +168,11 @@ fn exit_app(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let args = std::env::args().collect::<Vec<_>>();
+    if args.len() == 3 && args[1] == "--elevated-node-operation" {
+        std::process::exit(system_node::run_elevated_node_operation(&args[2]));
+    }
+
     let app = tauri::Builder::default()
         // Windows WebView2 默认会优先处理 Ctrl+F/F5/Ctrl+数字/Alt+方向键。
         // 关闭浏览器专用加速键后，这些产品快捷键才能进入前端 keydown 链路。
@@ -210,6 +216,9 @@ pub fn run() {
             node_runtime::get_managed_node_runtime_location,
             node_runtime::open_managed_node_runtime_root,
             node_runtime::migrate_managed_node_runtime_location,
+            system_node::get_system_node_state,
+            system_node::system_node_switch_supported_command,
+            system_node::switch_system_node,
             nvm::get_nvm_list,
             nvm::install_node,
             nvm::uninstall_node,
