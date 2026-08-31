@@ -15,6 +15,8 @@ const OPERATION_DIRECTORY: &str = "node-system";
 const APP_DATA_DIRECTORY_IDENTIFIER: &str = "com.cuteyuchen.project-manager";
 const OPERATION_SCHEMA_VERSION: u32 = 1;
 const OPERATION_ARGUMENT: &str = "--elevated-node-operation";
+#[cfg(windows)]
+const ELEVATED_OPERATION_TIMEOUT_MS: u32 = 45_000;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -102,6 +104,7 @@ enum SwitchFailure {
     Verification(String),
     IntegrationState(String),
     Rollback(String),
+    ElevatedOperationTimeout(String),
     Unsupported,
 }
 
@@ -113,7 +116,8 @@ impl SwitchFailure {
             | Self::NvmSwitchFailed(detail)
             | Self::Verification(detail)
             | Self::IntegrationState(detail)
-            | Self::Rollback(detail) => detail.clone(),
+            | Self::Rollback(detail)
+            | Self::ElevatedOperationTimeout(detail) => detail.clone(),
             Self::NvmNotFound => "NVM for Windows executable was not found".to_string(),
             Self::PathWrite { scope, detail } => format!("Failed to write {scope} PATH: {detail}"),
             Self::Unsupported => "System Node switching is only supported on Windows desktop".to_string(),
@@ -132,6 +136,7 @@ impl SwitchFailure {
             Self::Verification(_) => "verification_failed",
             Self::IntegrationState(_) => "integration_state_failed",
             Self::Rollback(_) => "rollback_failed",
+            Self::ElevatedOperationTimeout(_) => "elevated_operation_timeout",
             Self::Unsupported => "unsupported_platform",
         }
     }
@@ -1395,13 +1400,33 @@ fn finish_machine_path_switch(
 }
 
 #[tauri::command]
-pub fn switch_system_node(
+pub async fn switch_system_node(
     app: AppHandle,
     runtime: NodeRuntimeTarget,
     options: Option<SystemNodeSwitchOptions>,
 ) -> SystemNodeSwitchResult {
-    let previous = detect_system_node_state();
     let options = options.unwrap_or_default();
+    match tauri::async_runtime::spawn_blocking(move || switch_system_node_blocking(app, runtime, options)).await {
+        Ok(result) => result,
+        Err(error) => SystemNodeSwitchResult {
+            success: false,
+            status: "failed".to_string(),
+            previous: None,
+            current: None,
+            conflicting_path: None,
+            operation: None,
+            error_code: Some("system_node_worker_failed".to_string()),
+            message: Some(format!("System Node switch worker failed: {error}")),
+        },
+    }
+}
+
+fn switch_system_node_blocking(
+    app: AppHandle,
+    runtime: NodeRuntimeTarget,
+    options: SystemNodeSwitchOptions,
+) -> SystemNodeSwitchResult {
+    let previous = detect_system_node_state();
     if !system_node_switch_supported() {
         return failure_result(previous, None, &SwitchFailure::Unsupported);
     }
@@ -1599,9 +1624,12 @@ fn run_elevated_operation(
 #[cfg(windows)]
 fn launch_elevated_helper(operation_path: &Path) -> Result<(), ElevatedFailure> {
     use std::mem::size_of;
-    use windows_sys::Win32::Foundation::{GetLastError, ERROR_CANCELLED};
-    use windows_sys::Win32::Foundation::CloseHandle;
-    use windows_sys::Win32::System::Threading::{GetExitCodeProcess, WaitForSingleObject, INFINITE};
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, GetLastError, ERROR_CANCELLED, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    };
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, TerminateProcess, WaitForSingleObject,
+    };
     use windows_sys::Win32::UI::Shell::{ShellExecuteExW, SHELLEXECUTEINFOW, SEE_MASK_NOCLOSEPROCESS};
 
     let executable = env::current_exe().map_err(|error| ElevatedFailure::Operation(SwitchFailure::IntegrationState(error.to_string())))?;
@@ -1635,8 +1663,35 @@ fn launch_elevated_helper(operation_path: &Path) -> Result<(), ElevatedFailure> 
             "Elevated helper did not return a process handle".to_string(),
         )));
     }
-    unsafe {
-        WaitForSingleObject(info.hProcess, INFINITE);
+    let wait_result = unsafe { WaitForSingleObject(info.hProcess, ELEVATED_OPERATION_TIMEOUT_MS) };
+    match wait_result {
+        WAIT_OBJECT_0 => {}
+        WAIT_TIMEOUT => {
+            let _ = unsafe { TerminateProcess(info.hProcess, 1) };
+            unsafe {
+                CloseHandle(info.hProcess);
+            }
+            return Err(ElevatedFailure::Operation(SwitchFailure::ElevatedOperationTimeout(
+                "Elevated Node operation timed out after 45 seconds".to_string(),
+            )));
+        }
+        WAIT_FAILED => {
+            let error = unsafe { GetLastError() };
+            unsafe {
+                CloseHandle(info.hProcess);
+            }
+            return Err(ElevatedFailure::Operation(SwitchFailure::Verification(format!(
+                "Failed to wait for elevated helper: Windows error {error}"
+            ))));
+        }
+        other => {
+            unsafe {
+                CloseHandle(info.hProcess);
+            }
+            return Err(ElevatedFailure::Operation(SwitchFailure::Verification(format!(
+                "Elevated helper returned unexpected wait result {other}"
+            ))));
+        }
     }
     let mut exit_code = 1_u32;
     let exit_read = unsafe { GetExitCodeProcess(info.hProcess, &mut exit_code) };
@@ -1656,6 +1711,9 @@ fn launch_elevated_helper(operation_path: &Path) -> Result<(), ElevatedFailure> 
         13 => Err(ElevatedFailure::Operation(SwitchFailure::NvmSwitchFailed("Elevated NVM switch failed".to_string()))),
         14 => Err(ElevatedFailure::Operation(SwitchFailure::PathWrite { scope: "machine", detail: "Elevated Machine PATH write failed".to_string() })),
         15 => Err(ElevatedFailure::Operation(SwitchFailure::Rollback("Elevated PATH rollback failed".to_string()))),
+        17 => Err(ElevatedFailure::Operation(SwitchFailure::ElevatedOperationTimeout(
+            "Elevated Node operation timed out after 45 seconds".to_string(),
+        ))),
         _ => Err(ElevatedFailure::Operation(SwitchFailure::Verification(format!(
             "Elevated helper exited with code {exit_code}"
         )))),
@@ -1678,6 +1736,7 @@ pub fn run_elevated_node_operation(path: &str) -> i32 {
             Err(SwitchFailure::NvmSwitchFailed(_)) => 13,
             Err(SwitchFailure::PathWrite { .. }) => 14,
             Err(SwitchFailure::Rollback(_)) => 15,
+            Err(SwitchFailure::ElevatedOperationTimeout(_)) => 17,
             Err(error) => {
                 eprintln!("{error:?}");
                 16

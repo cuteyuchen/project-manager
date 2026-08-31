@@ -221,7 +221,7 @@ export const useNodeStore = defineStore('node', () => {
     });
   }
 
-  const refreshSystemNode = async (): Promise<SystemNodeState> => {
+  const refreshSystemNode = async (options: { throwOnError?: boolean } = {}): Promise<SystemNodeState> => {
     systemNodeLoading.value = true;
     try {
       const detected = await api.getSystemNodeState();
@@ -229,6 +229,7 @@ export const useNodeStore = defineStore('node', () => {
       return systemNodeState.value || detected;
     } catch (error) {
       console.error('Failed to detect system node state', error);
+      if (options.throwOnError) throw error;
       const unavailable: SystemNodeState = {
         available: false,
         source: 'unknown',
@@ -297,7 +298,7 @@ export const useNodeStore = defineStore('node', () => {
     }
   };
 
-  const refreshNvmRuntimes = async () => {
+  const refreshNvmRuntimes = async (options: { throwOnError?: boolean } = {}) => {
     try {
       const nvm = await api.scanNvmNodeRuntimes();
       applyMerged({
@@ -309,7 +310,27 @@ export const useNodeStore = defineStore('node', () => {
       });
     } catch (error) {
       console.warn('NVM discovery is unavailable', error);
+      if (options.throwOnError) throw error;
       applyMerged({ nvm: [] });
+    }
+  };
+
+  const refreshRuntimeRegistryAfterSystemSwitch = async (): Promise<void> => {
+    const failures: unknown[] = [];
+    try {
+      await refreshNvmRuntimes({ throwOnError: true });
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
+      await refreshSystemNode({ throwOnError: true });
+    } catch (error) {
+      failures.push(error);
+    }
+    versions.value = sortNodeVersions(markDefault(versions.value));
+    migrateDefaultRuntimeId();
+    if (failures.length) {
+      throw new Error(failures.map(error => String(error)).join('; '));
     }
   };
 
@@ -459,7 +480,6 @@ export const useNodeStore = defineStore('node', () => {
     try {
       const result = await api.switchSystemNode(runtime, options);
       if (result.current) applySystemNodeState(result.current);
-      await loadRuntimes();
       return result;
     } finally {
       systemNodeSwitching.value = false;
@@ -571,6 +591,16 @@ export const useNodeStore = defineStore('node', () => {
     return api.openInTerminal(home || '.', terminal, runtime.path, 'npm');
   };
 
+  const openSystemTerminal = async () => {
+    const settingsStore = useSettingsStore();
+    const home = await api.getHomeDirectory();
+    const terminal = resolveTerminalCommand(
+      settingsStore.settings.defaultTerminal,
+      settingsStore.settings.customTerminals,
+    );
+    return api.openInTerminal(home || '.', terminal, '', '');
+  };
+
   return {
     versions,
     loading,
@@ -589,6 +619,7 @@ export const useNodeStore = defineStore('node', () => {
     loadNvmNodes,
     refreshManagedRuntimes,
     refreshNvmRuntimes,
+    refreshRuntimeRegistryAfterSystemSwitch,
     loadCustomNodes,
     refreshCustomRuntimes,
     hydratePersistedData,
@@ -613,5 +644,6 @@ export const useNodeStore = defineStore('node', () => {
     changeManagedRuntimeLocation,
     openManagedRuntimeRoot,
     openTerminalWithRuntime,
+    openSystemTerminal,
   };
 });

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import type { NodeVersion } from '../src/types';
 import { buildNodeRuntimeId } from '../src/utils/nodeRuntime';
-import { groupNodeRuntimesByVersion } from '../src/utils/nodeRuntimeGrouping';
+import { groupNodeRuntimesByVersion, summarizeRuntimeSources } from '../src/utils/nodeRuntimeGrouping';
 
 function runtime(version: string, path: string, source: NodeVersion['source']): NodeVersion {
   return {
@@ -28,6 +28,15 @@ assert.equal(groups[0].runtimes.length, 4, 'source-specific records must not be 
 assert.deepEqual(
   groups[0].runtimes.map(item => item.path),
   ['C:/managed/v24.9.0', 'C:/nvm/one/v24.9.0', 'C:/nvm/two/v24.9.0', 'C:/system/node'],
+);
+assert.deepEqual(
+  summarizeRuntimeSources(groups[0].runtimes),
+  [
+    { source: 'managed', count: 1 },
+    { source: 'nvm', count: 2 },
+    { source: 'system', count: 1 },
+  ],
+  'source summaries should count records without merging source-specific runtimes',
 );
 
 console.log('nodeRuntimeGrouping tests passed');
