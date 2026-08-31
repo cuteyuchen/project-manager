@@ -691,8 +691,11 @@ useAppShortcuts([
         key="workspace"
         :root-id="drilledRootId"
         :target-project-id="workspaceTargetProjectId"
+        :git-overview-by-id="gitOverviewById"
+        :running-count-by-project-id="projectStore.runningSubtreeCount"
         @back="backToList"
         @edit="editFromWorkspace"
+        @open-project="openProjectWorkspace"
       />
 
       <!-- ═══ 默认：项目列表页（全宽） ═══ -->

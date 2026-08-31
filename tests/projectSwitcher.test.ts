@@ -44,8 +44,12 @@ assert.deepEqual(
 /***********************切换器结构与状态*********************/
 assert(/projects: readonly Project\[\]/.test(switcher), '切换器应接收全部已登记项目');
 assert(/collectVisibleProjectIds/.test(switcher), '切换器应复用树搜索祖先保留逻辑');
+assert(/collectAutoExpandedProjectIds/.test(switcher), '切换器应复用祖先自动展开逻辑');
 assert(/visit\(undefined, 0\)/.test(switcher), '切换器应从 root 开始构建层级行');
 assert(/row\.depth \* 18/.test(switcher), '切换器应通过深度缩进展示 child / grandchild');
+assert(/expandedProjectIds/.test(switcher) && /effectiveExpandedProjectIds/.test(switcher), '切换器应维护独立的展开状态');
+assert(/project-switcher-tree-toggle/.test(switcher) && /toggleExpanded/.test(switcher), '子项目应通过独立按钮展开/收起');
+assert(/hasChildren\(project\.id\)[\s\S]*effectiveExpandedProjectIds\.value\.has\(project\.id\)/.test(switcher), '切换器默认不应递归铺开所有子项目');
 assert(/currentProjectId/.test(switcher) && /project-switcher-row-active/.test(switcher), '当前项目应有选中态');
 assert(!switcher.includes('dashboard.noGit'), '非 Git 项目不应显示 No Git');
 assert(/project-switcher-git-dirty/.test(switcher), '切换器应支持缓存中的 Git dirty 简要状态');

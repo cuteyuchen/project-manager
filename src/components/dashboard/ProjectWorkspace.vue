@@ -5,18 +5,23 @@ import { useProjectStore } from '../../stores/project';
 import { useNavMemoryStore } from '../../stores/navMemory.ts';
 import { useAppShortcuts } from '../../composables/useAppShortcuts.ts';
 import { useI18n } from 'vue-i18n';
+import type { ProjectGitOverview } from '../../utils/projectGitOverview';
 import WorkspaceProjectExplorer from './WorkspaceProjectExplorer.vue';
 import ProjectManagementPanel from './ProjectManagementPanel.vue';
+import ProjectSwitcherPopover from './ProjectSwitcherPopover.vue';
 import SubProjectScanModal from '../SubProjectScanModal.vue';
 
 const props = defineProps<{
   rootId: string;
   targetProjectId?: string | null;
+  gitOverviewById?: Readonly<Record<string, ProjectGitOverview | undefined>>;
+  runningCountByProjectId?: Readonly<Record<string, number>>;
 }>();
 
 const emit = defineEmits<{
   (e: 'back'): void;
   (e: 'edit', project: Project): void;
+  (e: 'open-project', project: Project): void;
 }>();
 
 const { t } = useI18n();
@@ -25,6 +30,7 @@ const navMemory = useNavMemoryStore();
 const selectedProjectId = ref<string | null>(null);
 const scanTarget = ref<Project | null>(null);
 const showScanModal = ref(false);
+const switcherVisible = ref(false);
 
 const rootProject = computed(() => projectStore.projects.find(project => project.id === props.rootId) || null);
 const currentNode = rootProject;
@@ -89,6 +95,15 @@ function selectProject(project: Project): void {
   syncActiveProject();
 }
 
+function selectSwitcherProject(project: Project): void {
+  switcherVisible.value = false;
+  if (isProjectInWorkspace(project)) {
+    selectProject(project);
+    return;
+  }
+  emit('open-project', project);
+}
+
 function openScan(project: Project): void {
   scanTarget.value = project;
   showScanModal.value = true;
@@ -130,6 +145,9 @@ watch(
   resolveSelection,
   { immediate: true },
 );
+watch(() => props.rootId, () => {
+  switcherVisible.value = false;
+});
 watch(selectedProject, syncActiveProject, { immediate: true });
 
 onBeforeUnmount(() => {
@@ -162,7 +180,38 @@ useAppShortcuts([
       <div class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto scrollbar-none">
         <template v-for="(node, index) in breadcrumb" :key="node.id">
           <div v-if="index > 0" class="i-mdi-chevron-right shrink-0 text-xs text-slate-400" />
+          <el-popover
+            v-if="index === 0"
+            v-model:visible="switcherVisible"
+            placement="bottom-start"
+            :width="360"
+            :teleported="false"
+            :disabled="!rootProject"
+            popper-class="project-switcher-popper"
+          >
+            <ProjectSwitcherPopover
+              :projects="projectStore.projects"
+              :current-project-id="selectedProject?.id"
+              :git-overview-by-id="gitOverviewById"
+              :running-count-by-project-id="runningCountByProjectId"
+              @select="selectSwitcherProject"
+            />
+            <template #reference>
+              <button
+                type="button"
+                class="breadcrumb-item workspace-project-switcher shrink-0"
+                :class="{ 'breadcrumb-item-active': index === breadcrumb.length - 1 }"
+                :title="node.path"
+                :disabled="!rootProject"
+                @click.stop
+              >
+                <span class="truncate">{{ node.name }}</span>
+                <span class="i-mdi-chevron-down shrink-0 text-sm" aria-hidden="true" />
+              </button>
+            </template>
+          </el-popover>
           <button
+            v-else
             type="button"
             class="breadcrumb-item shrink-0"
             :class="{ 'breadcrumb-item-active': index === breadcrumb.length - 1 }"
