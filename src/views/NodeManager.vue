@@ -709,23 +709,62 @@ onBeforeUnmount(() => {
                   <span :class="groupProjectsUsingRuntime(row).length ? 'text-slate-600 dark:text-slate-300' : 'text-slate-400'" class="text-xs">{{ groupUsageLabel(row) }}</span>
                 </template>
               </el-table-column>
-              <el-table-column :label="t('nodes.actions')" :width="runtimeListMode === 'table' ? 275 : 190" fixed="right" align="right">
+              <el-table-column :label="t('nodes.actions')" :width="runtimeListMode === 'table' ? 500 : 190" fixed="right" align="right">
                 <template #default="{ row }">
-                  <div class="runtime-table-actions flex flex-nowrap items-center justify-end gap-1 whitespace-nowrap">
-                    <el-tooltip v-if="groupProjectsUsingRuntime(row).length" :content="t('nodes.viewUsage')" placement="top">
-                      <el-button text circle size="small" @click="showGroupUsage(row)">
-                        <div class="i-mdi-account-multiple-outline" />
-                      </el-button>
-                    </el-tooltip>
+                  <div :class="['runtime-table-actions', runtimeListMode === 'table' ? 'runtime-table-actions--wide' : 'runtime-table-actions--compact']">
                     <template v-if="runtimeListMode === 'table'">
-                      <el-button v-if="groupCanSetAppDefault(row)" text type="primary" size="small" @click="promptRuntimeAction('project-manager-default', row)">
-                        {{ t('nodes.setProjectManagerDefault') }}
-                      </el-button>
-                      <el-button v-if="groupCanSetSystemNode(row)" text type="warning" size="small" :disabled="nodeStore.systemNodeSwitching || !nodeStore.systemNodeSwitchSupported" @click="promptRuntimeAction('system-node', row)">
-                        {{ t('nodes.setSystemNode') }}
-                      </el-button>
+                      <div class="runtime-action-slot runtime-action-slot--icon">
+                        <el-tooltip v-if="groupProjectsUsingRuntime(row).length" :content="t('nodes.viewUsage')" placement="top">
+                          <el-button text circle size="small" @click="showGroupUsage(row)">
+                            <div class="i-mdi-account-multiple-outline" />
+                          </el-button>
+                        </el-tooltip>
+                        <span v-else class="runtime-action-placeholder" aria-hidden="true" />
+                      </div>
+                      <div class="runtime-action-slot runtime-action-slot--text runtime-action-slot--app-default">
+                        <el-button v-if="groupCanSetAppDefault(row)" class="runtime-action-button" text type="primary" size="small" @click="promptRuntimeAction('project-manager-default', row)">
+                          {{ t('nodes.setProjectManagerDefault') }}
+                        </el-button>
+                        <span v-else class="runtime-action-placeholder" aria-hidden="true" />
+                      </div>
+                      <div class="runtime-action-slot runtime-action-slot--text runtime-action-slot--system-node">
+                        <el-button v-if="groupCanSetSystemNode(row)" class="runtime-action-button" text type="warning" size="small" :disabled="nodeStore.systemNodeSwitching || !nodeStore.systemNodeSwitchSupported" @click="promptRuntimeAction('system-node', row)">
+                          {{ t('nodes.setSystemNode') }}
+                        </el-button>
+                        <span v-else class="runtime-action-placeholder" aria-hidden="true" />
+                      </div>
+                      <div class="runtime-action-slot runtime-action-slot--icon">
+                        <el-tooltip :content="t('nodes.openTerminal')" placement="top">
+                          <el-button text circle size="small" :disabled="!runtimeIsAvailable(primaryRuntime(row))" @click="openRuntimeTerminal(primaryRuntime(row))">
+                            <div class="i-mdi-console" />
+                          </el-button>
+                        </el-tooltip>
+                      </div>
+                      <div class="runtime-action-slot runtime-action-slot--icon">
+                        <el-dropdown trigger="click" @command="(command: string) => handleRuntimeCommand(command, primaryRuntime(row), row)">
+                          <el-button text circle size="small" :title="t('nodes.actions')"><div class="i-mdi-dots-vertical" /></el-button>
+                          <template #dropdown>
+                            <el-dropdown-menu>
+                              <el-dropdown-item command="validate">{{ t('nodes.validate') }}</el-dropdown-item>
+                              <el-dropdown-item command="folder">{{ t('nodes.openDirectory') }}</el-dropdown-item>
+                              <el-dropdown-item v-if="primaryRuntime(row).source === 'nvm'" command="root">{{ t('nodes.openNvmDirectory') }}</el-dropdown-item>
+                              <el-dropdown-item command="copy-node">{{ t('nodes.copyNodePath') }}</el-dropdown-item>
+                              <el-dropdown-item command="copy-root">{{ t('nodes.copyRuntimePath') }}</el-dropdown-item>
+                              <el-dropdown-item command="usage">{{ t('nodes.viewUsage') }}</el-dropdown-item>
+                              <el-dropdown-item v-if="primaryRuntime(row).source === 'managed' || primaryRuntime(row).source === 'custom'" divided command="remove">
+                                {{ primaryRuntime(row).source === 'managed' ? t('nodes.uninstall') : t('nodes.removeCustom') }}
+                              </el-dropdown-item>
+                            </el-dropdown-menu>
+                          </template>
+                        </el-dropdown>
+                      </div>
                     </template>
                     <template v-else>
+                      <el-tooltip v-if="groupProjectsUsingRuntime(row).length" :content="t('nodes.viewUsage')" placement="top">
+                        <el-button text circle size="small" @click="showGroupUsage(row)">
+                          <div class="i-mdi-account-multiple-outline" />
+                        </el-button>
+                      </el-tooltip>
                       <el-tooltip v-if="groupCanSetAppDefault(row)" :content="t('nodes.setProjectManagerDefault')" placement="top">
                         <el-button text circle size="small" :disabled="nodeStore.systemNodeSwitching" @click="promptRuntimeAction('project-manager-default', row)">
                           <div class="i-mdi-star-outline" />
@@ -736,30 +775,30 @@ onBeforeUnmount(() => {
                           <div class="i-mdi-swap-horizontal" />
                         </el-button>
                       </el-tooltip>
+                      <el-tooltip :content="t('nodes.openTerminal')" placement="top">
+                        <el-button text circle size="small" :disabled="!runtimeIsAvailable(primaryRuntime(row))" @click="openRuntimeTerminal(primaryRuntime(row))">
+                          <div class="i-mdi-console" />
+                        </el-button>
+                      </el-tooltip>
+                      <el-dropdown trigger="click" @command="(command: string) => handleRuntimeCommand(command, primaryRuntime(row), row)">
+                        <el-button text circle size="small" :title="t('nodes.actions')"><div class="i-mdi-dots-vertical" /></el-button>
+                        <template #dropdown>
+                          <el-dropdown-menu>
+                            <el-dropdown-item v-if="groupCanSetAppDefault(row)" command="project-manager-default">{{ t('nodes.setProjectManagerDefault') }}</el-dropdown-item>
+                            <el-dropdown-item v-if="groupCanSetSystemNode(row)" command="system-node">{{ t('nodes.setSystemNode') }}</el-dropdown-item>
+                            <el-dropdown-item command="validate">{{ t('nodes.validate') }}</el-dropdown-item>
+                            <el-dropdown-item command="folder">{{ t('nodes.openDirectory') }}</el-dropdown-item>
+                            <el-dropdown-item v-if="primaryRuntime(row).source === 'nvm'" command="root">{{ t('nodes.openNvmDirectory') }}</el-dropdown-item>
+                            <el-dropdown-item command="copy-node">{{ t('nodes.copyNodePath') }}</el-dropdown-item>
+                            <el-dropdown-item command="copy-root">{{ t('nodes.copyRuntimePath') }}</el-dropdown-item>
+                            <el-dropdown-item command="usage">{{ t('nodes.viewUsage') }}</el-dropdown-item>
+                            <el-dropdown-item v-if="primaryRuntime(row).source === 'managed' || primaryRuntime(row).source === 'custom'" divided command="remove">
+                              {{ primaryRuntime(row).source === 'managed' ? t('nodes.uninstall') : t('nodes.removeCustom') }}
+                            </el-dropdown-item>
+                          </el-dropdown-menu>
+                        </template>
+                      </el-dropdown>
                     </template>
-                    <el-tooltip :content="t('nodes.openTerminal')" placement="top">
-                      <el-button text circle size="small" :disabled="!runtimeIsAvailable(primaryRuntime(row))" @click="openRuntimeTerminal(primaryRuntime(row))">
-                        <div class="i-mdi-console" />
-                      </el-button>
-                    </el-tooltip>
-                    <el-dropdown trigger="click" @command="(command: string) => handleRuntimeCommand(command, primaryRuntime(row), row)">
-                      <el-button text circle size="small" :title="t('nodes.actions')"><div class="i-mdi-dots-vertical" /></el-button>
-                      <template #dropdown>
-                        <el-dropdown-menu>
-                          <el-dropdown-item v-if="runtimeListMode !== 'table' && groupCanSetAppDefault(row)" command="project-manager-default">{{ t('nodes.setProjectManagerDefault') }}</el-dropdown-item>
-                          <el-dropdown-item v-if="runtimeListMode !== 'table' && groupCanSetSystemNode(row)" command="system-node">{{ t('nodes.setSystemNode') }}</el-dropdown-item>
-                          <el-dropdown-item command="validate">{{ t('nodes.validate') }}</el-dropdown-item>
-                          <el-dropdown-item command="folder">{{ t('nodes.openDirectory') }}</el-dropdown-item>
-                          <el-dropdown-item v-if="primaryRuntime(row).source === 'nvm'" command="root">{{ t('nodes.openNvmDirectory') }}</el-dropdown-item>
-                          <el-dropdown-item command="copy-node">{{ t('nodes.copyNodePath') }}</el-dropdown-item>
-                          <el-dropdown-item command="copy-root">{{ t('nodes.copyRuntimePath') }}</el-dropdown-item>
-                          <el-dropdown-item command="usage">{{ t('nodes.viewUsage') }}</el-dropdown-item>
-                          <el-dropdown-item v-if="primaryRuntime(row).source === 'managed' || primaryRuntime(row).source === 'custom'" divided command="remove">
-                            {{ primaryRuntime(row).source === 'managed' ? t('nodes.uninstall') : t('nodes.removeCustom') }}
-                          </el-dropdown-item>
-                        </el-dropdown-menu>
-                      </template>
-                    </el-dropdown>
                   </div>
                 </template>
               </el-table-column>
@@ -925,9 +964,60 @@ onBeforeUnmount(() => {
 }
 
 .runtime-table-actions {
+  align-items: center;
+  justify-content: flex-end;
   flex-wrap: nowrap;
   min-width: max-content;
   white-space: nowrap;
+}
+
+.runtime-table-actions--wide {
+  display: grid;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: 32px minmax(190px, 1fr) 160px 32px 32px;
+  column-gap: 4px;
+}
+
+.runtime-table-actions--compact {
+  display: flex;
+  gap: 4px;
+}
+
+.runtime-action-slot {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.runtime-action-slot--icon {
+  justify-content: center;
+}
+
+.runtime-action-slot--text {
+  justify-content: flex-end;
+}
+
+.runtime-action-slot--app-default {
+  min-width: 190px;
+}
+
+.runtime-action-slot--system-node {
+  min-width: 160px;
+}
+
+.runtime-action-button {
+  flex: 0 0 auto;
+  min-width: 0;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.runtime-action-placeholder {
+  display: block;
+  width: 100%;
+  height: 1px;
 }
 
 .runtime-card-list {
@@ -962,6 +1052,10 @@ onBeforeUnmount(() => {
   gap: 6px;
   overflow-x: auto;
   white-space: nowrap;
+}
+
+.runtime-card__actions > * {
+  flex: 0 0 auto;
 }
 
 @container (max-width: 1100px) {
