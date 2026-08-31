@@ -21,6 +21,7 @@ import type {
     GitBinaryDiffMeta,
     ManagedRuntimeLocation,
     ManagedRuntimeLocationInfo,
+    ManagedRuntimeSizeInfo,
 } from '../types';
 
 /** 包管理器解析结果 */
@@ -147,6 +148,7 @@ export interface PlatformAPI {
     systemNodeSwitchSupported(): Promise<boolean>;
     managedNodeRuntimeSupported(): Promise<boolean>;
     getManagedNodeRuntimeLocation(): Promise<ManagedRuntimeLocationInfo>;
+    getManagedNodeRuntimeSize(): Promise<ManagedRuntimeSizeInfo>;
     openManagedNodeRuntimeRoot(): Promise<void>;
     migrateManagedNodeRuntimeLocation(
         location: ManagedRuntimeLocation,

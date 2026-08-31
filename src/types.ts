@@ -372,6 +372,12 @@ export interface ManagedRuntimeLocationInfo extends ManagedRuntimeLocation {
   warnings?: string[];
 }
 
+export interface ManagedRuntimeSizeInfo {
+  sizeBytes: number;
+  sizeStatus: 'calculating' | 'ready' | 'error';
+  warnings?: string[];
+}
+
 export interface NodeVersion {
   /** 稳定 Runtime 身份；旧数据缺省时由 registry 推导。 */
   runtimeId?: string;

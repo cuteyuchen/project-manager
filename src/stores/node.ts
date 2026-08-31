@@ -111,6 +111,7 @@ export const useNodeStore = defineStore('node', () => {
   const systemNodeSwitchSupported = ref(false);
   const managedLocation = ref<ManagedRuntimeLocationInfo | null>(null);
   const managedLocationLoading = ref(false);
+  let managedLocationRequestId = 0;
   const installProgress = ref<Record<string, NodeInstallProgress>>({});
   const persistedCustomNodes = ref<NodeVersion[]>([]);
   const hydrated = ref(false);
@@ -283,7 +284,30 @@ export const useNodeStore = defineStore('node', () => {
     });
   };
 
+  const loadManagedRuntimeSize = async (requestId: number): Promise<void> => {
+    try {
+      const size = await api.getManagedNodeRuntimeSize();
+      if (requestId !== managedLocationRequestId || !managedLocation.value) return;
+      managedLocation.value = { ...managedLocation.value, ...size };
+    } catch (error) {
+      if (requestId === managedLocationRequestId && managedLocation.value) {
+        managedLocation.value = {
+          ...managedLocation.value,
+          sizeBytes: 0,
+          sizeStatus: 'error',
+          warnings: [...(managedLocation.value.warnings || []), String(error)],
+        };
+      }
+      console.error('Failed to calculate managed runtime size', error);
+    } finally {
+      if (requestId === managedLocationRequestId) managedLocationLoading.value = false;
+    }
+  };
+
   const refreshManagedRuntimes = async () => {
+    const requestId = ++managedLocationRequestId;
+    managedLocation.value = null;
+    managedLocationLoading.value = true;
     try {
       const managed = await api.listInstalledNodeRuntimes();
       applyMerged({
@@ -298,13 +322,17 @@ export const useNodeStore = defineStore('node', () => {
       applyMerged({ managed: [] });
       console.error('Failed to load managed node runtimes', error);
     }
-    managedLocationLoading.value = true;
     try {
-      managedLocation.value = await api.getManagedNodeRuntimeLocation();
+      const location = await api.getManagedNodeRuntimeLocation();
+      if (requestId !== managedLocationRequestId) return;
+      managedLocation.value = location;
+      void loadManagedRuntimeSize(requestId);
     } catch (error) {
+      if (requestId === managedLocationRequestId) {
+        managedLocation.value = null;
+        managedLocationLoading.value = false;
+      }
       console.error('Failed to load managed runtime location', error);
-    } finally {
-      managedLocationLoading.value = false;
     }
   };
 

@@ -48,7 +48,7 @@ const nvmRuntimes = computed(() => nodeStore.versions.filter(runtime => runtime.
 const defaultRuntime = computed(() => nodeStore.defaultRuntime);
 const defaultUnavailable = computed(() => !!nodeStore.appDefault && !defaultRuntime.value);
 const managedRoot = computed(() => nodeStore.managedLocation?.rootPath || '');
-const managedRootLabel = computed(() => managedRoot.value || t('nodes.locationUnknown'));
+const managedRootLabel = computed(() => managedRoot.value || (nodeStore.managedLocationLoading ? t('nodes.locationUnknown') : t('nodes.locationUnavailable')));
 const portableAvailable = computed(() => nodeStore.managedLocation?.portableAvailable === true);
 const nvmRoots = computed(() => {
   const roots = new Set<string>();
@@ -101,7 +101,8 @@ function formatBytes(bytes: number): string {
 }
 
 const managedStorageText = computed(() => {
-  if (nodeStore.managedLocationLoading || !nodeStore.managedLocation) return t('nodes.storageCalculating');
+  if (nodeStore.managedLocationLoading || nodeStore.managedLocation?.sizeStatus === 'calculating') return t('nodes.storageCalculating');
+  if (!nodeStore.managedLocation) return t('nodes.storageUnavailable');
   if (nodeStore.managedLocation.sizeStatus === 'error') return t('nodes.storageUnavailable');
   return t('nodes.storageUsage', { size: formatBytes(nodeStore.managedLocation.sizeBytes) });
 });
@@ -895,7 +896,7 @@ onBeforeUnmount(() => {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="showUsageDialog" :title="t('nodes.viewUsage')" width="420px" align-center class="runtime-usage-dialog">
+    <el-dialog v-model="showUsageDialog" :title="t('nodes.viewUsage')" width="720px" align-center class="runtime-usage-dialog">
       <div v-if="selectedUsageRuntime" class="mb-3 flex items-center justify-between gap-3">
         <div class="min-w-0">
           <div class="flex items-center gap-2">

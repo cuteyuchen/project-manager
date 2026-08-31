@@ -377,6 +377,7 @@
     systemNodeSwitchFailed: '系统 Node 切换失败：{detail}',
     managedRuntime: 'Managed Runtime 目录',
     locationUnknown: '正在检测…',
+    locationUnavailable: '目录位置不可用',
     locationModeLabel: '存储位置',
     locationMode: {
       'app-data': '应用数据目录',

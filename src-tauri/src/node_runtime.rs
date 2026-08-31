@@ -75,6 +75,14 @@ pub struct ManagedRuntimeLocationInfo {
     pub warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedRuntimeSizeInfo {
+    pub size_bytes: u64,
+    pub size_status: String,
+    pub warnings: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NodeReleaseInfo {
@@ -463,6 +471,7 @@ fn directory_size_stats(path: &Path) -> (u64, Vec<String>) {
     let mut total = 0_u64;
     let mut warnings = Vec::new();
     let mut pending = vec![path.to_path_buf()];
+    let mut visited_dirs = HashSet::new();
 
     while let Some(current) = pending.pop() {
         let metadata = match fs::symlink_metadata(&current) {
@@ -479,6 +488,11 @@ fn directory_size_stats(path: &Path) -> (u64, Vec<String>) {
             continue;
         }
         if !file_type.is_dir() {
+            continue;
+        }
+        let directory_key =
+            canonicalize_runtime_path(&current).unwrap_or_else(|| normalized_path_key(&current));
+        if !visited_dirs.insert(directory_key) {
             continue;
         }
 
@@ -500,6 +514,24 @@ fn directory_size_stats(path: &Path) -> (u64, Vec<String>) {
     (total, warnings)
 }
 
+fn managed_runtime_size_info(root: &Path) -> ManagedRuntimeSizeInfo {
+    let (size_bytes, size_warnings) = directory_size_stats(root);
+    let size_status = if size_warnings.is_empty() {
+        "ready"
+    } else {
+        "error"
+    };
+    let warnings = size_warnings
+        .into_iter()
+        .map(|warning| format!("无法完整计算 Managed Node 目录大小：{warning}"))
+        .collect();
+    ManagedRuntimeSizeInfo {
+        size_bytes,
+        size_status: size_status.to_string(),
+        warnings,
+    }
+}
+
 fn portable_root(app: &AppHandle) -> Result<PathBuf, String> {
     resolve_managed_runtime_root_for_setting(
         app,
@@ -515,9 +547,10 @@ fn managed_location_info_sync(
     root: PathBuf,
     portable: PathBuf,
     mut warnings: Vec<String>,
+    calculate_size: bool,
 ) -> Result<ManagedRuntimeLocationInfo, String> {
     let writable = writable_probe(&root);
-    let portable_available = writable_probe(&portable);
+    let portable_available = !portable.as_os_str().is_empty() && writable_probe(&portable);
     if !writable {
         warnings.push(format!(
             "Managed Node runtime directory is not writable: {}",
@@ -527,15 +560,21 @@ fn managed_location_info_sync(
     if setting.mode == "portable" && !portable_available {
         warnings.push("当前安装目录不可写，请选择应用数据目录或自定义目录。".to_string());
     }
-    let (size_bytes, size_warnings) = directory_size_stats(&root);
-    let size_status = if size_warnings.is_empty() {
-        "ready"
+    let size_info = if calculate_size {
+        managed_runtime_size_info(&root)
     } else {
-        for warning in size_warnings {
-            warnings.push(format!("无法完整计算 Managed Node 目录大小：{warning}"));
+        ManagedRuntimeSizeInfo {
+            size_bytes: 0,
+            size_status: "calculating".to_string(),
+            warnings: Vec::new(),
         }
-        "error"
     };
+    let ManagedRuntimeSizeInfo {
+        size_bytes,
+        size_status,
+        warnings: size_warnings,
+    } = size_info;
+    warnings.extend(size_warnings);
 
     Ok(ManagedRuntimeLocationInfo {
         mode: setting.mode.clone(),
@@ -556,10 +595,16 @@ async fn managed_location_info(
     warnings: Vec<String>,
 ) -> Result<ManagedRuntimeLocationInfo, String> {
     let root = resolve_managed_runtime_root_for_setting(app, setting)?;
-    let portable = portable_root(app)?;
+    let portable = if setting.mode == "portable" {
+        portable_root(app)?
+    } else {
+        portable_root(app).unwrap_or_default()
+    };
     let setting = setting.clone();
-    run_node_runtime_task(move || managed_location_info_sync(&setting, root, portable, warnings))
-        .await
+    run_node_runtime_task(move || {
+        managed_location_info_sync(&setting, root, portable, warnings, false)
+    })
+    .await
 }
 
 fn write_managed_location(
@@ -1385,6 +1430,14 @@ pub async fn get_managed_node_runtime_location(
     managed_location_info(&app, &setting, Vec::new()).await
 }
 
+#[tauri::command]
+pub async fn get_managed_node_runtime_size(
+    app: AppHandle,
+) -> Result<ManagedRuntimeSizeInfo, String> {
+    let root = resolve_managed_runtime_root(&app)?;
+    run_node_runtime_task(move || Ok(managed_runtime_size_info(&root))).await
+}
+
 fn open_managed_runtime_root_with<F>(root: &Path, opener: F) -> Result<(), String>
 where
     F: FnOnce(&Path) -> Result<(), String>,
@@ -1624,8 +1677,12 @@ fn managed_location_info_for_app(
     warnings: Vec<String>,
 ) -> Result<ManagedRuntimeLocationInfo, String> {
     let root = resolve_managed_runtime_root_for_setting(app, setting)?;
-    let portable = portable_root(app)?;
-    managed_location_info_sync(setting, root, portable, warnings)
+    let portable = if setting.mode == "portable" {
+        portable_root(app)?
+    } else {
+        portable_root(app).unwrap_or_default()
+    };
+    managed_location_info_sync(setting, root, portable, warnings, true)
 }
 
 fn migrate_managed_node_runtime_location_sync(

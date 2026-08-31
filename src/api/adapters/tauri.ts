@@ -38,6 +38,7 @@ import type {
     GitBinaryDiffMeta,
     ManagedRuntimeLocation,
     ManagedRuntimeLocationInfo,
+    ManagedRuntimeSizeInfo,
 } from '../../types';
 
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -95,6 +96,10 @@ export class TauriAdapter implements PlatformAPI {
 
     async getManagedNodeRuntimeLocation(): Promise<ManagedRuntimeLocationInfo> {
         return invoke('get_managed_node_runtime_location');
+    }
+
+    async getManagedNodeRuntimeSize(): Promise<ManagedRuntimeSizeInfo> {
+        return invoke('get_managed_node_runtime_size');
     }
 
     async openManagedNodeRuntimeRoot(): Promise<void> {

@@ -33,6 +33,7 @@ import type {
   GitBinaryDiffMeta,
   ManagedRuntimeLocation,
   ManagedRuntimeLocationInfo,
+  ManagedRuntimeSizeInfo,
 } from '../../types';
 
 // Declare global interface for uTools services
@@ -124,6 +125,16 @@ export class UToolsAdapter implements PlatformAPI {
       sizeBytes: 0,
       sizeStatus: 'ready',
     });
+  }
+  async getManagedNodeRuntimeSize(): Promise<ManagedRuntimeSizeInfo> {
+    const service = this.service as PlatformAPI & { getManagedNodeRuntimeSize?: () => Promise<ManagedRuntimeSizeInfo> };
+    if (service.getManagedNodeRuntimeSize) return service.getManagedNodeRuntimeSize();
+    const location = await this.getManagedNodeRuntimeLocation();
+    return {
+      sizeBytes: location.sizeBytes,
+      sizeStatus: location.sizeStatus || 'ready',
+      warnings: location.warnings,
+    };
   }
   async openManagedNodeRuntimeRoot(): Promise<void> {
     const service = this.service as PlatformAPI & { openManagedNodeRuntimeRoot?: () => Promise<void> };

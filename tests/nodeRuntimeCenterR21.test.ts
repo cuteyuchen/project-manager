@@ -26,12 +26,16 @@ const scanIndex = rust.indexOf('let installed = runtime_directory_entries(&old_r
 assert(switchOnlyIndex >= 0 && switchOnlyIndex < scanIndex, 'switch-only mode must save and return before scanning old runtimes');
 assert(rust.includes('portable_available'), 'Portable mode must expose an explicit writable capability check');
 
-assert(nodeManager.includes('width="420px"'), 'usage dialog width should be 420px');
+assert(nodeManager.includes('width="720px"'), 'usage dialog width should be 720px');
 assert(nodeManager.includes('max-height: 70vh'), 'usage dialog should cap its height');
 assert(nodeManager.includes('usageSearchQuery'), 'usage dialog should support search');
 assert(nodeManager.includes('emit(\'navigateProject\''), 'usage entries should navigate to the selected project');
 assert(nodeManager.includes('runtimeGroups'), 'runtime rows should be grouped by version');
 assert(nodeManager.includes('openManagedRuntimeRoot'), 'managed root should use the dedicated open command');
+assert(rust.includes('pub async fn get_managed_node_runtime_size'), 'managed runtime size should be refreshable independently');
+assert(apiTypes.includes('getManagedNodeRuntimeSize'), 'the platform API should expose an independent managed runtime size query');
+assert(tauriAdapter.includes('get_managed_node_runtime_size'), 'the Tauri adapter should expose the managed runtime size command');
+assert(nodeStore.includes('getManagedNodeRuntimeSize'), 'the Node store should refresh managed runtime size after location detection');
 assert(!nodeManager.includes('<el-table-column type="expand"'), 'runtime rows must not use expandable source rows');
 assert(nodeManager.includes("<el-table-column :label=\"t('nodes.actions')\""), 'runtime actions must stay in the rightmost column');
 assert(nodeManager.includes('primaryRuntime(row)'), 'same-version rows should show one primary runtime source');

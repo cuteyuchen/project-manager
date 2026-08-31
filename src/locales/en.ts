@@ -378,6 +378,7 @@ export default {
     systemNodeSwitchFailed: 'System Node switch failed: {detail}',
     managedRuntime: 'Managed Runtime directory',
     locationUnknown: 'Detecting...',
+    locationUnavailable: 'Directory location unavailable',
     locationModeLabel: 'Storage location',
     locationMode: {
       'app-data': 'Application data',
