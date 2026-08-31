@@ -1123,14 +1123,14 @@ fn apply_controller_path_integration(
 #[cfg(windows)]
 fn is_reparse_directory(path: &Path) -> bool {
     use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x0010;
     const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
     let Ok(link_metadata) = fs::symlink_metadata(path) else {
         return false;
     };
-    let target_is_directory = fs::metadata(path)
-        .map(|metadata| metadata.is_dir())
-        .unwrap_or(false);
-    target_is_directory && link_metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    let attributes = link_metadata.file_attributes();
+    attributes & FILE_ATTRIBUTE_DIRECTORY != 0
+        && attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
 }
 
 #[cfg(not(windows))]
@@ -1331,8 +1331,8 @@ fn remove_controller_link(path: &Path) -> Result<(), SwitchFailure> {
 }
 
 fn restore_link_snapshot(path: &Path, snapshot: &LinkSnapshot) -> Result<(), SwitchFailure> {
-    if let Ok(metadata) = fs::symlink_metadata(path) {
-        if !metadata.is_dir() || !is_reparse_directory(path) {
+    if fs::symlink_metadata(path).is_ok() {
+        if !is_reparse_directory(path) {
             return Err(SwitchFailure::Rollback(format!(
                 "Cannot rollback Controller because {} is no longer a link",
                 path.display()
@@ -2050,6 +2050,8 @@ fn output_looks_permission(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    use std::fs;
 
     #[test]
     fn path_integration_preserves_unknown_entries_and_order() {
@@ -2103,5 +2105,24 @@ mod tests {
         let serialized = serde_json::to_string(&operation).expect("serialize operation");
         assert!(serialized.contains("switch"));
         assert!(!serialized.contains("nvm-use"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn directory_junction_snapshot_can_be_restored_after_repoint() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let old_target = temp.path().join("old-target");
+        let new_target = temp.path().join("new-target");
+        let link = temp.path().join("current");
+        fs::create_dir_all(&old_target).expect("old target");
+        fs::create_dir_all(&new_target).expect("new target");
+
+        create_directory_link(&link, &old_target).expect("create initial junction");
+        let snapshot = read_link_snapshot(&link).expect("read junction snapshot");
+        remove_controller_link(&link).expect("remove initial junction");
+        create_directory_link(&link, &new_target).expect("create replacement junction");
+
+        restore_link_snapshot(&link, &snapshot).expect("restore junction snapshot");
+        assert!(path_strings_equal(&link, &old_target));
     }
 }
