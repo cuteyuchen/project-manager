@@ -171,55 +171,55 @@ watch(ignoreOpen, (open) => {
         <div v-if="ignoreOpen" ref="submenuRef" class="ctx-submenu" :style="submenuStyle">
           <div class="ctx-group-label">{{ t('git.ignoreProject') }}</div>
           <button type="button" class="ctx-item" @click="action('ignore', 'file', false)">
-            {{ t('git.ignoreThisFile') }}<span v-if="props.files.length > 1">（{{ props.files.length }}）</span>
+            <span>{{ t('git.ignoreThisFile') }}<span v-if="props.files.length > 1">（{{ props.files.length }}）</span></span>
           </button>
           <button type="button" class="ctx-item" @click="action('ignore', 'filename', false)">
-            {{ t('git.ignoreSameName') }}
+            <span>{{ t('git.ignoreSameName') }}</span>
           </button>
           <button type="button" class="ctx-item" :disabled="extensionFiles.length === 0" @click="action('ignore', 'extension', false)">
-            {{ t('git.ignoreExtension') }}<span v-if="extensionFiles.length !== props.files.length">（{{ extensionFiles.length }}）</span>
+            <span>{{ t('git.ignoreExtension') }}<span v-if="extensionFiles.length !== props.files.length">（{{ extensionFiles.length }}）</span></span>
           </button>
           <button type="button" class="ctx-item" :disabled="directoryFiles.length === 0" @click="action('ignore', 'directory', false)">
-            {{ t('git.ignoreDirectory') }}<span v-if="directoryFiles.length !== props.files.length">（{{ directoryFiles.length }}）</span>
+            <span>{{ t('git.ignoreDirectory') }}<span v-if="directoryFiles.length !== props.files.length">（{{ directoryFiles.length }}）</span></span>
           </button>
           <div class="ctx-sep" />
           <div class="ctx-group-label">{{ t('git.localIgnore') }}</div>
           <button type="button" class="ctx-item" @click="action('ignore', 'file', true)">
-            {{ t('git.ignoreThisFileLocal') }}
+            <span>{{ t('git.ignoreThisFileLocal') }}</span>
           </button>
           <button type="button" class="ctx-item" @click="action('ignore', 'filename', true)">
-            {{ t('git.ignoreSameNameLocal') }}
+            <span>{{ t('git.ignoreSameNameLocal') }}</span>
           </button>
           <button type="button" class="ctx-item" :disabled="extensionFiles.length === 0" @click="action('ignore', 'extension', true)">
-            {{ t('git.ignoreExtensionLocal') }}
+            <span>{{ t('git.ignoreExtensionLocal') }}</span>
           </button>
           <button type="button" class="ctx-item" :disabled="directoryFiles.length === 0" @click="action('ignore', 'directory', true)">
-            {{ t('git.ignoreDirectoryLocal') }}
+            <span>{{ t('git.ignoreDirectoryLocal') }}</span>
           </button>
         </div>
       </div>
 
       <button type="button" class="ctx-item" :disabled="tracked.length === 0" @mouseenter="closeIgnoreSubmenu" @click="action('stopTracking')">
-        {{ tracked.length > 1 ? t('git.stopTrackingN', { count: tracked.length }) : t('git.stopTracking') }}
+        <span>{{ tracked.length > 1 ? t('git.stopTrackingN', { count: tracked.length }) : t('git.stopTracking') }}</span>
       </button>
 
       <div class="ctx-sep" @mouseenter="closeIgnoreSubmenu" />
       <button type="button" class="ctx-item" @mouseenter="closeIgnoreSubmenu" @click="action('editor')">
-        {{ t('git.openInEditor') }}
+        <span>{{ t('git.openInEditor') }}</span>
       </button>
       <button type="button" class="ctx-item" @mouseenter="closeIgnoreSubmenu" @click="action('folder')">
-        {{ t('git.revealInFolder') }}
+        <span>{{ t('git.revealInFolder') }}</span>
       </button>
       <button type="button" class="ctx-item" @mouseenter="closeIgnoreSubmenu" @click="action('copyRelative')">
-        {{ t('git.copyRelativePath') }}
+        <span>{{ t('git.copyRelativePath') }}</span>
       </button>
       <button type="button" class="ctx-item" @mouseenter="closeIgnoreSubmenu" @click="action('copyAbsolute')">
-        {{ t('git.copyAbsolutePath') }}
+        <span>{{ t('git.copyAbsolutePath') }}</span>
       </button>
 
       <div class="ctx-sep" @mouseenter="closeIgnoreSubmenu" />
       <button type="button" class="ctx-item" @mouseenter="closeIgnoreSubmenu" @click="action('history')">
-        {{ t('git.fileHistory') }}
+        <span>{{ t('git.fileHistory') }}</span>
       </button>
     </div>
   </Teleport>
@@ -228,6 +228,10 @@ watch(ignoreOpen, (open) => {
 <style scoped>
 .git-file-context-menu {
   z-index: 4000;
+  width: max-content;
+  min-width: 220px;
+  max-width: min(320px, calc(100vw - 16px));
+  overflow: hidden;
   border: 1px solid var(--app-border);
   border-radius: 6px;
   background: var(--app-surface-raised, var(--app-surface));
@@ -248,6 +252,21 @@ watch(ignoreOpen, (open) => {
   font-size: var(--app-font-control);
   text-align: left;
   cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ctx-item > span:only-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ctx-item > span + span:last-child {
+  flex: 0 0 auto;
 }
 
 .ctx-item:hover:not(:disabled) {
@@ -281,6 +300,8 @@ watch(ignoreOpen, (open) => {
 
 .ctx-submenu {
   position: fixed;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 16px));
   min-width: 210px;
   padding: 4px 0;
   border: 1px solid var(--app-border);
@@ -293,5 +314,6 @@ watch(ignoreOpen, (open) => {
   padding: 4px 10px 3px;
   color: var(--app-text-muted);
   font-size: var(--app-font-meta);
+  white-space: nowrap;
 }
 </style>

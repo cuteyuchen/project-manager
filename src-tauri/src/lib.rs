@@ -254,6 +254,7 @@ pub fn run() {
             runner::install_pm,
             runner::resolve_pm,
             runner::open_folder,
+            runner::open_path,
             runner::reveal_in_folder,
             runner::open_url,
             system::set_context_menu,

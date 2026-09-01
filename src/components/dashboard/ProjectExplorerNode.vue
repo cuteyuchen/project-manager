@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { ElMessage } from 'element-plus';
 import { useI18n } from 'vue-i18n';
 import type { GitFileStatus, Project, ProjectQuickCommand } from '../../types';
 import { api } from '../../api';
@@ -15,7 +16,7 @@ const HIDDEN_DIRS = new Set([
   'node_modules', 'dist', 'build', 'out', 'target', 'coverage', 'vendor', '.next', '.nuxt',
   '.cache', '.gradle', '.idea', '__pycache__',
 ]);
-const COMMON_CONFIG = /^(\.env(?:\..*)?|\.gitignore|\.editorconfig|\.npmrc|\.nvmrc|\.prettierrc|\.eslintrc)$/i;
+const COMMON_CONFIG = /^(\.env(?:\..*)?|\.gitignore|\.editorconfig|\.npmrc|\.nvmrc|\.prettierrc|\.eslintrc|\.gitattributes|\.gitmodules|\.dockerignore|\.prettierignore|\.eslintignore|\.stylelintignore)$/i;
 
 export interface ExplorerContextPayload {
   kind: 'project' | 'file';
@@ -71,7 +72,7 @@ const logicalChildren = computed(() =>
   children.value.filter(child => shouldAppendLogicalExplorerChild(props.project.path, child.path)),
 );
 const gitSummary = computed(() => gitStore.getSummary(props.project.id));
-const gitKnown = computed(() => props.project.id in gitStore.isGitRepo);
+const gitKnown = computed(() => gitStore.isGitRepo[props.project.id] === true);
 const gitDirtyCount = computed(() => gitStore.getTotalChanges(props.project.id));
 const running = computed(() => (projectStore.runningSubtreeCount[props.project.id] || 0) > 0);
 const quickCommands = computed(() => resolveProjectQuickCommands(props.project));
@@ -87,6 +88,13 @@ function quickCommandLabel(command: ProjectQuickCommand): string {
   if (command.type === 'script') return command.id;
   const custom = props.project.customCommands?.find(item => item.id === command.id);
   return custom ? getCustomCommandDisplayName(custom, t) : command.id;
+}
+
+function quickCommandMenuLabel(command: ProjectQuickCommand): string {
+  const label = quickCommandLabel(command);
+  return isQuickCommandRunning(command)
+    ? t('dashboard.stopCommand', { command: label })
+    : t('dashboard.runCommand', { command: label });
 }
 
 function toggleQuickCommand(command: ProjectQuickCommand): void {
@@ -143,6 +151,9 @@ async function loadEntries(): Promise<void> {
   try {
     entries.value = await api.workspaceReadDir(props.project.path, '');
     loaded.value = true;
+  } catch (error) {
+    console.error('Failed to load project Explorer entries', error);
+    ElMessage.error(String(error));
   } finally {
     loading.value = false;
   }
@@ -257,10 +268,53 @@ onBeforeUnmount(() => {
           <div class="i-mdi-dots-horizontal" />
         </button>
         <div v-if="moreOpen" class="explorer-action-menu explorer-more-menu" @click.stop>
-          <button type="button" class="explorer-menu-item" @click.stop="emitProjectAction('edit')"><div class="i-mdi-pencil-outline" /><span>编辑项目</span></button>
-          <button type="button" class="explorer-menu-item" @click.stop="emitProjectAction('scan')"><div class="i-mdi-file-tree-outline" /><span>{{ t('dashboard.manageSubProjects') }}</span></button>
-          <button type="button" class="explorer-menu-item" @click.stop="emitProjectAction('pin')"><div :class="project.pinned ? 'i-mdi-pin-off-outline' : 'i-mdi-pin-outline'" /><span>{{ project.pinned ? '取消置顶' : '置顶项目' }}</span></button>
-          <button type="button" class="explorer-menu-item danger" @click.stop="emitProjectAction('delete')"><div class="i-mdi-delete-outline" /><span>删除项目</span></button>
+          <template v-if="quickCommands.length > 0">
+            <button
+              v-for="command in quickCommands"
+              :key="`more:${command.type}:${command.id}`"
+              type="button"
+              class="explorer-menu-item"
+              :title="quickCommandMenuLabel(command)"
+              @click.stop="toggleQuickCommand(command)"
+            >
+              <div :class="isQuickCommandRunning(command) ? 'i-mdi-stop' : 'i-mdi-play'" />
+              <span>{{ quickCommandMenuLabel(command) }}</span>
+            </button>
+            <div class="explorer-menu-separator" />
+          </template>
+          <button v-if="gitKnown" type="button" class="explorer-menu-item" @click.stop="emitProjectAction('git')">
+            <div class="i-mdi-source-branch" />
+            <span>Git</span>
+          </button>
+          <button type="button" class="explorer-menu-item" @click.stop="emitProjectAction('terminal')">
+            <div class="i-mdi-console-line" />
+            <span>{{ t('dashboard.openInTerminal') }}</span>
+          </button>
+          <button type="button" class="explorer-menu-item" @click.stop="emitProjectAction('editor')">
+            <div class="i-mdi-code-tags" />
+            <span>{{ t('dashboard.openInEditor') }}</span>
+          </button>
+          <button type="button" class="explorer-menu-item" @click.stop="emitProjectAction('folder')">
+            <div class="i-mdi-folder-open-outline" />
+            <span>{{ t('dashboard.openFolder') }}</span>
+          </button>
+          <div class="explorer-menu-separator" />
+          <button type="button" class="explorer-menu-item" @click.stop="emitProjectAction('edit')">
+            <div class="i-mdi-pencil-outline" />
+            <span>{{ t('dashboard.editProject') }}</span>
+          </button>
+          <button type="button" class="explorer-menu-item" @click.stop="emitProjectAction('scan')">
+            <div class="i-mdi-file-tree-outline" />
+            <span>{{ t('dashboard.manageSubProjects') }}</span>
+          </button>
+          <button type="button" class="explorer-menu-item" @click.stop="emitProjectAction('pin')">
+            <div :class="project.pinned ? 'i-mdi-pin-off-outline' : 'i-mdi-pin-outline'" />
+            <span>{{ project.pinned ? t('dashboard.unpinProject') : t('dashboard.pinProject') }}</span>
+          </button>
+          <button type="button" class="explorer-menu-item danger" @click.stop="emitProjectAction('delete')">
+            <div class="i-mdi-delete-outline" />
+            <span>{{ t('dashboard.deleteProject') }}</span>
+          </button>
         </div>
       </div>
     </div>
@@ -504,7 +558,10 @@ onBeforeUnmount(() => {
   top: calc(100% + 3px);
   right: 0;
   z-index: 30;
-  min-width: 154px;
+  width: max-content;
+  min-width: 220px;
+  max-width: min(320px, calc(100vw - 16px));
+  overflow: hidden;
   padding: 3px;
   border: 1px solid var(--app-border);
   border-radius: 5px;
@@ -526,6 +583,23 @@ onBeforeUnmount(() => {
   font-size: var(--app-font-control);
   line-height: var(--app-line-height-control);
   text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.explorer-menu-item > div {
+  flex: 0 0 auto;
+}
+.explorer-menu-item > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.explorer-menu-separator {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--app-border);
 }
 .explorer-menu-item:hover {
   background: var(--app-primary-soft);

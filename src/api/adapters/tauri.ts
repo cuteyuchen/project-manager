@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
 import { open as openDialogFn, save as saveDialogFn } from '@tauri-apps/plugin-dialog';
-import { openPath as openPathFn, openUrl as openUrlFn } from '@tauri-apps/plugin-opener';
+import { openUrl as openUrlFn } from '@tauri-apps/plugin-opener';
 import type {
     PlatformAPI,
     ProjectInfo,
@@ -220,7 +220,7 @@ export class TauriAdapter implements PlatformAPI {
     }
 
     async openPath(path: string): Promise<void> {
-        return openPathFn(path);
+        return invoke('open_path', { path });
     }
 
     async revealInFolder(path: string): Promise<void> {

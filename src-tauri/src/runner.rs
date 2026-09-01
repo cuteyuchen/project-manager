@@ -1924,42 +1924,178 @@ fn validate_open_path(path: &str) -> Result<String, String> {
     Ok(target.to_string_lossy().into_owned())
 }
 
+fn validate_existing_absolute_path(path: &str) -> Result<std::path::PathBuf, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("Path is empty".to_string());
+    }
+    let target = std::path::Path::new(trimmed);
+    if !target.is_absolute() {
+        return Err(format!("Path must be absolute: {trimmed}"));
+    }
+    if !target.exists() {
+        return Err(format!("Path does not exist: {trimmed}"));
+    }
+    Ok(target.to_path_buf())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RevealTarget {
+    Select(std::path::PathBuf),
+    OpenDirectory(std::path::PathBuf),
+}
+
+fn nearest_existing_directory(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut cursor = path.to_path_buf();
+    loop {
+        if cursor.is_dir() {
+            return Some(cursor);
+        }
+        if !cursor.pop() {
+            return None;
+        }
+    }
+}
+
+fn resolve_reveal_target(path: &str) -> Result<RevealTarget, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("Path is empty".to_string());
+    }
+    let target = std::path::Path::new(trimmed);
+    if !target.is_absolute() {
+        return Err(format!("Path must be absolute: {trimmed}"));
+    }
+    if target.exists() {
+        return Ok(RevealTarget::Select(target.to_path_buf()));
+    }
+
+    let parent = target
+        .parent()
+        .and_then(nearest_existing_directory)
+        .ok_or_else(|| format!("Unable to find an existing parent directory for: {trimmed}"))?;
+    Ok(RevealTarget::OpenDirectory(parent))
+}
+
+#[cfg(target_os = "windows")]
+fn windows_reveal_args(target: &RevealTarget) -> Vec<std::ffi::OsString> {
+    match target {
+        RevealTarget::Select(path) => vec![
+            std::ffi::OsString::from("/select,"),
+            path.as_os_str().to_os_string(),
+        ],
+        RevealTarget::OpenDirectory(path) => vec![path.as_os_str().to_os_string()],
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn open_path_with_default_app(path: &std::path::Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let operation: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
+    let file: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let result = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            operation.as_ptr(),
+            file.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    let code = result as isize;
+    if code <= 32 {
+        return Err(format!(
+            "ShellExecuteW failed for {} (code {code})",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
 #[tauri::command]
-pub fn reveal_in_folder(path: String) -> Result<(), String> {
+pub fn open_path(path: String) -> Result<(), String> {
+    let target = validate_existing_absolute_path(&path)?;
+
     #[cfg(target_os = "windows")]
     {
-        let normalized = path.replace('/', "\\");
-        let file_path = std::path::Path::new(&normalized);
-        let target = if file_path.exists() {
-            normalized
-        } else {
-            file_path
-                .parent()
-                .ok_or_else(|| "Unable to determine file directory".to_string())?
-                .to_string_lossy()
-                .into_owned()
-        };
+        return open_path_with_default_app(&target);
+    }
 
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(target.as_os_str())
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open")
+            .arg(target.as_os_str())
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        let _ = target;
+        Err("Opening paths is not supported on this platform".to_string())
+    }
+}
+
+#[tauri::command]
+pub fn reveal_in_folder(path: String) -> Result<(), String> {
+    let target = resolve_reveal_target(&path)?;
+
+    #[cfg(target_os = "windows")]
+    {
+        let args = windows_reveal_args(&target);
         Command::new("explorer.exe")
-            .arg(format!("/select,\"{target}\""))
+            .args(args)
             .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map_err(|e| e.to_string())?;
     }
 
     #[cfg(target_os = "macos")]
-    Command::new("open")
-        .args(["-R", &path])
-        .spawn()
-        .map_err(|e| e.to_string())?;
+    match target {
+        RevealTarget::Select(path) => {
+            let path = path.to_string_lossy().into_owned();
+            Command::new("open")
+                .args(["-R", &path])
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        }
+        RevealTarget::OpenDirectory(path) => {
+            Command::new("open")
+                .arg(path.as_os_str())
+                .spawn()
+                .map_err(|e| e.to_string())?;
+        }
+    }
 
     #[cfg(target_os = "linux")]
     {
-        let parent = std::path::Path::new(&path)
-            .parent()
-            .ok_or_else(|| "Unable to determine file directory".to_string())?;
+        let parent = match target {
+            RevealTarget::Select(path) => path
+                .parent()
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or(path),
+            RevealTarget::OpenDirectory(path) => path,
+        };
         Command::new("xdg-open")
-            .arg(parent)
+            .arg(parent.as_os_str())
             .spawn()
             .map_err(|e| e.to_string())?;
     }
@@ -2261,6 +2397,78 @@ mod tests {
         assert_eq!(
             validate_open_path(&temp.path().to_string_lossy()).unwrap(),
             temp.path().to_string_lossy()
+        );
+    }
+
+    #[test]
+    fn open_path_rejects_empty_relative_and_missing_paths() {
+        assert!(validate_existing_absolute_path("").is_err());
+        assert!(validate_existing_absolute_path("relative/file.txt").is_err());
+        let temp = tempfile::tempdir().unwrap();
+        let missing = temp.path().join("missing.txt");
+        assert!(validate_existing_absolute_path(&missing.to_string_lossy()).is_err());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn open_path_accepts_existing_windows_paths_with_spaces_and_unicode() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("Project Folder 目录");
+        std::fs::create_dir(&directory).unwrap();
+        let file = directory.join("许可证 文件.txt");
+        std::fs::write(&file, b"text").unwrap();
+
+        assert_eq!(
+            validate_existing_absolute_path(&file.to_string_lossy()).unwrap(),
+            file
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_reveal_file_uses_separate_select_argument() {
+        let path = std::path::PathBuf::from(r"C:\Project Folder\中文\LICENSE");
+        let target = RevealTarget::Select(path.clone());
+        assert_eq!(
+            windows_reveal_args(&target),
+            vec![
+                std::ffi::OsString::from("/select,"),
+                path.as_os_str().to_os_string(),
+            ]
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_reveal_directory_selects_existing_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("src 目录");
+        std::fs::create_dir(&directory).unwrap();
+        let target = resolve_reveal_target(&directory.to_string_lossy()).unwrap();
+
+        assert_eq!(target, RevealTarget::Select(directory.clone()));
+        assert_eq!(
+            windows_reveal_args(&target),
+            vec![
+                std::ffi::OsString::from("/select,"),
+                directory.as_os_str().to_os_string(),
+            ]
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn reveal_missing_target_uses_nearest_existing_parent_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let directory = temp.path().join("src");
+        std::fs::create_dir(&directory).unwrap();
+        let missing = directory.join("removed").join("LICENSE");
+        let target = resolve_reveal_target(&missing.to_string_lossy()).unwrap();
+
+        assert_eq!(target, RevealTarget::OpenDirectory(directory.clone()));
+        assert_eq!(
+            windows_reveal_args(&target),
+            vec![directory.as_os_str().to_os_string()]
         );
     }
 

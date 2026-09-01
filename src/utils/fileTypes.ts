@@ -8,6 +8,26 @@ export const TEXT_EXTENSIONS = new Set([
   'npmrc', 'nvmrc', 'prettierrc', 'eslintrc',
 ]);
 
+const TEXT_BASENAMES = new Set([
+  'license', 'licence', 'copying', 'copyright', 'notice', 'authors', 'contributors',
+  'readme', 'changelog', 'changes', 'history', 'makefile', 'dockerfile', 'jenkinsfile',
+  'procfile', 'gemfile', 'rakefile', 'vagrantfile', 'brewfile', 'justfile', 'taskfile',
+  '.gitignore', '.editorconfig', '.npmrc', '.nvmrc', '.prettierrc', '.eslintrc',
+  '.gitattributes', '.gitmodules', '.dockerignore', '.prettierignore', '.eslintignore',
+  '.stylelintignore',
+]);
+
+const TEXT_BASENAME_VARIANTS = [
+  /^(?:license|licence)-(?:mit|apache(?:-2\.0)?|bsd(?:-[23]-clause)?|gpl(?:-[23](?:\.0)?)?|lgpl(?:-[23](?:\.0)?)?|mpl(?:-2\.0)?|isc|unlicense)$/i,
+  /^copying\.lesser$/i,
+  /^notice-third-party$/i,
+];
+
+function isTextBasename(name: string): boolean {
+  const lowerName = name.toLowerCase();
+  return TEXT_BASENAMES.has(lowerName) || TEXT_BASENAME_VARIANTS.some(pattern => pattern.test(name));
+}
+
 export type FileKind = 'image' | 'text' | 'binary';
 
 export function fileExtension(pathOrName: string): string {
@@ -23,7 +43,7 @@ export function isImageFile(pathOrName: string): boolean {
 export function isTextFile(pathOrName: string): boolean {
   const name = pathOrName.replace(/\\/g, '/').split('/').pop() || '';
   if (/^\.env(?:\.|$)/i.test(name)) return true;
-  if (name === '.gitignore' || name === '.editorconfig' || name === '.npmrc' || name === '.nvmrc') return true;
+  if (isTextBasename(name)) return true;
   return TEXT_EXTENSIONS.has(fileExtension(name));
 }
 

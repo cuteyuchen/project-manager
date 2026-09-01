@@ -74,6 +74,15 @@ function projectById(id: string | null | undefined): Project | null {
   return id ? projectStore.projects.find(project => project.id === id) || null : null;
 }
 
+function isGitProject(project: Project): boolean {
+  return gitStore.isGitRepo[project.id] === true;
+}
+
+function reportExplorerError(operation: string, error: unknown): void {
+  console.error(`Explorer ${operation} failed`, error);
+  ElMessage.error(`${t('common.error')}: ${String(error)}`);
+}
+
 function expandTargetAncestors(projectId: string | null): void {
   const root = rootProject.value;
   if (!root) return;
@@ -183,16 +192,16 @@ function selectFile(project: Project, relativePath: string): void {
 async function openFile(project: Project, relativePath: string): Promise<void> {
   selectProject(project);
   selectFile(project, relativePath);
-  if (fileKind(relativePath) === 'binary') {
-    await api.openPath(joinAbsolutePath(project.path, relativePath));
-    return;
-  }
   try {
+    if (fileKind(relativePath) === 'binary') {
+      await api.openPath(joinAbsolutePath(project.path, relativePath));
+      return;
+    }
     const opening = editorStore.openFile(project, relativePath);
     projectStore.requestRightTab('editor', project.id);
     await opening;
   } catch (error) {
-    ElMessage.error(String(error));
+    reportExplorerError('open file', error);
   }
 }
 
@@ -259,9 +268,9 @@ async function createItem(kind: 'file' | 'directory'): Promise<void> {
     if (kind === 'file') await api.workspaceCreateFile(payload.project.path, relativePath);
     else await api.workspaceCreateDirectory(payload.project.path, relativePath);
     refreshToken.value += 1;
-    ElMessage.success('已创建');
+    ElMessage.success(t('common.created'));
   } catch (error) {
-    ElMessage.error(String(error));
+    reportExplorerError(kind === 'file' ? 'create file' : 'create folder', error);
   }
 }
 
@@ -278,9 +287,9 @@ async function renameItem(): Promise<void> {
     await api.workspaceRename(payload.project.path, from, to);
     await editorStore.renamePath(payload.project.id, from, to, payload.project.path);
     refreshToken.value += 1;
-    ElMessage.success('已重命名');
+    ElMessage.success(t('common.renamed'));
   } catch (error) {
-    ElMessage.error(String(error));
+    reportExplorerError('rename item', error);
   }
 }
 
@@ -289,8 +298,13 @@ async function trashItem(): Promise<void> {
   if (!menu) return;
   const { payload } = menu;
   closeContextMenu();
-  const mode = await api.workspaceTrashMode();
-  const permanent = mode === 'permanent';
+  let permanent = false;
+  try {
+    permanent = (await api.workspaceTrashMode()) === 'permanent';
+  } catch (error) {
+    reportExplorerError('read delete mode', error);
+    return;
+  }
   try {
     await ElMessageBox.confirm(
       permanent ? `「${payload.name}」将被永久删除，确定继续吗？` : `确定将「${payload.name}」移到回收站吗？`,
@@ -304,9 +318,9 @@ async function trashItem(): Promise<void> {
     await api.workspaceTrash(payload.project.path, payload.relativePath);
     editorStore.markMissing(payload.project.id, payload.relativePath);
     refreshToken.value += 1;
-    ElMessage.success('已删除');
+    ElMessage.success(t('common.deleted'));
   } catch (error) {
-    ElMessage.error(String(error));
+    reportExplorerError('delete item', error);
   }
 }
 
@@ -317,9 +331,9 @@ async function copyPath(full: boolean): Promise<void> {
   closeContextMenu();
   try {
     await navigator.clipboard.writeText(path);
-    ElMessage.success('路径已复制');
+    ElMessage.success(t('dashboard.pathCopied'));
   } catch (error) {
-    ElMessage.error(String(error));
+    reportExplorerError('copy path', error);
   }
 }
 
@@ -327,7 +341,11 @@ async function revealItem(): Promise<void> {
   const payload = contextMenu.value?.payload;
   if (!payload) return;
   closeContextMenu();
-  await api.revealInFolder(joinAbsolutePath(payload.project.path, payload.relativePath));
+  try {
+    await api.revealInFolder(joinAbsolutePath(payload.project.path, payload.relativePath));
+  } catch (error) {
+    reportExplorerError('reveal item', error);
+  }
 }
 
 async function externalOpen(): Promise<void> {
@@ -335,8 +353,12 @@ async function externalOpen(): Promise<void> {
   if (!payload) return;
   closeContextMenu();
   const target = joinAbsolutePath(payload.project.path, payload.relativePath);
-  if (payload.isDirectory) await api.openFolder(target);
-  else await api.openPath(target);
+  try {
+    if (payload.isDirectory) await api.openFolder(target);
+    else await api.openPath(target);
+  } catch (error) {
+    reportExplorerError('open external item', error);
+  }
 }
 
 async function editorOpen(): Promise<void> {
@@ -491,36 +513,110 @@ onUnmounted(() => {
     <div
       v-if="contextMenu"
       ref="contextMenuRef"
-      class="workspace-context-menu fixed min-w-[230px] py-1"
+      class="workspace-context-menu fixed py-1"
       :style="contextMenuStyle"
       @mousedown.stop
       @click.stop
     >
       <template v-if="contextMenu.payload.kind === 'project'">
-        <button type="button" class="context-item" @click="handleContextProjectAction('git')"><div class="i-mdi-source-branch" />Git</button>
-        <button type="button" class="context-item" @click="handleContextProjectAction('terminal')"><div class="i-mdi-console-line" />终端</button>
-        <button type="button" class="context-item" @click="handleContextProjectAction('editor')"><div class="i-mdi-code-tags" />外部编辑器</button>
-        <button type="button" class="context-item" @click="handleContextProjectAction('folder')"><div class="i-mdi-folder-open-outline" />文件夹</button>
+        <button v-if="isGitProject(contextMenu.payload.project)" type="button" class="context-item" @click="handleContextProjectAction('git')">
+          <div class="i-mdi-source-branch" />
+          <span>Git</span>
+        </button>
+        <button type="button" class="context-item" @click="handleContextProjectAction('terminal')">
+          <div class="i-mdi-console-line" />
+          <span>{{ t('dashboard.openInTerminal') }}</span>
+        </button>
+        <button type="button" class="context-item" @click="handleContextProjectAction('editor')">
+          <div class="i-mdi-code-tags" />
+          <span>{{ t('dashboard.openInEditor') }}</span>
+        </button>
+        <button type="button" class="context-item" @click="handleContextProjectAction('folder')">
+          <div class="i-mdi-folder-open-outline" />
+          <span>{{ t('dashboard.openFolder') }}</span>
+        </button>
         <div class="context-separator" />
-        <button type="button" class="context-item" @click="handleContextProjectAction('edit')"><div class="i-mdi-pencil-outline" />编辑项目</button>
-        <button type="button" class="context-item" @click="handleContextProjectAction('scan')"><div class="i-mdi-file-tree-outline" />{{ t('dashboard.manageSubProjects') }}</button>
-        <button type="button" class="context-item" @click="handleContextProjectAction('pin')"><div :class="contextMenu.payload.project.pinned ? 'i-mdi-pin-off-outline' : 'i-mdi-pin-outline'" />{{ contextMenu.payload.project.pinned ? '取消置顶' : '置顶项目' }}</button>
-        <button type="button" class="context-item danger" @click="handleContextProjectAction('delete')"><div class="i-mdi-delete-outline" />删除项目</button>
+        <button type="button" class="context-item" @click="createItem('file')">
+          <div class="i-mdi-file-plus-outline" />
+          <span>{{ t('dashboard.newFile') }}</span>
+        </button>
+        <button type="button" class="context-item" @click="createItem('directory')">
+          <div class="i-mdi-folder-plus-outline" />
+          <span>{{ t('dashboard.newFolder') }}</span>
+        </button>
+        <div class="context-separator" />
+        <button type="button" class="context-item" @click="handleContextProjectAction('edit')">
+          <div class="i-mdi-pencil-outline" />
+          <span>{{ t('dashboard.editProject') }}</span>
+        </button>
+        <button type="button" class="context-item" @click="handleContextProjectAction('scan')">
+          <div class="i-mdi-file-tree-outline" />
+          <span>{{ t('dashboard.manageSubProjects') }}</span>
+        </button>
+        <button type="button" class="context-item" @click="handleContextProjectAction('pin')">
+          <div :class="contextMenu.payload.project.pinned ? 'i-mdi-pin-off-outline' : 'i-mdi-pin-outline'" />
+          <span>{{ contextMenu.payload.project.pinned ? t('dashboard.unpinProject') : t('dashboard.pinProject') }}</span>
+        </button>
+        <button type="button" class="context-item danger" @click="handleContextProjectAction('delete')">
+          <div class="i-mdi-delete-outline" />
+          <span>{{ t('dashboard.deleteProject') }}</span>
+        </button>
       </template>
       <template v-else>
-        <button type="button" class="context-item" @click="contextMenu.payload.isDirectory ? externalOpen() : editorOpen()"><div class="i-mdi-folder-open-outline" />打开</button>
-        <button v-if="!contextMenu.payload.isDirectory" type="button" class="context-item" @click="editorOpen"><div class="i-mdi-file-edit-outline" />在轻量编辑器打开</button>
+        <button
+          type="button"
+          class="context-item"
+          :title="t('dashboard.open')"
+          @click="contextMenu.payload.isDirectory || fileKind(contextMenu.payload.relativePath) === 'binary' ? externalOpen() : editorOpen()"
+        >
+          <div :class="contextMenu.payload.isDirectory ? 'i-mdi-folder-open-outline' : 'i-mdi-file-open-outline'" />
+          <span>{{ t('dashboard.open') }}</span>
+        </button>
+        <button
+          v-if="!contextMenu.payload.isDirectory && fileKind(contextMenu.payload.relativePath) !== 'binary'"
+          type="button"
+          class="context-item"
+          :title="t('dashboard.openInLightweightEditor')"
+          @click="editorOpen"
+        >
+          <div class="i-mdi-file-edit-outline" />
+          <span>{{ t('dashboard.openInLightweightEditor') }}</span>
+        </button>
         <div class="context-separator" />
-        <button type="button" class="context-item" @click="createItem('file')"><div class="i-mdi-file-plus-outline" />新建文件</button>
-        <button type="button" class="context-item" @click="createItem('directory')"><div class="i-mdi-folder-plus-outline" />新建文件夹</button>
+        <button type="button" class="context-item" @click="createItem('file')">
+          <div class="i-mdi-file-plus-outline" />
+          <span>{{ t('dashboard.newFile') }}</span>
+        </button>
+        <button type="button" class="context-item" @click="createItem('directory')">
+          <div class="i-mdi-folder-plus-outline" />
+          <span>{{ t('dashboard.newFolder') }}</span>
+        </button>
         <div class="context-separator" />
-        <button type="button" class="context-item" @click="renameItem"><div class="i-mdi-rename-box-outline" />重命名</button>
-        <button type="button" class="context-item danger" @click="trashItem"><div class="i-mdi-delete-outline" />删除</button>
+        <button type="button" class="context-item" @click="renameItem">
+          <div class="i-mdi-rename-box-outline" />
+          <span>{{ t('common.rename') }}</span>
+        </button>
+        <button type="button" class="context-item danger" @click="trashItem">
+          <div class="i-mdi-delete-outline" />
+          <span>{{ t('common.delete') }}</span>
+        </button>
         <div class="context-separator" />
-        <button type="button" class="context-item" @click="copyPath(false)"><div class="i-mdi-content-copy" />复制相对路径</button>
-        <button type="button" class="context-item" @click="copyPath(true)"><div class="i-mdi-content-copy" />复制完整路径</button>
-        <button type="button" class="context-item" @click="revealItem"><div class="i-mdi-folder-search-outline" />在文件夹中显示</button>
-        <button type="button" class="context-item" @click="externalOpen"><div class="i-mdi-open-in-new" />用外部程序打开</button>
+        <button type="button" class="context-item" @click="copyPath(false)">
+          <div class="i-mdi-content-copy" />
+          <span>{{ t('dashboard.copyRelativePath') }}</span>
+        </button>
+        <button type="button" class="context-item" @click="copyPath(true)">
+          <div class="i-mdi-content-copy" />
+          <span>{{ t('dashboard.copyAbsolutePath') }}</span>
+        </button>
+        <button type="button" class="context-item" :title="t('dashboard.revealInFolder')" @click="revealItem">
+          <div class="i-mdi-folder-search-outline" />
+          <span>{{ t('dashboard.revealInFolder') }}</span>
+        </button>
+        <button type="button" class="context-item" :title="t('dashboard.openWithDefaultApp')" @click="externalOpen">
+          <div class="i-mdi-open-in-new" />
+          <span>{{ t('dashboard.openWithDefaultApp') }}</span>
+        </button>
       </template>
     </div>
   </Teleport>
@@ -603,6 +699,10 @@ onUnmounted(() => {
 }
 .workspace-context-menu {
   z-index: 5000;
+  width: max-content;
+  min-width: 230px;
+  max-width: min(320px, calc(100vw - 16px));
+  overflow: hidden;
   border: 1px solid var(--app-border);
   border-radius: 6px;
   background: var(--app-surface-raised, var(--app-surface));
@@ -621,6 +721,18 @@ onUnmounted(() => {
   color: inherit;
   font-size: var(--app-font-control);
   text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.context-item > div {
+  flex: 0 0 auto;
+}
+.context-item > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .context-item:hover {
   background: var(--app-primary-soft);

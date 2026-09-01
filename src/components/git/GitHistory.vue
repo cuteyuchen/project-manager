@@ -641,30 +641,30 @@ watch(() => props.filePath, () => {
         @click.stop
       >
         <button type="button" class="ctx-item" @click="copyText(ctxMenu.commit.hash, 'git.copyHashSuccess')">
-          {{ t('git.copyHash') }}
+          <span>{{ t('git.copyHash') }}</span>
         </button>
         <button type="button" class="ctx-item" @click="copyText(ctxMenu.commit.message, 'git.copyCommitMessageSuccess')">
-          {{ t('git.copyCommitMessage') }}
+          <span>{{ t('git.copyCommitMessage') }}</span>
         </button>
         <div class="ctx-sep" />
         <button type="button" class="ctx-item" @click="createBranchFromCommit(ctxMenu.commit)">
-          {{ t('git.createBranch') }}
+          <span>{{ t('git.createBranch') }}</span>
         </button>
         <button type="button" class="ctx-item" @click="cherryPickCommit(ctxMenu.commit)">
-          {{ t('git.cherryPick') }}
+          <span>{{ t('git.cherryPick') }}</span>
         </button>
         <button type="button" class="ctx-item" @click="revertSelectedCommit(ctxMenu.commit)">
-          {{ t('git.revertCommit') }}
+          <span>{{ t('git.revertCommit') }}</span>
         </button>
         <div class="ctx-sep" />
         <button type="button" class="ctx-item" @click="resetToCommit(ctxMenu.commit, 'soft')">
-          {{ t('git.resetSoft') }}
+          <span>{{ t('git.resetSoft') }}</span>
         </button>
         <button type="button" class="ctx-item" @click="resetToCommit(ctxMenu.commit, 'mixed')">
-          {{ t('git.resetMixed') }}
+          <span>{{ t('git.resetMixed') }}</span>
         </button>
         <button type="button" class="ctx-item danger" @click="resetToCommit(ctxMenu.commit, 'hard')">
-          {{ t('git.resetHard') }}
+          <span>{{ t('git.resetHard') }}</span>
         </button>
       </div>
     </Teleport>
@@ -673,14 +673,32 @@ watch(() => props.filePath, () => {
 
 <style scoped>
 .ctx-item {
-  display: block;
+  display: flex;
+  align-items: center;
   width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   text-align: left;
   border: none;
   background: transparent;
   padding: 6px 12px;
   cursor: pointer;
   color: var(--app-text-secondary, #475569);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.git-history-ctx {
+  width: max-content;
+  min-width: 220px;
+  max-width: min(320px, calc(100vw - 16px));
+  overflow: hidden;
+}
+.ctx-item > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .ctx-item:hover {
   background: var(--app-primary-soft, #dbeafe);

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
+import { ElMessage } from 'element-plus';
 import type { GitFileStatus, Project } from '../../types';
 import { api } from '../../api';
 import { useProjectStore } from '../../stores/project';
@@ -13,7 +14,7 @@ const HIDDEN_DIRS = new Set([
   'node_modules', 'dist', 'build', 'out', 'target', 'coverage', 'vendor', '.next', '.nuxt',
   '.cache', '.gradle', '.idea', '__pycache__',
 ]);
-const COMMON_CONFIG = /^(\.env(?:\..*)?|\.gitignore|\.editorconfig|\.npmrc|\.nvmrc|\.prettierrc|\.eslintrc)$/i;
+const COMMON_CONFIG = /^(\.env(?:\..*)?|\.gitignore|\.editorconfig|\.npmrc|\.nvmrc|\.prettierrc|\.eslintrc|\.gitattributes|\.gitmodules|\.dockerignore|\.prettierignore|\.eslintignore|\.stylelintignore)$/i;
 
 const props = defineProps<{
   project: Project;
@@ -91,6 +92,9 @@ async function loadChildren(): Promise<void> {
   try {
     children.value = await api.workspaceReadDir(props.project.path, fullPath.value);
     loaded.value = true;
+  } catch (error) {
+    console.error('Failed to load Explorer directory', error);
+    ElMessage.error(String(error));
   } finally {
     loading.value = false;
   }

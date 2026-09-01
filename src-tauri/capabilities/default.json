@@ -20,7 +20,6 @@
     "core:window:allow-start-dragging",
     "core:event:allow-emit-to",
     "opener:default",
-    "opener:allow-open-path",
     "updater:default",
     "process:allow-restart",
     "dialog:default",

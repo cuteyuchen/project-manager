@@ -259,7 +259,7 @@ async function handleAiGenerate() {
           v-if="aiEnabled"
           @click="handleAiGenerate"
           :disabled="aiGenerating || hasConflicts"
-          class="git-ai-button app-text-control flex items-center gap-0.5 px-1.5 py-0.5 rounded-full transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          class="git-ai-button app-outline-action app-text-control flex items-center gap-0.5 px-1.5 py-0.5 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           :title="t('git.aiGenerate')"
         >
           <div :class="aiGenerating ? 'i-mdi-loading animate-spin' : 'i-mdi-auto-fix'" class="text-xs" />
@@ -347,12 +347,8 @@ async function handleAiGenerate() {
 }
 
 .git-ai-button {
-  background: color-mix(in srgb, var(--app-primary) 10%, transparent);
+  appearance: none;
   color: var(--app-primary);
-}
-
-.git-ai-button:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--app-primary) 16%, transparent);
 }
 
 .git-staged-pill {
@@ -427,7 +423,9 @@ async function handleAiGenerate() {
   position: absolute;
   right: 0;
   bottom: calc(100% + 4px);
-  min-width: 160px;
+  width: max-content;
+  min-width: 220px;
+  max-width: min(320px, calc(100vw - 16px));
   padding: 4px;
   border-radius: 8px;
   border: 1px solid var(--app-border);
@@ -437,9 +435,14 @@ async function handleAiGenerate() {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  overflow: hidden;
 }
 
 .git-commit-menu button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  box-sizing: border-box;
   border: none;
   background: transparent;
   text-align: left;
@@ -448,6 +451,9 @@ async function handleAiGenerate() {
   font-size: var(--app-font-control);
   color: var(--app-text-secondary);
   cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .git-commit-menu button:hover:not(:disabled) {
