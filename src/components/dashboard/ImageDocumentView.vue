@@ -88,7 +88,7 @@ function onImageLoad(event: Event): void {
   border-radius: 4px;
   background: var(--app-surface-soft);
   color: inherit;
-  font-size: 11px;
+  font-size: var(--app-font-control);
 }
 .image-tool-btn:hover,
 .image-tool-btn.active {
@@ -97,7 +97,7 @@ function onImageLoad(event: Event): void {
 }
 .image-document-meta {
   margin-left: auto;
-  font-size: 11px;
+  font-size: var(--app-font-meta);
   color: var(--app-text-muted);
 }
 .image-document-canvas {

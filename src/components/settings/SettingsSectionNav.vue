@@ -55,7 +55,7 @@ const emit = defineEmits<{
 .settings-section-nav-title {
   padding: 2px 10px 10px;
   color: var(--app-text-muted);
-  font-size: 11px;
+  font-size: var(--app-font-meta);
   font-weight: 700;
   letter-spacing: 0.04em;
 }
@@ -102,7 +102,7 @@ const emit = defineEmits<{
 .settings-section-nav-icon {
   flex: 0 0 auto;
   width: 18px;
-  font-size: 17px;
+  font-size: var(--app-font-section-title);
 }
 
 .settings-section-nav-label {

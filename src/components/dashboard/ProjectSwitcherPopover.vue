@@ -295,7 +295,7 @@ function handleRowKeydown(event: KeyboardEvent, project: Project): void {
   align-items: center;
   min-width: 0;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--app-font-control);
   font-weight: 600;
 }
 .project-switcher-kind {
@@ -304,7 +304,7 @@ function handleRowKeydown(event: KeyboardEvent, project: Project): void {
   border: 1px solid color-mix(in srgb, var(--app-primary) 22%, transparent);
   border-radius: var(--app-radius-xs);
   color: var(--app-primary);
-  font-size: 9px;
+  font-size: var(--app-font-caption);
   font-weight: 600;
 }
 .project-switcher-row-path {
@@ -312,7 +312,7 @@ function handleRowKeydown(event: KeyboardEvent, project: Project): void {
   overflow: hidden;
   color: var(--app-text-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 10px;
+  font-size: var(--app-font-meta);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -323,12 +323,12 @@ function handleRowKeydown(event: KeyboardEvent, project: Project): void {
   gap: 5px;
   flex-shrink: 0;
   min-width: 18px;
-  font-size: 10px;
+  font-size: var(--app-font-meta);
   font-weight: 700;
 }
 .project-switcher-current {
   color: var(--app-primary);
-  font-size: 15px;
+  font-size: var(--app-font-control);
 }
 .project-switcher-running {
   width: 6px;
@@ -346,7 +346,8 @@ function handleRowKeydown(event: KeyboardEvent, project: Project): void {
 .project-switcher-empty {
   padding: 20px 8px;
   color: var(--app-text-muted);
-  font-size: 12px;
+  font-size: var(--app-font-meta);
+  line-height: var(--app-line-height-caption);
   text-align: center;
 }
 </style>

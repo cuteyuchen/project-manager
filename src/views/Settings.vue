@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, shallowRef, toRaw, useTemplateRef } from 'vue';
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, shallowRef, toRaw, useTemplateRef, watch } from 'vue';
 import { useSettingsStore } from '../stores/settings';
 import { useProjectStore } from '../stores/project';
 import { useNodeStore } from '../stores/node';
@@ -25,6 +25,7 @@ import {
   normalizeShortcut,
 } from '../utils/shortcut';
 import { createImageDataUrl } from '../utils/backgroundImage';
+import { normalizeUiSize } from '../utils/uiSize';
 import ShortcutRecorder from '../components/ShortcutRecorder.vue';
 import SettingsSectionNav from '../components/settings/SettingsSectionNav.vue';
 
@@ -197,6 +198,14 @@ const deepClone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 const draft = ref<Settings>(normalizeDefaultTerminalId(normalizeAiSettings(deepClone(toRaw(settingsStore.settings)))));
 const isDirty = computed(() => JSON.stringify(draft.value) !== JSON.stringify(settingsStore.settings));
 
+// 界面大小是即时设置：视觉档位立即落到根节点并写入现有 settings，其他设置仍保留草稿保存流程。
+watch(() => draft.value.uiSize, value => {
+  const normalized = normalizeUiSize(value);
+  if (draft.value.uiSize !== normalized) draft.value.uiSize = normalized;
+  if (settingsStore.settings.uiSize !== normalized) settingsStore.settings.uiSize = normalized;
+  settingsStore.applyUiSize();
+});
+
 const importSummary = computed(() => {
   const plan = importPlan.value;
   return {
@@ -213,6 +222,7 @@ function resetDraft() {
 }
 
 function handleSave() {
+  draft.value.uiSize = normalizeUiSize(draft.value.uiSize);
   normalizeQuickSearchAppShortcut();
   normalizeActionShortcuts();
   if (!isPlugin) {
@@ -593,13 +603,19 @@ function normalizeProject(project: any): Project | null {
 
 function normalizeSettingsPayload(settings: any): Settings {
   const hasCustomTerminals = Boolean(settings) && Object.prototype.hasOwnProperty.call(settings, 'customTerminals');
-  return normalizeDefaultTerminalId(normalizeAiSettings({
+  const merged = {
     ...deepClone(toRaw(settingsStore.settings)),
     ...settings,
     customTerminals: hasCustomTerminals
       ? normalizeTerminalConfigs(settings?.customTerminals)
       : deepClone(toRaw(settingsStore.settings.customTerminals || [])),
-  }));
+  };
+  if (Object.prototype.hasOwnProperty.call(settings || {}, 'uiSize')) {
+    merged.uiSize = normalizeUiSize(settings.uiSize);
+  } else {
+    merged.uiSize = normalizeUiSize(merged.uiSize);
+  }
+  return normalizeDefaultTerminalId(normalizeAiSettings(merged));
 }
 
 function normalizeCustomNode(node: any): NodeVersion | null {
@@ -768,6 +784,7 @@ function buildImportPlan(payload: any): ImportPlan {
     { key: 'customTerminals', label: t('settings.customTerminals') },
     { key: 'locale', label: t('settings.language') },
     { key: 'themeMode', label: t('settings.theme') },
+    { key: 'uiSize', label: t('settings.uiSize') },
     { key: 'backgroundImagePath', label: t('settings.backgroundImage') },
     { key: 'backgroundImageOpacity', label: t('settings.backgroundImageOpacity') },
     { key: 'autoUpdate', label: t('settings.autoUpdate') },
@@ -1090,6 +1107,27 @@ function describeAiTestError(error: any): string {
               { label: t('settings.themeMode.system'), value: 'auto' },
             ]"
           />
+        </div>
+        <div class="settings-row-line settings-ui-size-row">
+          <div>
+            <div class="settings-row-title">{{ t('settings.uiSize') }}</div>
+            <div class="settings-row-desc">{{ t('settings.uiSizeHint') }}</div>
+          </div>
+          <div class="settings-ui-size-control">
+            <el-segmented
+              v-model="draft.uiSize"
+              :options="[
+                { label: t('settings.uiSizeMode.compact'), value: 'compact' },
+                { label: t('settings.uiSizeMode.standard'), value: 'standard' },
+                { label: t('settings.uiSizeMode.comfortable'), value: 'comfortable' },
+              ]"
+            />
+            <div class="settings-ui-size-descriptions" aria-live="polite">
+              <span>{{ t('settings.uiSizeDescription.compact') }}</span>
+              <span>{{ t('settings.uiSizeDescription.standard') }}</span>
+              <span>{{ t('settings.uiSizeDescription.comfortable') }}</span>
+            </div>
+          </div>
         </div>
         <div class="settings-row-line settings-background-row">
           <div>
@@ -1591,7 +1629,7 @@ function describeAiTestError(error: any): string {
       <div v-if="importPlan" class="space-y-5 import-dialog-content">
         <div class="panel">
           <div class="setting-label">{{ t('settings.importSource') }}</div>
-          <div class="text-xs text-slate-500 dark:text-slate-400 mt-1">{{ importSourceName }}</div>
+          <div class="app-text-meta text-slate-500 dark:text-slate-400 mt-1">{{ importSourceName }}</div>
         </div>
         <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
           <div class="summary-tile"><div class="summary-label">{{ t('settings.importProjectsAdded') }}</div><div class="summary-value">{{ importSummary.addedProjects }}</div></div>
@@ -1601,7 +1639,7 @@ function describeAiTestError(error: any): string {
           <div class="summary-tile"><div class="summary-label">{{ t('settings.importSettingsConflict') }}</div><div class="summary-value">{{ importSummary.conflictedSettings }}</div></div>
         </div>
         <div v-if="importSummary.conflictedProjects + importSummary.conflictedNodes + importSummary.conflictedSettings > 0" class="flex items-center gap-2">
-          <span class="text-xs text-slate-500 dark:text-slate-400">{{ t('settings.importBatchApply') }}</span>
+          <span class="app-text-meta text-slate-500 dark:text-slate-400">{{ t('settings.importBatchApply') }}</span>
           <el-button size="small" @click="applyAllKeep">{{ t('settings.importApplyAllCurrent') }}</el-button>
           <el-button size="small" type="primary" @click="applyAllIncoming">{{ t('settings.importApplyAllIncoming') }}</el-button>
         </div>
@@ -1611,7 +1649,7 @@ function describeAiTestError(error: any): string {
             <div class="flex flex-col gap-3 mb-3 md:flex-row md:items-start md:justify-between">
               <div>
                 <div class="font-medium text-slate-700 dark:text-slate-200">{{ conflict.existing.name }}</div>
-                <div class="text-xs text-slate-500 dark:text-slate-400 font-mono break-all">{{ conflict.existing.path }}</div>
+                <div class="app-text-meta text-slate-500 dark:text-slate-400 font-mono break-all">{{ conflict.existing.path }}</div>
               </div>
               <el-radio-group v-model="conflict.choice" class="w-full md:w-auto">
                 <el-radio-button label="keep">{{ t('settings.importKeepCurrent') }}</el-radio-button>
@@ -1620,7 +1658,7 @@ function describeAiTestError(error: any): string {
             </div>
             <div class="space-y-2">
               <div v-for="diff in conflict.diffs" :key="diff.key" class="space-y-2">
-                <div class="text-xs font-semibold text-slate-500 dark:text-slate-300">{{ diff.label }}</div>
+                <div class="app-text-meta font-semibold text-slate-500 dark:text-slate-300">{{ diff.label }}</div>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
                   <div class="diff-box"><div class="diff-title">{{ t('settings.importCurrent') }}</div><pre class="diff-content">{{ diff.current }}</pre></div>
                   <div class="diff-box"><div class="diff-title">{{ t('settings.importIncoming') }}</div><pre class="diff-content">{{ diff.incoming }}</pre></div>
@@ -1635,7 +1673,7 @@ function describeAiTestError(error: any): string {
             <div class="flex flex-col gap-3 mb-3 md:flex-row md:items-start md:justify-between">
               <div>
                 <div class="font-medium text-slate-700 dark:text-slate-200">{{ conflict.existing.version || conflict.incoming.version }}</div>
-                <div class="text-xs text-slate-500 dark:text-slate-400 font-mono break-all">{{ conflict.existing.path }}</div>
+                <div class="app-text-meta text-slate-500 dark:text-slate-400 font-mono break-all">{{ conflict.existing.path }}</div>
               </div>
               <el-radio-group v-model="conflict.choice" class="w-full md:w-auto">
                 <el-radio-button label="keep">{{ t('settings.importKeepCurrent') }}</el-radio-button>
@@ -1644,7 +1682,7 @@ function describeAiTestError(error: any): string {
             </div>
             <div class="space-y-2">
               <div v-for="diff in conflict.diffs" :key="diff.key" class="space-y-2">
-                <div class="text-xs font-semibold text-slate-500 dark:text-slate-300">{{ diff.label }}</div>
+                <div class="app-text-meta font-semibold text-slate-500 dark:text-slate-300">{{ diff.label }}</div>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
                   <div class="diff-box"><div class="diff-title">{{ t('settings.importCurrent') }}</div><pre class="diff-content">{{ diff.current }}</pre></div>
                   <div class="diff-box"><div class="diff-title">{{ t('settings.importIncoming') }}</div><pre class="diff-content">{{ diff.incoming }}</pre></div>
@@ -1708,7 +1746,7 @@ function describeAiTestError(error: any): string {
   grid-template-columns: 212px minmax(0, 1fr);
   align-items: stretch;
   flex: 1 1 0;
-  gap: 24px;
+  gap: var(--app-toolbar-gap);
   min-height: 0;
   height: 0;
   overflow: hidden;
@@ -1724,7 +1762,7 @@ function describeAiTestError(error: any): string {
 
 .settings-title {
   margin: 0;
-  font-size: 24px;
+  font-size: var(--app-font-page-title);
   line-height: 1.2;
   font-weight: 800;
   color: var(--app-text);
@@ -1734,7 +1772,7 @@ function describeAiTestError(error: any): string {
   border-radius: 999px;
   background: color-mix(in srgb, var(--app-warning) 12%, transparent);
   padding: 3px 10px;
-  font-size: 12px;
+  font-size: var(--app-font-caption);
   font-weight: 600;
   color: var(--app-warning);
 }
@@ -1752,7 +1790,7 @@ function describeAiTestError(error: any): string {
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-lg);
   background: var(--app-surface);
-  padding: 12px 18px 14px;
+  padding: var(--app-row-padding-y) var(--app-panel-padding) calc(var(--app-row-padding-y) + 2px);
   box-shadow: var(--app-shadow-sm);
 }
 
@@ -1767,7 +1805,8 @@ function describeAiTestError(error: any): string {
   margin-bottom: 0;
   border-bottom: 1px solid var(--app-border);
   padding-bottom: 10px;
-  font-size: 18px;
+  font-size: var(--app-font-section-title);
+  line-height: 1.35;
   font-weight: 700;
   color: var(--app-text);
 }
@@ -1792,8 +1831,8 @@ function describeAiTestError(error: any): string {
   align-items: center;
   justify-content: space-between;
   gap: 18px;
-  min-height: 56px;
-  padding: 8px 0;
+  min-height: calc(var(--app-control-height) + 16px);
+  padding: var(--app-row-padding-y) 0;
 }
 
 .settings-section-title + .settings-row-line {
@@ -1825,7 +1864,7 @@ function describeAiTestError(error: any): string {
   width: 72px;
   flex: 0 0 auto;
   color: var(--app-text-secondary);
-  font-size: 12px;
+  font-size: var(--app-font-control);
 }
 
 .shortcut-tab-row :deep(.shortcut-recorder-wrap) {
@@ -1868,7 +1907,7 @@ function describeAiTestError(error: any): string {
   align-items: center;
   gap: 10px;
   margin-top: 10px;
-  font-size: 12px;
+  font-size: var(--app-font-meta);
   color: var(--app-text-secondary);
 }
 
@@ -1877,7 +1916,8 @@ function describeAiTestError(error: any): string {
   overflow: hidden;
   color: var(--app-text-muted);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--app-font-meta);
+  line-height: var(--app-line-height-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1893,15 +1933,16 @@ function describeAiTestError(error: any): string {
 }
 
 .settings-row-title {
-  font-size: 14px;
+  font-size: var(--app-font-body);
+  line-height: var(--app-line-height-body);
   font-weight: 500;
   color: var(--app-text);
 }
 
 .settings-row-desc {
   margin-top: 2px;
-  font-size: 13px;
-  line-height: 1.4;
+  font-size: var(--app-font-control);
+  line-height: var(--app-line-height-control);
   color: var(--app-text-secondary);
 }
 
@@ -1954,7 +1995,7 @@ function describeAiTestError(error: any): string {
   background: var(--app-surface-soft);
   border: 1px solid var(--app-border);
   color: var(--app-text-secondary);
-  font-size: 11px;
+  font-size: var(--app-font-caption);
   font-weight: 700;
 }
 
@@ -1988,7 +2029,8 @@ function describeAiTestError(error: any): string {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--app-font-meta);
+  line-height: var(--app-line-height-caption);
   min-width: 0;
 }
 
@@ -2036,7 +2078,7 @@ function describeAiTestError(error: any): string {
   border-radius: var(--app-radius-md);
   background: var(--app-primary-soft);
   color: var(--app-primary);
-  font-size: 14px;
+  font-size: var(--app-font-control);
   font-weight: 800;
 }
 
@@ -2047,7 +2089,7 @@ function describeAiTestError(error: any): string {
 .editor-name {
   overflow: hidden;
   color: var(--app-text);
-  font-size: 15px;
+  font-size: var(--app-font-subheading);
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2058,7 +2100,8 @@ function describeAiTestError(error: any): string {
   margin-top: 2px;
   color: var(--app-text-secondary);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--app-font-meta);
+  line-height: var(--app-line-height-caption);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2089,7 +2132,7 @@ function describeAiTestError(error: any): string {
   border-radius: var(--app-radius-md);
   background: transparent;
   color: var(--app-primary);
-  font-size: 15px;
+  font-size: var(--app-font-control);
   cursor: pointer;
   transition:
     border-color var(--app-duration-fast) var(--app-ease),
@@ -2118,6 +2161,24 @@ function describeAiTestError(error: any): string {
   --el-segmented-item-selected-bg-color: var(--app-surface);
   --el-segmented-item-selected-color: var(--app-text);
   padding: 4px;
+}
+
+.settings-ui-size-control {
+  min-width: min(100%, 460px);
+}
+
+.settings-ui-size-descriptions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 6px;
+  color: var(--app-text-muted);
+  font-size: var(--app-font-meta);
+  line-height: var(--app-line-height-caption);
+}
+
+.settings-ui-size-descriptions span {
+  min-width: 0;
 }
 
 .settings-section :deep(.el-button + .el-button) {
@@ -2154,6 +2215,14 @@ function describeAiTestError(error: any): string {
     width: 100%;
   }
 
+  .settings-ui-size-control {
+    width: 100%;
+  }
+
+  .settings-ui-size-descriptions {
+    grid-template-columns: 1fr;
+  }
+
   .background-image-control {
     width: 100%;
     grid-template-columns: 128px minmax(0, 1fr);
@@ -2176,11 +2245,11 @@ function describeAiTestError(error: any): string {
 
 @media (max-width: 640px) {
   .settings-title {
-    font-size: 24px;
+    font-size: var(--app-font-page-title);
   }
 
   .settings-section-title {
-    font-size: 18px;
+    font-size: var(--app-font-section-title);
   }
 
   .settings-row-line {
@@ -2212,11 +2281,11 @@ function describeAiTestError(error: any): string {
 }
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; }
 .panel, .conflict-card, .diff-box, .summary-tile { padding: 14px; }
-.setting-label { font-size: 14px; font-weight: 600; color: var(--app-text-secondary); }
-.setting-desc, .summary-label, .diff-title { font-size: 12px; color: var(--app-text-muted); }
+.setting-label { font-size: var(--app-font-body); font-weight: 600; color: var(--app-text-secondary); }
+.setting-desc, .summary-label, .diff-title { font-size: var(--app-font-meta); line-height: var(--app-line-height-caption); color: var(--app-text-muted); }
 .summary-value { margin-top: 8px; font-size: 24px; line-height: 1; font-weight: 700; color: var(--app-text); }
 .diff-box { overflow: hidden; }
-.diff-content { margin: 0; max-height: 240px; overflow: auto; font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; color: var(--app-text-secondary); font-family: var(--font-mono); }
+.diff-content { margin: 0; max-height: 240px; overflow: auto; font-size: var(--app-font-code); line-height: var(--app-line-height-code); white-space: pre-wrap; word-break: break-word; color: var(--app-text-secondary); font-family: var(--font-mono); }
 .import-dialog-content { max-height: 72vh; overflow-y: auto; padding-right: 4px; }
 :deep(.el-card__header) { padding: 14px 18px; }
 :deep(.el-card__body) { padding: 18px; }

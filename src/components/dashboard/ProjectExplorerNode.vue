@@ -318,16 +318,16 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 5px;
-  min-height: 29px;
+  min-height: calc(var(--app-control-height-sm) + 1px);
   padding-left: 4px;
   padding-right: 8px;
   color: var(--app-text-secondary);
-  font-size: 11px;
+  font-size: var(--app-font-control);
   user-select: none;
   -webkit-user-select: none;
 }
 .explorer-project-row {
-  min-height: 31px;
+  min-height: calc(var(--app-control-height-sm) + 3px);
   border-left: 2px solid transparent;
   border-bottom: 1px solid color-mix(in srgb, var(--app-border) 54%, transparent);
   background: color-mix(in srgb, var(--app-surface-soft) 60%, transparent);
@@ -339,7 +339,7 @@ onBeforeUnmount(() => {
   color: var(--app-primary);
 }
 .explorer-project-row.is-root-project {
-  min-height: 34px;
+  min-height: calc(var(--app-control-height-sm) + 6px);
   border-left-width: 3px;
   border-left-color: color-mix(in srgb, var(--app-primary) 72%, transparent);
   background: color-mix(in srgb, var(--app-primary) 6%, var(--app-surface-soft));
@@ -362,9 +362,9 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 24px;
-  flex: 0 0 22px;
+  width: var(--app-control-height-sm);
+  height: var(--app-control-height-sm);
+  flex: 0 0 var(--app-control-height-sm);
   border: 0;
   border-radius: 4px;
   background: transparent;
@@ -404,7 +404,7 @@ onBeforeUnmount(() => {
 .explorer-project-branch {
   flex: 0 0 auto;
   color: var(--app-text-muted);
-  font-size: 9px;
+  font-size: var(--app-font-meta);
   font-weight: 500;
 }
 .explorer-project-meta {
@@ -424,7 +424,7 @@ onBeforeUnmount(() => {
 }
 .explorer-project-dirty {
   color: var(--app-warning);
-  font-size: 10px;
+  font-size: var(--app-font-meta);
 }
 .explorer-running-dot {
   width: 6px;
@@ -434,9 +434,9 @@ onBeforeUnmount(() => {
   background: var(--app-success);
 }
 .explorer-loading {
-  min-height: 24px;
+  min-height: var(--app-control-height-sm);
   color: var(--app-text-muted);
-  font-size: 10px;
+  font-size: var(--app-font-meta);
 }
 .explorer-project-actions {
   position: relative;
@@ -464,14 +464,14 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
-  flex: 0 0 24px;
+  width: var(--app-control-height-sm);
+  height: var(--app-control-height-sm);
+  flex: 0 0 var(--app-control-height-sm);
   border: 0;
   border-radius: 4px;
   background: transparent;
   color: var(--app-text-muted);
-  font-size: 13px;
+  font-size: var(--app-font-control);
 }
 .explorer-project-action:hover {
   background: var(--app-primary-soft);
@@ -495,8 +495,8 @@ onBeforeUnmount(() => {
   border-radius: 4px;
   background: var(--app-warning);
   color: var(--app-surface);
-  font-size: 8px;
-  line-height: 11px;
+  font-size: var(--app-font-meta);
+  line-height: var(--app-line-height-caption);
   text-align: center;
 }
 .explorer-action-menu {
@@ -517,13 +517,14 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   width: 100%;
-  min-height: 27px;
+  min-height: var(--app-control-height-sm);
   padding: 4px 7px;
   border: 0;
   border-radius: 3px;
   background: transparent;
   color: inherit;
-  font-size: 10px;
+  font-size: var(--app-font-control);
+  line-height: var(--app-line-height-control);
   text-align: left;
 }
 .explorer-menu-item:hover {

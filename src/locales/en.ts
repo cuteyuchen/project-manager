@@ -543,6 +543,18 @@ export default {
     languageHint: 'Choose the application language',
     theme: 'Theme Mode',
     themeHint: 'Choose the application appearance',
+    uiSize: 'Interface Size',
+    uiSizeHint: 'Adjust the overall readability and density of text, controls, and lists.',
+    uiSizeMode: {
+      compact: 'Compact',
+      standard: 'Standard',
+      comfortable: 'Comfortable',
+    },
+    uiSizeDescription: {
+      compact: 'Reduce spacing while keeping text readable.',
+      standard: 'Recommended for most desktop environments.',
+      comfortable: 'Larger text and controls for high DPI or long sessions.',
+    },
     backgroundImage: 'Global Background Image',
     backgroundImageHint: 'Choose a local image as the application background and adjust its visibility',
     selectBackgroundImage: 'Choose Image',

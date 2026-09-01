@@ -134,7 +134,7 @@ function imageStyle(key: 'before' | 'after') {
   border-radius: 5px;
   background: transparent;
   color: var(--git-text-secondary);
-  font-size: 10px;
+  font-size: var(--app-font-control);
   cursor: pointer;
 }
 
@@ -156,7 +156,7 @@ function imageStyle(key: 'before' | 'after') {
 .git-image-zoom-label {
   min-width: 42px;
   color: var(--git-muted);
-  font-size: 10px;
+  font-size: var(--app-font-meta);
   text-align: center;
 }
 
@@ -186,7 +186,7 @@ function imageStyle(key: 'before' | 'after') {
   padding: 6px 10px;
   border-bottom: 1px solid var(--git-border);
   color: var(--git-text-secondary);
-  font-size: 10px;
+  font-size: var(--app-font-control);
   font-weight: 600;
 }
 
@@ -220,6 +220,6 @@ function imageStyle(key: 'before' | 'after') {
   justify-content: center;
   gap: 6px;
   color: var(--git-muted);
-  font-size: 11px;
+  font-size: var(--app-font-meta);
 }
 </style>

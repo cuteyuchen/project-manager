@@ -882,12 +882,12 @@ async function cancelClone() {
             </template>
           </el-input>
         </div>
-        <div v-if="form.path" class="mt-2 text-xs text-slate-500 dark:text-slate-400">
+        <div v-if="form.path" class="app-text-meta mt-2 text-slate-500 dark:text-slate-400">
           <span v-if="pathIsGitRepo">{{ t('project.gitLocalRepoDetected') }}</span>
           <span v-else>{{ t('project.gitLocalRepoMissing') }}</span>
         </div>
         <!-- 扫描到子项目时提示：提交后会弹出层级选择弹窗，由用户决定挂载哪几级 -->
-        <div v-if="!isEdit && scannedSubModuleCount > 0" class="mt-1 text-xs text-emerald-600 dark:text-emerald-400">
+        <div v-if="!isEdit && scannedSubModuleCount > 0" class="app-text-meta mt-1 text-emerald-600 dark:text-emerald-400">
           {{ t('project.subProjectsDetected', { count: scannedSubModuleCount }) }}
         </div>
         <!-- 编辑态：随时重新扫描并调整子项目层级（含移除已有子项目） -->
@@ -896,7 +896,7 @@ async function cancelClone() {
             <div class="i-mdi-file-tree-outline mr-1" />
             {{ t('dashboard.manageSubProjects') }}
           </el-button>
-          <span v-if="!canManageSubLevels" class="ml-2 text-xs text-slate-400">
+          <span v-if="!canManageSubLevels" class="app-text-meta ml-2 text-slate-400">
             {{ t('dashboard.maxDepthReached') }}
           </span>
         </div>
@@ -905,7 +905,7 @@ async function cancelClone() {
       <template v-if="canConfigureRepo">
         <el-form-item :label="t('project.gitConfigureRepo')">
           <el-switch v-model="form.gitConfigured" />
-          <div class="mt-2 text-xs text-slate-500 dark:text-slate-400">
+          <div class="app-text-meta mt-2 text-slate-500 dark:text-slate-400">
             {{ t('project.gitConfigureRepoHint') }}
           </div>
         </el-form-item>
@@ -943,7 +943,7 @@ async function cancelClone() {
 
           <div
             v-if="repoTargetHasFiles"
-            class="mb-4 rounded-xl border border-amber-200/80 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
+            class="app-text-control mb-4 rounded-xl border border-amber-200/80 bg-amber-50 px-3 py-2 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
           >
             {{ t('project.gitTargetMustBeEmpty') }}
           </div>
@@ -978,7 +978,7 @@ async function cancelClone() {
                 >
                   <div class="flex min-w-0 items-center justify-between gap-3">
                     <span class="font-mono">{{ runtime.version }}</span>
-                    <span class="text-xs text-slate-400">{{ runtimeSourceLabel(runtime.source) }}</span>
+                    <span class="app-text-meta text-slate-400">{{ runtimeSourceLabel(runtime.source) }}</span>
                   </div>
                 </el-option>
               </el-select>
@@ -1001,7 +1001,7 @@ async function cancelClone() {
                   :value="pm"
                 >
                   <span>{{ pm }}</span>
-                  <span v-if="pmAvailability[pm]" class="ml-1 text-[10px]" :class="pmAvailability[pm].available ? 'text-emerald-500' : 'text-red-400'">
+                  <span v-if="pmAvailability[pm]" class="ml-1 app-text-meta" :class="pmAvailability[pm].available ? 'text-emerald-500' : 'text-red-400'">
                     {{ pmAvailability[pm].available
                       ? (form.packageManagerSource === 'default' ? t('project.pmDefaultAvailable') : t('project.pmProjectAvailable'))
                       : t('project.pmNotAvailable')
@@ -1015,14 +1015,14 @@ async function cancelClone() {
 
         <el-form-item :label="t('project.terminalInjectNode')">
           <el-switch v-model="form.terminalInjectNode" />
-          <div class="mt-2 text-xs text-slate-500 dark:text-slate-400">
+          <div class="app-text-meta mt-2 text-slate-500 dark:text-slate-400">
             {{ t('project.terminalInjectNodeHint') }}
           </div>
         </el-form-item>
 
         <el-form-item v-if="form.scripts.length > 0" :label="t('project.scripts')">
           <div class="w-full rounded-xl border border-slate-200/70 dark:border-slate-700/60 bg-slate-50/80 dark:bg-slate-900/40 p-3">
-            <p class="text-xs text-slate-500 dark:text-slate-400 mb-3">{{ t('project.scriptsVisibilityHint') }}</p>
+            <p class="app-text-meta text-slate-500 dark:text-slate-400 mb-3">{{ t('project.scriptsVisibilityHint') }}</p>
             <div class="grid grid-cols-2 gap-2 sm:grid-cols-3">
               <button
                 v-for="script in form.scripts"
@@ -1032,7 +1032,7 @@ async function cancelClone() {
                 class="script-toggle"
                 :class="isScriptVisible(script) ? 'script-toggle-active' : 'script-toggle-inactive'"
               >
-                <span class="truncate font-mono text-[12px]">{{ script }}</span>
+                <span class="app-text-control truncate font-mono">{{ script }}</span>
                 <div
                   class="text-sm transition-transform duration-200"
                   :class="isScriptVisible(script)
@@ -1047,7 +1047,7 @@ async function cancelClone() {
 
       <el-form-item v-if="availableQuickCommands.length > 0" :label="t('project.quickCommandsTitle')">
         <div class="quick-command-config w-full">
-          <p class="text-xs text-slate-500 dark:text-slate-400 mb-3">{{ t('project.quickCommandsHint') }}</p>
+          <p class="app-text-meta text-slate-500 dark:text-slate-400 mb-3">{{ t('project.quickCommandsHint') }}</p>
           <div v-if="selectedQuickCommands.length > 0" class="quick-command-selected">
             <div
               v-for="(command, index) in selectedQuickCommands"
@@ -1134,7 +1134,7 @@ async function cancelClone() {
             :value="editor.id"
           />
         </el-select>
-        <div class="text-xs text-slate-400 mt-1">{{ editorHint }}</div>
+        <div class="app-text-meta text-slate-400 mt-1">{{ editorHint }}</div>
       </el-form-item>
     </el-form>
 
@@ -1229,7 +1229,8 @@ async function cancelClone() {
   padding: 5px 8px;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-sm);
-  font-size: 12px;
+  font-size: var(--app-font-control);
+  line-height: var(--app-line-height-control);
   text-align: left;
 }
 .quick-command-selected-item {
@@ -1255,7 +1256,7 @@ async function cancelClone() {
 .quick-command-type {
   flex-shrink: 0;
   color: var(--app-text-muted);
-  font-size: 10px;
+  font-size: var(--app-font-meta);
 }
 .quick-command-order-btn {
   display: inline-flex;

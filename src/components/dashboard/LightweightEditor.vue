@@ -149,7 +149,8 @@ defineExpose({
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  font-size: 13px;
+  font-size: var(--app-font-code);
+  line-height: var(--app-line-height-code);
 }
 .lightweight-editor :deep(.cm-editor) {
   height: 100%;
@@ -157,7 +158,8 @@ defineExpose({
 .lightweight-editor :deep(.cm-scroller) {
   overflow: auto;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  line-height: 1.55;
+  font-size: var(--app-font-code);
+  line-height: var(--app-line-height-code);
 }
 .lightweight-editor :deep(.cm-gutters) {
   min-width: 42px;

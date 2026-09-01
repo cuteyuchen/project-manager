@@ -245,7 +245,7 @@ watch(ignoreOpen, (open) => {
   border: 0;
   background: transparent;
   color: inherit;
-  font-size: 11px;
+  font-size: var(--app-font-control);
   text-align: left;
   cursor: pointer;
 }
@@ -292,6 +292,6 @@ watch(ignoreOpen, (open) => {
 .ctx-group-label {
   padding: 4px 10px 3px;
   color: var(--app-text-muted);
-  font-size: 10px;
+  font-size: var(--app-font-meta);
 }
 </style>

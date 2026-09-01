@@ -600,7 +600,7 @@ onBeforeUnmount(() => {
           <section class="app-table-panel runtime-summary-card rounded-lg p-4">
             <div class="mb-4 flex items-start justify-between gap-3">
               <div>
-                <div class="text-xs font-medium uppercase tracking-wide text-slate-400">{{ t('nodes.projectManagerDefaultNode') }}</div>
+                <div class="app-text-meta font-medium uppercase tracking-wide text-slate-400">{{ t('nodes.projectManagerDefaultNode') }}</div>
                 <div v-if="defaultRuntime" class="mt-1 flex items-center gap-2">
                   <span class="font-mono text-2xl font-semibold text-slate-800 dark:text-slate-100">{{ defaultRuntime.version }}</span>
                   <el-tag :type="sourceTone(defaultRuntime.source)" effect="plain" size="small">{{ sourceLabel(defaultRuntime.source) }}</el-tag>
@@ -611,8 +611,8 @@ onBeforeUnmount(() => {
               </div>
               <div :class="defaultRuntime ? 'i-mdi-check-circle text-emerald-500' : 'i-mdi-alert-circle text-amber-500'" class="text-2xl" />
             </div>
-            <div v-if="defaultRuntime" class="truncate font-mono text-xs text-slate-500 dark:text-slate-400" :title="defaultRuntime.path">{{ defaultRuntime.path }}</div>
-            <div v-else-if="nodeStore.appDefault?.path" class="truncate font-mono text-xs text-slate-400" :title="nodeStore.appDefault.path">{{ nodeStore.appDefault.path }}</div>
+            <div v-if="defaultRuntime" class="app-text-meta truncate font-mono text-slate-500 dark:text-slate-400" :title="defaultRuntime.path">{{ defaultRuntime.path }}</div>
+            <div v-else-if="nodeStore.appDefault?.path" class="app-text-meta truncate font-mono text-slate-400" :title="nodeStore.appDefault.path">{{ nodeStore.appDefault.path }}</div>
             <div class="runtime-summary-card__actions mt-4 flex flex-wrap gap-2">
               <el-button v-if="defaultRuntime" size="small" @click="openRuntimeTerminal(defaultRuntime)">
                 <el-icon><div class="i-mdi-console" /></el-icon>{{ t('nodes.openTerminal') }}
@@ -632,7 +632,7 @@ onBeforeUnmount(() => {
           <section class="app-table-panel runtime-summary-card rounded-lg p-4">
             <div class="mb-3 flex items-start justify-between gap-3">
               <div class="min-w-0">
-                <div class="text-xs font-medium uppercase tracking-wide text-slate-400">{{ t('nodes.systemCurrentNode') }}</div>
+                <div class="app-text-meta font-medium uppercase tracking-wide text-slate-400">{{ t('nodes.systemCurrentNode') }}</div>
                 <div v-if="nodeStore.systemNodeState?.available" class="mt-1 flex items-center gap-2">
                   <span class="font-mono text-2xl font-semibold text-slate-800 dark:text-slate-100">{{ nodeStore.systemNodeState.version }}</span>
                   <el-tag :type="nodeStore.systemNodeState.source === 'nvm' ? 'warning' : nodeStore.systemNodeState.source === 'managed' ? 'success' : 'info'" effect="plain" size="small">
@@ -645,27 +645,27 @@ onBeforeUnmount(() => {
               </div>
               <div :class="nodeStore.systemNodeState?.available ? 'i-mdi-check-circle text-emerald-500' : 'i-mdi-alert-circle text-amber-500'" class="text-2xl" />
             </div>
-            <div v-if="nodeStore.systemNodeState?.nodePath" class="truncate font-mono text-xs text-slate-500 dark:text-slate-400" :title="nodeStore.systemNodeState.nodePath">
+            <div v-if="nodeStore.systemNodeState?.nodePath" class="app-text-meta truncate font-mono text-slate-500 dark:text-slate-400" :title="nodeStore.systemNodeState.nodePath">
               {{ nodeStore.systemNodeState.nodePath }}
             </div>
-            <div v-if="nodeStore.systemNodeState?.available" class="mt-2 text-xs text-slate-400 dark:text-slate-500">
+            <div v-if="nodeStore.systemNodeState?.available" class="app-text-meta mt-2 text-slate-400 dark:text-slate-500">
               {{ t('nodes.terminalRestartHint') }}
             </div>
-            <div v-if="!nodeStore.systemNodeSwitchSupported" class="mt-2 text-xs text-amber-600 dark:text-amber-300">
+            <div v-if="!nodeStore.systemNodeSwitchSupported" class="app-text-meta mt-2 text-amber-600 dark:text-amber-300">
               {{ t('nodes.systemSwitchUnsupported') }}
             </div>
             <div class="runtime-summary-card__actions mt-4 flex flex-wrap gap-2">
               <el-button size="small" :loading="nodeStore.systemNodeLoading" :disabled="nodeStore.systemNodeSwitching" @click="nodeStore.refreshSystemNode()">
                 <el-icon><div class="i-mdi-refresh" /></el-icon>{{ t('nodes.recheckSystemNode') }}
               </el-button>
-              <span v-if="nodeStore.systemNodeSwitching" class="self-center text-xs text-blue-500">{{ t('nodes.systemNodeSwitching') }}</span>
+              <span v-if="nodeStore.systemNodeSwitching" class="app-text-meta self-center text-blue-500">{{ t('nodes.systemNodeSwitching') }}</span>
             </div>
           </section>
 
           <section class="app-table-panel runtime-summary-card runtime-summary-card--storage rounded-lg p-4">
             <div class="mb-3 flex items-start justify-between gap-3">
               <div>
-                <div class="text-xs font-medium uppercase tracking-wide text-slate-400">{{ t('nodes.managedRuntime') }}</div>
+                <div class="app-text-meta font-medium uppercase tracking-wide text-slate-400">{{ t('nodes.managedRuntime') }}</div>
                 <div class="mt-2 flex items-center gap-2">
                   <el-tag effect="plain" type="success" size="small">{{ t(`nodes.locationMode.${nodeStore.managedLocation?.mode || 'app-data'}`) }}</el-tag>
                   <span class="text-sm text-slate-500 dark:text-slate-400">{{ t('nodes.installedCount', { count: managedRuntimes.length }) }}</span>
@@ -673,8 +673,8 @@ onBeforeUnmount(() => {
               </div>
               <div class="i-mdi-database-cog-outline text-2xl text-emerald-500" />
             </div>
-            <div class="truncate font-mono text-xs text-slate-500 dark:text-slate-400" :title="managedRootLabel">{{ managedRootLabel }}</div>
-            <div class="mt-1 flex items-center gap-1 text-xs text-slate-400">
+            <div class="app-text-meta truncate font-mono text-slate-500 dark:text-slate-400" :title="managedRootLabel">{{ managedRootLabel }}</div>
+            <div class="app-text-meta mt-1 flex items-center gap-1 text-slate-400">
               <el-icon v-if="nodeStore.managedLocationLoading"><div class="i-mdi-loading animate-spin" /></el-icon>
               <span>{{ managedStorageText }}</span>
             </div>
@@ -693,7 +693,7 @@ onBeforeUnmount(() => {
           <div class="mb-4 flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 class="text-base font-semibold text-slate-800 dark:text-slate-100">{{ t('nodes.sourceOverview') }}</h2>
-              <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">{{ t('nodes.sourceOverviewHint') }}</p>
+              <p class="app-text-meta mt-1 text-slate-500 dark:text-slate-400">{{ t('nodes.sourceOverviewHint') }}</p>
             </div>
             <el-button size="small" @click="refresh">
               <el-icon><div class="i-mdi-refresh" /></el-icon>{{ t('nodes.rescanNvm') }}
@@ -701,25 +701,25 @@ onBeforeUnmount(() => {
           </div>
           <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <div v-for="source in sourceOrder" :key="source" class="rounded-lg border border-slate-200/80 bg-white/30 px-3 py-3 dark:border-slate-700/70 dark:bg-slate-900/20">
-              <div class="text-xs text-slate-500 dark:text-slate-400">{{ sourceLabel(source) }}</div>
+              <div class="app-text-meta text-slate-500 dark:text-slate-400">{{ sourceLabel(source) }}</div>
               <div class="mt-1 text-xl font-semibold text-slate-800 dark:text-slate-100">{{ sourceCounts[source] }}</div>
             </div>
           </div>
-          <div v-if="nvmRoots.length" class="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+          <div v-if="nvmRoots.length" class="app-text-meta mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-slate-500 dark:text-slate-400">
             <span class="font-medium text-emerald-600 dark:text-emerald-300">{{ t('nodes.nvmDetected') }}</span>
             <span v-for="root in nvmRoots" :key="root" class="font-mono">{{ root }}</span>
             <span>{{ t('nodes.nvmVersionCount', { count: sourceCounts.nvm }) }}</span>
           </div>
-          <div v-else class="mt-4 text-xs text-slate-400">{{ t('nodes.nvmNotDetected') }}</div>
+          <div v-else class="app-text-meta mt-4 text-slate-400">{{ t('nodes.nvmNotDetected') }}</div>
         </section>
 
         <section ref="runtimeListPanel" class="app-table-panel runtime-list-panel rounded-lg p-0">
           <div class="flex items-center justify-between border-b border-slate-200/70 px-4 py-3 dark:border-slate-700/70">
             <div>
               <h2 class="text-base font-semibold text-slate-800 dark:text-slate-100">{{ t('nodes.allRuntimes') }}</h2>
-              <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">{{ t('nodes.runtimeListHint') }}</p>
+              <p class="app-text-meta mt-1 text-slate-500 dark:text-slate-400">{{ t('nodes.runtimeListHint') }}</p>
             </div>
-            <span class="text-xs text-slate-400">{{ runtimeGroups.length }}</span>
+              <span class="app-text-meta text-slate-400">{{ runtimeGroups.length }}</span>
           </div>
           <div v-if="runtimeGroups.length && runtimeListMode !== 'card'" class="runtime-table-view">
             <el-table :data="runtimeGroups" row-key="key" style="width: 100%" :row-style="{ background: 'transparent' }" class="custom-table">
@@ -731,7 +731,7 @@ onBeforeUnmount(() => {
                       <el-tag v-if="groupHasAppDefault(row)" type="success" effect="plain" size="small">{{ t('nodes.projectManagerDefault') }}</el-tag>
                       <el-tag v-if="groupHasSystemCurrent(row)" type="info" effect="plain" size="small">{{ t('nodes.systemCurrent') }}</el-tag>
                     </div>
-                    <span v-if="groupProgressText(row)" class="text-[11px] text-blue-500">{{ groupProgressText(row) }}</span>
+                    <span v-if="groupProgressText(row)" class="app-text-meta text-blue-500">{{ groupProgressText(row) }}</span>
                   </div>
                 </template>
               </el-table-column>
@@ -744,17 +744,17 @@ onBeforeUnmount(() => {
               </el-table-column>
               <el-table-column v-if="runtimeListMode === 'table'" :label="t('nodes.status')" width="110">
                 <template #default="{ row }">
-                  <span :class="groupStatusTone(row)" class="text-xs">{{ groupStatusLabel(row) }}</span>
+                  <span :class="groupStatusTone(row)" class="app-text-meta">{{ groupStatusLabel(row) }}</span>
                 </template>
               </el-table-column>
               <el-table-column :label="t('nodes.path')" :min-width="runtimeListMode === 'table' ? 220 : 190" show-overflow-tooltip>
                 <template #default="{ row }">
-                  <span class="block truncate font-mono text-xs text-slate-500 dark:text-slate-400" :title="primaryRuntime(row).path">{{ primaryRuntime(row).path || t('nodes.installing') }}</span>
+                  <span class="app-text-meta block truncate font-mono text-slate-500 dark:text-slate-400" :title="primaryRuntime(row).path">{{ primaryRuntime(row).path || t('nodes.installing') }}</span>
                 </template>
               </el-table-column>
               <el-table-column :label="t('nodes.usage')" :min-width="runtimeListMode === 'table' ? 145 : 115">
                 <template #default="{ row }">
-                  <span :class="groupProjectsUsingRuntime(row).length ? 'text-slate-600 dark:text-slate-300' : 'text-slate-400'" class="text-xs">{{ groupUsageLabel(row) }}</span>
+                  <span :class="groupProjectsUsingRuntime(row).length ? 'text-slate-600 dark:text-slate-300' : 'text-slate-400'" class="app-text-meta">{{ groupUsageLabel(row) }}</span>
                 </template>
               </el-table-column>
               <el-table-column :label="t('nodes.actions')" :width="runtimeListMode === 'table' ? 500 : 190" fixed="right" align="right">
@@ -869,10 +869,10 @@ onBeforeUnmount(() => {
                     </el-tag>
                   </div>
                 </div>
-                <span :class="groupStatusTone(row)" class="shrink-0 text-xs">{{ groupStatusLabel(row) }}</span>
+                <span :class="groupStatusTone(row)" class="app-text-meta shrink-0">{{ groupStatusLabel(row) }}</span>
               </div>
               <div class="runtime-card__path mt-3" :title="primaryRuntime(row).path">{{ primaryRuntime(row).path || t('nodes.installing') }}</div>
-              <div class="mt-2 text-xs text-slate-500 dark:text-slate-400">{{ groupUsageLabel(row) }}</div>
+              <div class="app-text-meta mt-2 text-slate-500 dark:text-slate-400">{{ groupUsageLabel(row) }}</div>
               <div class="runtime-card__actions mt-3">
                 <el-button v-if="groupCanSetSystemNode(row)" size="small" type="warning" plain :disabled="nodeStore.systemNodeSwitching || !nodeStore.systemNodeSwitchSupported" @click="promptRuntimeAction('system-node', row)">
                   <el-icon><div class="i-mdi-swap-horizontal" /></el-icon>{{ t('nodes.setSystemNode') }}
@@ -931,7 +931,7 @@ onBeforeUnmount(() => {
             <template #append><el-button @click="selectStorageFolder"><div class="i-mdi-folder" /></el-button></template>
           </el-input>
         </el-form-item>
-        <div v-if="storageMode === 'portable' && !portableAvailable" class="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">{{ t('nodes.portableUnavailable') }}</div>
+        <div v-if="storageMode === 'portable' && !portableAvailable" class="app-text-control rounded-lg bg-amber-50 px-3 py-2 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">{{ t('nodes.portableUnavailable') }}</div>
         <div v-if="managedRuntimes.length" class="mt-2 rounded-lg border border-slate-200/70 px-3 py-3 dark:border-slate-700/70">
           <div class="mb-2 text-sm font-medium text-slate-700 dark:text-slate-200">{{ t('nodes.existingManagedRuntimes', { count: managedRuntimes.length }) }}</div>
           <el-radio-group v-model="migrateExisting" class="flex flex-col items-start gap-2">
@@ -953,7 +953,7 @@ onBeforeUnmount(() => {
             <span class="font-mono text-base font-semibold text-slate-800 dark:text-slate-100">{{ selectedUsageRuntime.version }}</span>
             <el-tag :type="sourceTone(selectedUsageRuntime.source)" effect="plain" size="small">{{ sourceLabel(selectedUsageRuntime.source) }}</el-tag>
           </div>
-          <div class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+          <div class="app-text-meta mt-1 text-slate-500 dark:text-slate-400">
             {{ t('nodes.usageSummary', { count: selectedUsageEntries.length }) }}
           </div>
         </div>
@@ -966,8 +966,8 @@ onBeforeUnmount(() => {
         <button v-for="usage in selectedUsageEntries" :key="usage.project.id" type="button" class="runtime-usage-item" @click="openUsageProject(usage.project)">
           <span class="min-w-0 flex-1 text-left">
             <span class="block truncate text-sm font-medium text-slate-700 dark:text-slate-200">{{ usage.project.name }}</span>
-            <span class="mt-0.5 block truncate font-mono text-[11px] text-slate-400" :title="usage.project.path">{{ usage.project.path }}</span>
-            <span class="mt-1 block truncate text-[11px] text-slate-500 dark:text-slate-400">{{ usageReasonLabel(usage.reason, usage.project) }}</span>
+            <span class="mt-0.5 block truncate font-mono app-text-meta text-slate-400" :title="usage.project.path">{{ usage.project.path }}</span>
+            <span class="mt-1 block truncate app-text-meta text-slate-500 dark:text-slate-400">{{ usageReasonLabel(usage.reason, usage.project) }}</span>
           </span>
           <span class="flex shrink-0 items-center gap-2">
             <el-tag v-if="projectIsRunning(usage.project)" type="warning" effect="plain" size="small">{{ t('nodes.running') }}</el-tag>
@@ -985,7 +985,7 @@ onBeforeUnmount(() => {
         <div class="min-w-0">
           <div class="flex items-center gap-2">
             <span class="font-mono text-base font-semibold text-slate-800 dark:text-slate-100">{{ selectedRuntimeDetailsGroup.version }}</span>
-            <span class="text-xs text-slate-500 dark:text-slate-400">{{ t('nodes.runtimeDetailsHint') }}</span>
+            <span class="app-text-meta text-slate-500 dark:text-slate-400">{{ t('nodes.runtimeDetailsHint') }}</span>
           </div>
         </div>
         <div class="i-mdi-source-branch shrink-0 text-xl text-slate-400" />
@@ -997,10 +997,10 @@ onBeforeUnmount(() => {
               <el-tag :type="sourceTone(canonical.preferredSource)" effect="plain" size="small">{{ sourceLabel(canonical.preferredSource) }}</el-tag>
               <el-tag v-if="canonical.isProjectManagerDefault" type="success" effect="plain" size="small">{{ t('nodes.projectManagerDefault') }}</el-tag>
               <el-tag v-if="canonical.isSystemCurrent" type="info" effect="plain" size="small">{{ t('nodes.systemCurrent') }}</el-tag>
-              <span :class="canonicalStatusTone(canonical)" class="text-xs">{{ canonicalStatusLabel(canonical) }}</span>
+              <span :class="canonicalStatusTone(canonical)" class="app-text-meta">{{ canonicalStatusLabel(canonical) }}</span>
             </div>
-            <div class="mt-2 truncate font-mono text-xs text-slate-600 dark:text-slate-300" :title="canonical.runtimePath">{{ canonical.runtimePath }}</div>
-            <div class="mt-1 text-xs text-slate-400">
+            <div class="app-text-meta mt-2 truncate font-mono text-slate-600 dark:text-slate-300" :title="canonical.runtimePath">{{ canonical.runtimePath }}</div>
+            <div class="app-text-meta mt-1 text-slate-400">
               {{ canonicalRuntimeUsages(canonical).length ? t('nodes.projectUsage', { count: canonicalRuntimeUsages(canonical).length }) : t('nodes.noProjectUsage') }}
             </div>
           </div>
@@ -1143,7 +1143,8 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--app-font-meta);
+  line-height: var(--app-line-height-caption);
   color: var(--app-text-muted);
 }
 

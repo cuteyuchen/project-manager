@@ -268,7 +268,7 @@ function handleDelete() {
                     />
                 </div>
                 <div v-if="project.description || displayTags.length > 0 || groupName || runSummary" class="project-row-meta">
-                    <span v-if="project.description" class="text-[10px] text-slate-400 dark:text-slate-500 truncate max-w-40" :title="project.description">
+                    <span v-if="project.description" class="app-text-meta text-slate-400 dark:text-slate-500 truncate max-w-40" :title="project.description">
                         {{ project.description }}
                     </span>
                     <span
@@ -278,9 +278,9 @@ function handleDelete() {
                     >
                         {{ tag }}
                     </span>
-                    <span v-if="extraTagsCount > 0" class="text-[9px] text-slate-400 dark:text-slate-500">+{{ extraTagsCount }}</span>
+                    <span v-if="extraTagsCount > 0" class="app-text-meta text-slate-400 dark:text-slate-500">+{{ extraTagsCount }}</span>
                     <span v-if="groupName" class="project-tag-chip project-tag-chip-muted inline-flex items-center gap-0.5">
-                        <div class="i-mdi-folder-network text-[8px]" />
+                        <div class="i-mdi-folder-network text-xs" />
                         {{ groupName }}
                     </span>
                     <button
@@ -291,7 +291,7 @@ function handleDelete() {
                         :title="getRunSummaryLabel()"
                         @click.stop="emit('open-running', project)"
                     >
-                        <div :class="getRunSummaryIcon()" class="text-[10px]" />
+                        <div :class="getRunSummaryIcon()" class="text-xs" />
                         <span class="truncate">{{ getRunSummaryLabel() }}</span>
                     </button>
                 </div>
@@ -308,7 +308,7 @@ function handleDelete() {
                     :title="isQuickCommandRunning(command) ? t('dashboard.stop') : t('dashboard.start')"
                     @click.stop="toggleQuickCommand(command)"
                 >
-                    <div :class="isQuickCommandRunning(command) ? 'i-mdi-stop' : 'i-mdi-play'" class="text-[10px]" />
+                    <div :class="isQuickCommandRunning(command) ? 'i-mdi-stop' : 'i-mdi-play'" class="text-xs" />
                     <span class="truncate">{{ getQuickCommandLabel(command) }}</span>
                 </button>
                 <button
@@ -344,7 +344,7 @@ function handleDelete() {
             <!-- ─── 子项目数量 + 下钻箭头 ─────────────── -->
             <div v-if="childCount > 0 && !treeMode" class="project-row-child">
                 <span class="project-child-chip inline-flex items-center gap-0.5" :title="t('dashboard.subProjectCount', { count: childCount })">
-                    <div class="i-mdi-file-tree text-[9px]" />
+                    <div class="i-mdi-file-tree text-xs" />
                     {{ childCount }}
                 </span>
                 <div class="i-mdi-chevron-right text-base text-slate-400 dark:text-slate-500" />
@@ -410,7 +410,7 @@ function handleDelete() {
   align-items: center;
   container-type: inline-size;
   gap: 10px;
-  padding: 10px 12px;
+  padding: var(--app-row-padding-y) 12px;
   border-radius: var(--app-radius-lg);
   border: 1px solid var(--app-border);
   background: var(--app-surface);
@@ -463,7 +463,7 @@ function handleDelete() {
 
 .project-row-tree {
   gap: 6px;
-  padding: 7px 10px;
+  padding: var(--app-row-padding-y) 10px;
 }
 
 .project-row-tree {
@@ -487,14 +487,15 @@ function handleDelete() {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  min-height: 22px;
+  min-height: var(--app-control-height-sm);
   max-width: 132px;
   padding: 0 7px;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-sm);
   background: var(--app-surface-soft);
   color: var(--app-text-secondary);
-  font-size: 10px;
+  font-size: var(--app-font-control);
+  line-height: var(--app-line-height-control);
   font-weight: 600;
   white-space: nowrap;
   flex: 0 1 auto;
@@ -560,7 +561,8 @@ function handleDelete() {
 
 .project-row-title {
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--app-font-body);
+  line-height: var(--app-line-height-body);
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -573,8 +575,9 @@ function handleDelete() {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 11px;
-  color: rgb(148 163 184);
+  font-size: var(--app-font-meta);
+  line-height: var(--app-line-height-caption);
+  color: var(--app-text-muted);
 }
 
 .project-row-meta {
@@ -585,6 +588,8 @@ function handleDelete() {
   max-height: 20px;
   margin-top: 2px;
   overflow: hidden;
+  font-size: var(--app-font-meta);
+  line-height: var(--app-line-height-caption);
 }
 
 .project-row-stacked {
@@ -632,8 +637,8 @@ function handleDelete() {
   border-radius: var(--app-radius-sm);
   background: transparent;
   color: var(--app-text-muted);
-  font-size: 10px;
-  line-height: 1.25;
+  font-size: var(--app-font-control);
+  line-height: var(--app-line-height-control);
   text-align: left;
 }
 .project-run-summary-inline:hover {
@@ -665,7 +670,7 @@ function handleDelete() {
 
 .project-row-stacked .project-row-title {
   flex: 1 1 0;
-  font-size: 14px;
+  font-size: var(--app-font-body);
 }
 
 .project-row-stacked .project-row-path {
@@ -793,7 +798,8 @@ function handleDelete() {
   align-items: center;
   padding: 0 6px;
   border-radius: var(--app-radius-xs);
-  font-size: 9px;
+  font-size: var(--app-font-meta);
+  line-height: var(--app-line-height-caption);
   font-weight: 600;
 }
 .project-tag-chip-primary {
@@ -812,7 +818,8 @@ function handleDelete() {
   align-items: center;
   padding: 0 6px;
   border-radius: var(--app-radius-xs);
-  font-size: 9px;
+  font-size: var(--app-font-meta);
+  line-height: var(--app-line-height-caption);
   font-weight: 600;
   background: color-mix(in srgb, var(--app-primary) 12%, transparent);
   color: var(--app-primary);
@@ -822,7 +829,8 @@ function handleDelete() {
 .project-child-chip {
   padding: 0 5px;
   border-radius: var(--app-radius-xs);
-  font-size: 9px;
+  font-size: var(--app-font-meta);
+  line-height: var(--app-line-height-caption);
   font-weight: 600;
   background: var(--app-surface-soft);
   border: 1px solid var(--app-border);

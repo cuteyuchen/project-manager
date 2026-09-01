@@ -272,7 +272,8 @@ useAppShortcuts([
   background: transparent;
   color: var(--app-text-secondary);
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--app-font-control);
+  line-height: var(--app-line-height-control);
   font-weight: 600;
   padding: 3px 8px;
   white-space: nowrap;

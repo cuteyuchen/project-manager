@@ -19,6 +19,7 @@ import {
 } from '../utils/shortcut';
 import { createImageDataUrl } from '../utils/backgroundImage';
 import { clampWorkspaceExplorerWidth, WORKSPACE_EXPLORER_DEFAULT_WIDTH } from '../utils/workspaceExplorerLayout';
+import { applyUiSizeToRoot, DEFAULT_UI_SIZE, normalizeUiSize } from '../utils/uiSize';
 
 function createDefaultAiService(overrides: Partial<AiServiceConfig> = {}): AiServiceConfig {
   return {
@@ -117,6 +118,7 @@ export const useSettingsStore = defineStore('settings', () => {
     workspaceExplorerWidth: WORKSPACE_EXPLORER_DEFAULT_WIDTH,
     locale: 'zh',
     themeMode: 'auto',
+    uiSize: DEFAULT_UI_SIZE,
     backgroundImagePath: '',
     backgroundImageOpacity: 0.35,
     autoUpdate: true,
@@ -169,6 +171,7 @@ export const useSettingsStore = defineStore('settings', () => {
           delete parsed.themeColor;
           parsed.themeMode = 'auto';
       }
+      parsed.uiSize = normalizeUiSize(parsed.uiSize);
       // Migrate single editorPath to editors array
       if (!parsed.editors && parsed.editorPath) {
         parsed.editors = [{ id: crypto.randomUUID(), name: parsed.editorPath === 'code' ? 'VS Code' : parsed.editorPath.split(/[/\\]/).pop() || 'Editor', path: parsed.editorPath }];
@@ -297,6 +300,7 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.backgroundImageOpacity = 0.35;
   }
   settings.value.backgroundImageOpacity = Math.min(1, Math.max(0.1, settings.value.backgroundImageOpacity));
+  settings.value.uiSize = normalizeUiSize(settings.value.uiSize);
 
   const systemThemeMedia = window.matchMedia('(prefers-color-scheme: dark)');
 
@@ -377,6 +381,7 @@ export const useSettingsStore = defineStore('settings', () => {
 
     // Theme Mode
     updateTheme();
+    applyUiSizeToRoot(settings.value.uiSize);
     void applyBackgroundImage();
   };
 
@@ -384,6 +389,10 @@ export const useSettingsStore = defineStore('settings', () => {
   applySettings();
 
   watch(settings, (newVal) => {
+    const normalizedUiSize = normalizeUiSize(newVal.uiSize);
+    if (newVal.uiSize !== normalizedUiSize) {
+      settings.value.uiSize = normalizedUiSize;
+    }
     localStorage.setItem('settings', JSON.stringify(newVal));
     applySettings();
   }, { deep: true });
@@ -400,6 +409,7 @@ export const useSettingsStore = defineStore('settings', () => {
     availableTerminals,
     allTerminals,
     fetchAvailableTerminals,
+    applyUiSize: () => applyUiSizeToRoot(settings.value.uiSize),
     applyBackgroundImage,
     backgroundImageDataUrl,
     backgroundImagePreviewOpacity,

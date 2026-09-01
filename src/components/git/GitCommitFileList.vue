@@ -69,7 +69,7 @@ function dirname(path: string): string {
 </script>
 
 <template>
-  <div class="git-commit-files text-[11px]">
+  <div class="git-commit-files app-text-control">
     <!-- Header -->
     <div class="git-commit-files-header">
       <div class="i-mdi-file-tree-outline text-xs opacity-70" />
@@ -97,7 +97,7 @@ function dirname(path: string): string {
         </span>
         <div class="flex-1 min-w-0">
           <div class="git-scm-file-name truncate">{{ filename(file.path) }}</div>
-          <div v-if="dirname(file.path)" class="git-scm-file-dir truncate text-[9px]">{{ dirname(file.path) }}</div>
+          <div v-if="dirname(file.path)" class="git-scm-file-dir truncate app-text-meta">{{ dirname(file.path) }}</div>
         </div>
       </div>
     </div>

@@ -542,6 +542,18 @@
     languageHint: '选择应用界面语言',
     theme: '主题模式',
     themeHint: '选择应用的外观主题',
+    uiSize: '界面大小',
+    uiSizeHint: '调整文字、控件和列表的整体可读性与密度。',
+    uiSizeMode: {
+      compact: '紧凑',
+      standard: '标准',
+      comfortable: '舒适',
+    },
+    uiSizeDescription: {
+      compact: '在保持可读性的同时减少间距。',
+      standard: '推荐。适合大多数桌面环境。',
+      comfortable: '更大的文字和控件，适合高 DPI 或长时间使用。',
+    },
     backgroundImage: '全局背景图片',
     backgroundImageHint: '选择本地图片作为应用背景，可调节图片的显示强度',
     selectBackgroundImage: '选择图片',

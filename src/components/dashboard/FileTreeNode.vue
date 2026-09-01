@@ -216,11 +216,11 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 5px;
-  min-height: 26px;
+  min-height: var(--app-control-height-sm);
   padding-left: 4px;
   padding-right: 8px;
   color: var(--app-text-secondary);
-  font-size: 11px;
+  font-size: var(--app-font-control);
   cursor: default;
   user-select: none;
   -webkit-user-select: none;
@@ -263,13 +263,15 @@ onMounted(() => {
 .explorer-file-name {
   min-width: 0;
   font-size: 12px;
+  font-size: var(--app-font-control);
+  line-height: var(--app-line-height-control);
   user-select: none;
   -webkit-user-select: none;
 }
 .explorer-git-status {
   margin-left: auto;
   flex: 0 0 12px;
-  font-size: 10px;
+  font-size: var(--app-font-meta);
   font-weight: 700;
   text-align: center;
 }
@@ -281,9 +283,9 @@ onMounted(() => {
 .status-renamed,
 .status-copied { color: var(--app-primary); }
 .explorer-loading {
-  min-height: 24px;
+  min-height: var(--app-control-height-sm);
   color: var(--app-text-muted);
-  font-size: 10px;
+  font-size: var(--app-font-meta);
 }
 .explorer-children {
   margin-left: 14px;

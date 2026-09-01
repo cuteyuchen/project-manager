@@ -89,7 +89,7 @@ const phaseLabel = computed(() => t(`update.${props.phase || 'downloading'}`));
   min-width: 0;
   gap: 8px;
   color: var(--app-text);
-  font-size: 14px;
+  font-size: var(--app-font-control);
   font-weight: 600;
 }
 
@@ -125,7 +125,8 @@ const phaseLabel = computed(() => t(`update.${props.phase || 'downloading'}`));
   justify-content: flex-end;
   margin-top: 10px;
   color: var(--app-text-muted);
-  font-size: 12px;
+  font-size: var(--app-font-meta);
+  line-height: var(--app-line-height-caption);
 }
 
 .update-progress-fade-enter-active,

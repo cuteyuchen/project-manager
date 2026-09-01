@@ -202,7 +202,7 @@ function editProject(): void {
   border-radius: var(--app-radius-sm);
   background: transparent;
   color: var(--app-text);
-  font-size: 15px;
+  font-size: var(--app-font-subheading);
   font-weight: 700;
   text-align: left;
 }
@@ -217,7 +217,7 @@ function editProject(): void {
   margin-top: 2px;
   color: var(--app-text-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 11px;
+  font-size: var(--app-font-meta);
 }
 .project-management-dialog-action {
   display: inline-flex;
@@ -230,7 +230,7 @@ function editProject(): void {
   border-radius: var(--app-radius-md);
   background: var(--app-surface-soft);
   color: var(--app-text-secondary);
-  font-size: 12px;
+  font-size: var(--app-font-control);
   font-weight: 600;
   cursor: pointer;
 }

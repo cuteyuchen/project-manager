@@ -7,6 +7,7 @@ import type { AppDefaultNode, NodeVersion, Project, ProjectGroup, Settings, Usag
 import { ensureNodeInstallCommand } from './projectCommands';
 import { createPersistenceSaveQueue } from './persistenceQueue';
 import { clampWorkspaceExplorerWidth } from './workspaceExplorerLayout';
+import { normalizeUiSize } from './uiSize';
 
 const FILE_NAME = 'data.json';
 const SAVE_DEBOUNCE_MS = 800;
@@ -241,6 +242,15 @@ export async function loadData(): Promise<PersistenceLoadResult> {
     if (data.settings) {
       const settingsStore = useSettingsStore();
       const merged = { ...settingsStore.settings, ...data.settings };
+      if (Object.prototype.hasOwnProperty.call(data.settings, 'uiSize')) {
+        const originalUiSize = data.settings.uiSize;
+        merged.uiSize = normalizeUiSize(originalUiSize);
+        normalizedDataChanged ||= originalUiSize !== merged.uiSize;
+      } else {
+        // data.json 是正式持久化来源；旧版本缺字段时按新默认值迁移。
+        merged.uiSize = normalizeUiSize(undefined);
+        normalizedDataChanged = true;
+      }
       if (!Array.isArray(merged.projectViewPresets)) merged.projectViewPresets = [];
       if (!Array.isArray(merged.workspaceProfiles)) merged.workspaceProfiles = [];
       merged.workspaceExplorerWidth = clampWorkspaceExplorerWidth(merged.workspaceExplorerWidth);

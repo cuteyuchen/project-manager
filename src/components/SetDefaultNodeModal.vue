@@ -68,7 +68,7 @@ async function submit() {
             >
                 <div class="min-w-0">
                   <span class="font-mono font-bold text-slate-700 dark:text-slate-300">{{ v.version }}</span>
-                  <span class="ml-2 text-[11px] text-slate-400">{{ v.source }}</span>
+                  <span class="ml-2 app-text-meta text-slate-400">{{ v.source }}</span>
                 </div>
                 <div v-if="selectedKey === rowKey(v)" class="i-mdi-check text-blue-500 text-lg" />
             </div>

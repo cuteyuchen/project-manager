@@ -781,7 +781,7 @@ useAppShortcuts([
 
                 <div class="flex-1" />
 
-                <span class="text-xs text-slate-400 dark:text-slate-500">{{ t('dashboard.sortMode') }}</span>
+                <span class="app-text-meta text-slate-400 dark:text-slate-500">{{ t('dashboard.sortMode') }}</span>
                 <el-tooltip :content="sortMode === 'smart' ? t('dashboard.sortModeSmartHint') : t('dashboard.sortModeDefaultHint')" placement="top" :show-after="300">
                     <el-segmented v-model="settingsStore.settings.sortMode" :options="sortOptions" />
                 </el-tooltip>
@@ -891,13 +891,13 @@ useAppShortcuts([
              <div v-if="filteredProjects.length === 0 && rootProjects.length > 0" class="text-center mt-16 text-slate-400 dark:text-slate-500">
                 <div class="i-mdi-magnify text-4xl mb-3 opacity-20 mx-auto" />
                 <p class="text-sm font-medium">{{ t('common.search') }}</p>
-                <p class="text-xs opacity-50 mt-1">{{ t('dashboard.searchPlaceholder') }}</p>
+                <p class="app-text-meta mt-1 text-slate-500 dark:text-slate-400">{{ t('dashboard.searchPlaceholder') }}</p>
              </div>
 
              <div v-else-if="rootProjects.length === 0" class="text-center mt-20 text-slate-400 dark:text-slate-500">
                 <div class="i-mdi-folder-open-outline text-5xl mb-3 opacity-20 mx-auto" />
                 <p class="text-sm font-medium">{{ t('dashboard.noProjects') }}</p>
-                <p class="text-xs opacity-50 mt-1">{{ t('dashboard.addProject') }}</p>
+                <p class="app-text-meta mt-1 text-slate-500 dark:text-slate-400">{{ t('dashboard.addProject') }}</p>
              </div>
          </div>
     </div>
@@ -985,13 +985,13 @@ useAppShortcuts([
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 34px;
+  height: var(--app-control-height);
   padding: 0 12px;
   border: none;
   border-radius: var(--app-radius-md);
   background: transparent;
   color: var(--app-text-secondary);
-  font-size: 13px;
+  font-size: var(--app-font-control);
   font-weight: 500;
   transition:
     background-color var(--app-duration-fast) var(--app-ease),
@@ -1010,13 +1010,13 @@ useAppShortcuts([
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 34px;
+  height: var(--app-control-height);
   padding: 0 16px;
   border: none;
   border-radius: var(--app-radius-md);
   background: var(--app-primary);
   color: #fff;
-  font-size: 13px;
+  font-size: var(--app-font-control);
   font-weight: 600;
   box-shadow: var(--app-shadow-sm);
   transition: filter var(--app-duration-fast) var(--app-ease);
@@ -1033,7 +1033,7 @@ useAppShortcuts([
   border: none;
   background: transparent;
   color: var(--app-text-secondary);
-  font-size: 13px;
+  font-size: var(--app-font-control);
   transition: color var(--app-duration-fast) var(--app-ease);
 }
 .selection-link:hover {
@@ -1043,13 +1043,13 @@ useAppShortcuts([
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 30px;
+  min-height: var(--app-control-height-sm);
   padding: 0 12px;
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-md);
   background: var(--app-surface);
   color: var(--app-text-secondary);
-  font-size: 12px;
+  font-size: var(--app-font-control);
   font-weight: 500;
   transition:
     background-color var(--app-duration-fast) var(--app-ease),
@@ -1072,7 +1072,7 @@ useAppShortcuts([
   gap: 5px;
   padding: 5px 11px;
   border-radius: 999px;
-  font-size: 12px;
+  font-size: var(--app-font-meta);
   font-weight: 600;
   border: 1px solid var(--app-border);
   background: var(--app-surface);
@@ -1093,7 +1093,7 @@ useAppShortcuts([
   padding: 0 5px;
   border-radius: 999px;
   background: var(--app-surface-soft);
-  font-size: 11px;
+  font-size: var(--app-font-caption);
   font-weight: 700;
 }
 .health-chip-active {

@@ -612,7 +612,7 @@ async function copyText(value: string, successMessage: string) {
             <!-- Commit info header -->
             <div
               v-if="selectedHistoryCommit"
-              class="git-history-detail px-3 py-2 shrink-0 text-[11px] space-y-2 overflow-auto select-text"
+              class="git-history-detail app-text-control px-3 py-2 shrink-0 space-y-2 overflow-auto select-text"
               :style="{ height: historyDetailPane.size.value + 'px' }"
             >
               <div class="flex items-center justify-between gap-2 pb-1 border-b border-[color:var(--git-border)]">
@@ -653,7 +653,7 @@ async function copyText(value: string, successMessage: string) {
                 <div class="flex items-center gap-2">
                   <span class="text-slate-400 dark:text-slate-500">提交信息：</span>
                   <button
-                    class="rounded px-1.5 py-0.5 text-[10px] bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-300 transition-colors"
+                    class="app-text-control rounded px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-300 transition-colors"
                     @click="copyText(selectedHistoryCommit.message, t('git.copyCommitMessageSuccess'))"
                   >
                     {{ t('git.copyCommitMessage') }}
@@ -665,7 +665,7 @@ async function copyText(value: string, successMessage: string) {
                 <span
                   v-for="ref in shortHistoryRefs(selectedHistoryCommit.refs).slice(0, 5)"
                   :key="ref"
-                  class="text-[9px] px-1.5 py-0 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium truncate max-w-26"
+                  class="app-text-caption px-1.5 py-0 rounded-full bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium truncate max-w-26"
                 >{{ ref }}</span>
               </div>
             </div>

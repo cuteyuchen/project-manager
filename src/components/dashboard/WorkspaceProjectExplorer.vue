@@ -451,7 +451,7 @@ onUnmounted(() => {
         <div class="i-mdi-package-variant-closed" />
       </button>
     </div>
-    <div v-if="!rootProject" class="flex min-h-0 flex-1 items-center justify-center text-xs text-slate-400">项目不存在</div>
+    <div v-if="!rootProject" class="app-text-body flex min-h-0 flex-1 items-center justify-center text-slate-400">项目不存在</div>
     <div v-else class="explorer-tree min-h-0 flex-1 overflow-y-auto py-1 custom-scrollbar">
       <ProjectExplorerNode
         :key="`${rootProject.id}:${refreshToken}`"
@@ -574,7 +574,7 @@ onUnmounted(() => {
 .explorer-title {
   flex: 1 1 auto;
   color: var(--app-text-muted);
-  font-size: 10px;
+  font-size: var(--app-font-caption);
   font-weight: 800;
   letter-spacing: 0.08em;
 }
@@ -619,7 +619,7 @@ onUnmounted(() => {
   border: 0;
   background: transparent;
   color: inherit;
-  font-size: 11px;
+  font-size: var(--app-font-control);
   text-align: left;
 }
 .context-item:hover {

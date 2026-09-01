@@ -476,7 +476,7 @@ watch(() => props.filePath, () => {
 </script>
 
 <template>
-  <div class="git-history text-[11px]">
+  <div class="git-history app-text-control">
     <!-- 搜索筛选 -->
     <div class="git-history-search">
       <div class="i-mdi-magnify text-sm opacity-60" />
@@ -485,7 +485,7 @@ watch(() => props.filePath, () => {
         type="search"
         :placeholder="t('git.historySearchPlaceholder')"
       />
-      <span v-if="searchQuery.trim()" class="text-[10px] opacity-60 shrink-0">
+      <span v-if="searchQuery.trim()" class="app-text-meta shrink-0">
         {{ commits.length }}/{{ allCommits.length }}
       </span>
       <button
@@ -625,7 +625,7 @@ watch(() => props.filePath, () => {
       </div>
 
       <!-- Auto-loading indicator -->
-      <div v-if="loadingMore" class="px-3 py-1.5 shrink-0 text-center text-[10px] text-slate-400 dark:text-slate-500">
+      <div v-if="loadingMore" class="px-3 py-1.5 shrink-0 text-center app-text-meta text-slate-400 dark:text-slate-500">
         加载中...
       </div>
     </template>
@@ -634,7 +634,7 @@ watch(() => props.filePath, () => {
     <Teleport to="body">
       <div
         v-if="ctxMenu"
-        class="git-history-ctx fixed z-50 min-w-44 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg py-1 text-[11px]"
+        class="git-history-ctx app-text-control fixed z-50 min-w-44 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg py-1"
         ref="ctxMenuRef"
         :style="ctxMenuStyle"
         @mousedown.stop

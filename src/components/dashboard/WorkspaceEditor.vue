@@ -301,13 +301,14 @@ onBeforeUnmount(() => {
   gap: 7px;
   min-width: 96px;
   max-width: 190px;
-  height: 30px;
+  height: var(--app-control-height-sm);
   padding: 0 8px;
   border: 0;
   border-bottom: 2px solid transparent;
   background: transparent;
   color: var(--app-text-muted);
-  font-size: 11px;
+  font-size: var(--app-font-control);
+  line-height: var(--app-line-height-control);
   text-align: left;
 }
 .workspace-editor-tab.active {
@@ -317,7 +318,7 @@ onBeforeUnmount(() => {
 }
 .workspace-editor-dirty {
   color: var(--app-warning);
-  font-size: 10px;
+  font-size: var(--app-font-meta);
 }
 .workspace-editor-close {
   margin-left: auto;
@@ -356,13 +357,15 @@ onBeforeUnmount(() => {
 }
 .editor-state-title {
   color: var(--app-text);
-  font-size: 13px;
+  font-size: var(--app-font-body);
+  line-height: var(--app-line-height-body);
   font-weight: 600;
 }
 .editor-state-detail {
   max-width: 420px;
   color: var(--app-text-muted);
-  font-size: 11px;
+  font-size: var(--app-font-meta);
+  line-height: var(--app-line-height-body);
 }
 .editor-state-icon {
   color: var(--app-warning);
@@ -389,7 +392,7 @@ onBeforeUnmount(() => {
 }
 .editor-notice {
   color: var(--app-warning);
-  font-size: 11px;
+  font-size: var(--app-font-control);
 }
 .editor-external-btn {
   margin-left: auto;
@@ -398,7 +401,8 @@ onBeforeUnmount(() => {
   border-radius: 4px;
   background: var(--app-surface-soft);
   color: var(--app-text-secondary);
-  font-size: 11px;
+  font-size: var(--app-font-control);
+  line-height: var(--app-line-height-control);
 }
 .editor-external-btn:hover {
   border-color: var(--app-primary);

@@ -654,26 +654,26 @@ onBeforeUnmount(() => {
 <template>
     <div class="app-page absolute inset-0 console-view" tabindex="-1" @keydown="handleConsoleKeydown">
         <div v-if="activeProject && hasRunnableCommands" class="command-launcher app-panel-toolbar flex flex-wrap items-center gap-1.5 px-3 py-2 border-b">
-            <span class="text-[11px] text-slate-400 dark:text-slate-500 mr-1 shrink-0">{{ t('dashboard.runnableCommands') }}</span>
+            <span class="app-text-control text-slate-400 dark:text-slate-500 mr-1 shrink-0">{{ t('dashboard.runnableCommands') }}</span>
             <button v-for="cmd in runnableCustomCommands" :key="cmd.id" @click="toggleRun(getProjectCommandKey('custom', cmd.id))" class="launcher-btn" :class="isCommandKeyRunning(getProjectCommandKey('custom', cmd.id)) ? 'launcher-btn-running' : 'launcher-btn-custom'">
-                <div :class="isCommandKeyRunning(getProjectCommandKey('custom', cmd.id)) ? 'i-mdi-stop' : 'i-mdi-play'" class="text-[11px]" />
+                <div :class="isCommandKeyRunning(getProjectCommandKey('custom', cmd.id)) ? 'i-mdi-stop' : 'i-mdi-play'" class="text-xs" />
                 {{ getCustomCmdLabel(cmd) }}
             </button>
             <button v-for="script in runnableScripts" :key="script" @click="toggleRun(getProjectCommandKey('script', script))" class="launcher-btn" :class="isCommandKeyRunning(getProjectCommandKey('script', script)) ? 'launcher-btn-running' : (script === 'dev' || script === 'start' || script === 'serve' ? 'launcher-btn-primary' : 'launcher-btn-muted')">
-                <div :class="isCommandKeyRunning(getProjectCommandKey('script', script)) ? 'i-mdi-stop' : 'i-mdi-play'" class="text-[11px]" />
+                <div :class="isCommandKeyRunning(getProjectCommandKey('script', script)) ? 'i-mdi-stop' : 'i-mdi-play'" class="text-xs" />
                 {{ script }}
             </button>
         </div>
 
         <div v-if="activeProject" class="app-panel-toolbar flex flex-col z-10">
             <div v-if="availableTabs.length > 0" class="flex px-3 gap-0.5 overflow-x-auto custom-scrollbar pt-1.5">
-                <div v-for="commandKey in availableTabs" :key="commandKey" @click="activeScript = commandKey" :title="getTabTooltip(commandKey)" class="group relative px-3 py-1.5 text-xs font-medium rounded-t-md border-t border-x transition-all duration-150 cursor-pointer select-none flex items-center gap-2 min-w-[90px] justify-between" :class="activeScript === commandKey ? 'bg-[var(--app-bg-muted)] text-[var(--app-primary)] border-[var(--app-border)] border-b-transparent z-10' : 'bg-[var(--app-surface)] text-muted hover:text-secondary border-[var(--app-border)] hover:bg-[var(--app-surface-soft)]'">
+                <div v-for="commandKey in availableTabs" :key="commandKey" @click="activeScript = commandKey" :title="getTabTooltip(commandKey)" class="group relative px-3 py-1.5 app-text-control rounded-t-md border-t border-x transition-all duration-150 cursor-pointer select-none flex items-center gap-2 min-w-[90px] justify-between" :class="activeScript === commandKey ? 'bg-[var(--app-bg-muted)] text-[var(--app-primary)] border-[var(--app-border)] border-b-transparent z-10' : 'bg-[var(--app-surface)] text-muted hover:text-secondary border-[var(--app-border)] hover:bg-[var(--app-surface-soft)]'">
                     <div class="flex items-center gap-1.5 min-w-0">
                         <span class="console-tab-status-icon shrink-0" :class="[getTabStatusClass(commandKey), getTabStatusIcon(commandKey)]" />
                         <span class="truncate">{{ getTabLabel(commandKey) }}</span>
                     </div>
                     <button @click.stop="handleCloseTab(commandKey)" class="app-icon-btn !h-5 !min-w-5 opacity-0 group-hover:opacity-100 !rounded" :title="canCloseTab(commandKey) ? t('dashboard.closeTab') : t('dashboard.closeRunningTabHint')">
-                        <div class="i-mdi-close text-[10px]" />
+                        <div class="i-mdi-close text-xs" />
                     </button>
                 </div>
             </div>
@@ -683,9 +683,9 @@ onBeforeUnmount(() => {
         </div>
 
         <div v-if="activeScript && currentSession" class="app-panel-toolbar flex items-center justify-between gap-2 px-3 py-1.5 console-session-header">
-            <div class="text-[11px] text-slate-400 dark:text-slate-500 font-mono flex items-center gap-2 min-w-0 flex-wrap">
+            <div class="app-text-meta text-slate-400 dark:text-slate-500 font-mono flex items-center gap-2 min-w-0 flex-wrap">
                 <span class="truncate max-w-32">{{ getTabLabel(activeScript) }}</span>
-                <span class="console-session-status px-1.5 py-0.5 rounded border flex items-center gap-1" :class="getSessionStatusClass(currentSession.status)"><div :class="getSessionStatusIcon(currentSession.status)" class="text-[10px]" />{{ getSessionStatusLabel(currentSession.status) }}</span>
+                <span class="console-session-status px-1.5 py-0.5 rounded border flex items-center gap-1" :class="getSessionStatusClass(currentSession.status)"><div :class="getSessionStatusIcon(currentSession.status)" class="text-xs" />{{ getSessionStatusLabel(currentSession.status) }}</span>
                  <span v-if="currentSession.exitCode !== undefined">{{ t('dashboard.exitCodeShort', { code: currentSession.exitCode === null ? 'null' : currentSession.exitCode }) }}</span>
                 <span v-if="currentSessionDuration !== null">{{ formatDuration(currentSessionDuration) }}</span>
                  <span v-if="currentSession.nodeVersion" class="truncate max-w-[180px]">{{ t('dashboard.nodeLabel') }} {{ currentSession.nodeVersion }}</span>
@@ -694,9 +694,9 @@ onBeforeUnmount(() => {
             <div class="console-header-actions shrink-0">
                 <button class="app-icon-btn !h-6 !min-w-6 !rounded" :title="t('dashboard.searchLogs')" @click="openSearch"><div class="i-mdi-magnify text-sm" /></button>
                 <button class="console-header-command" type="button" :title="t('dashboard.runHistory')" @click="openHistory()"><div class="i-mdi-history text-sm" /><span class="hidden sm:inline">{{ t('dashboard.runHistory') }}</span></button>
-                <button v-if="currentSession.status === 'starting' || currentSession.status === 'running'" class="console-stop-command" type="button" @click="handleStop"><div class="i-mdi-stop text-[10px]" /><span class="hidden sm:inline">{{ t('dashboard.stop') }}</span></button>
-                <button v-else-if="currentSession.status === 'stopping'" class="console-status-command" type="button" disabled><div class="i-mdi-loading animate-spin text-[10px]" /><span class="hidden sm:inline">{{ t('dashboard.runStatusStopping') }}</span></button>
-                <button v-else class="console-rerun-command" type="button" @click="handleRerun"><div class="i-mdi-restart text-[10px]" /><span class="hidden sm:inline">{{ t('dashboard.rerun') }}</span></button>
+                <button v-if="currentSession.status === 'starting' || currentSession.status === 'running'" class="console-stop-command" type="button" @click="handleStop"><div class="i-mdi-stop text-xs" /><span class="hidden sm:inline">{{ t('dashboard.stop') }}</span></button>
+                <button v-else-if="currentSession.status === 'stopping'" class="console-status-command" type="button" disabled><div class="i-mdi-loading animate-spin text-xs" /><span class="hidden sm:inline">{{ t('dashboard.runStatusStopping') }}</span></button>
+                <button v-else class="console-rerun-command" type="button" @click="handleRerun"><div class="i-mdi-restart text-xs" /><span class="hidden sm:inline">{{ t('dashboard.rerun') }}</span></button>
                 <el-dropdown trigger="click" @command="handleMoreCommand">
                     <button class="app-icon-btn !h-6 !min-w-6 !rounded" :title="t('dashboard.moreActions')" type="button"><div class="i-mdi-dots-horizontal text-sm" /></button>
                     <template #dropdown>
@@ -730,13 +730,13 @@ onBeforeUnmount(() => {
                 </div>
             </div>
 
-            <div ref="logContainer" @click="handleLogClick" @scroll="handleLogScroll" class="flex-1 overflow-y-auto font-mono text-xs leading-relaxed whitespace-pre-wrap select-text relative min-h-0">
+            <div ref="logContainer" @click="handleLogClick" @scroll="handleLogScroll" class="flex-1 overflow-y-auto font-mono app-text-console whitespace-pre-wrap select-text relative min-h-0">
                 <div class="p-3">
                     <div v-for="item in renderedLogs" :key="`${currentSessionId}:${item.sequence}`" :data-sequence="item.sequence" class="console-log-row break-all border-l-2 border-transparent pl-2 -ml-2 transition-colors duration-100 py-px" :class="{ 'console-log-match': item.isMatch, 'console-log-match-selected': item.isSelectedMatch, 'console-log-stderr': item.stream === 'stderr' }" v-html="item.html" />
                     <div v-if="promptPreview" class="console-log-row break-all border-l-2 border-transparent pl-2 -ml-2 py-px text-amber-500" v-html="getCachedParsedAnsi(promptPreview)" />
                 </div>
-                <div v-if="filteredLogEntries.length === 0" class="h-full flex flex-col items-center justify-center text-slate-300 dark:text-slate-700 absolute inset-0 pointer-events-none"><div class="i-mdi-console-line text-5xl mb-3 opacity-20" /><p class="text-xs">{{ t('dashboard.waitingForOutput') }}</p></div>
-                <button v-if="!shouldFollowLogs && filteredLogEntries.length > 0" @click.stop="resumeLogFollow" class="app-primary-action absolute right-4 bottom-4 z-10 !min-h-0 rounded-full px-3 py-1.5 text-[11px]"><div class="i-mdi-arrow-down-circle text-sm" /><span>{{ t('dashboard.jumpToBottom') }}</span></button>
+                <div v-if="filteredLogEntries.length === 0" class="h-full flex flex-col items-center justify-center text-slate-300 dark:text-slate-700 absolute inset-0 pointer-events-none"><div class="i-mdi-console-line text-5xl mb-3 opacity-20" /><p class="app-text-caption">{{ t('dashboard.waitingForOutput') }}</p></div>
+                <button v-if="!shouldFollowLogs && filteredLogEntries.length > 0" @click.stop="resumeLogFollow" class="app-primary-action app-text-control absolute right-4 bottom-4 z-10 !min-h-0 rounded-full px-3 py-1.5"><div class="i-mdi-arrow-down-circle text-sm" /><span>{{ t('dashboard.jumpToBottom') }}</span></button>
             </div>
 
             <div v-if="isInteractive" class="console-stdin-bar shrink-0 flex items-center gap-2 border-t px-3 py-2">
@@ -753,18 +753,18 @@ onBeforeUnmount(() => {
 
         <div v-if="historyOpen" class="console-history-layer" @click.self="historyOpen = false">
             <aside class="console-history-drawer" role="dialog" :aria-label="t('dashboard.runHistory')">
-                <div class="console-history-header"><div class="min-w-0"><h3 class="text-sm font-semibold truncate">{{ t('dashboard.runHistory') }}</h3><p class="text-[11px] text-slate-400 truncate">{{ activeProject.name }}</p></div><button class="app-icon-btn !h-7 !min-w-7 !rounded" :title="t('common.close')" @click="historyOpen = false"><div class="i-mdi-close text-sm" /></button></div>
+                <div class="console-history-header"><div class="min-w-0"><h3 class="app-text-subheading truncate">{{ t('dashboard.runHistory') }}</h3><p class="app-text-meta text-slate-400 truncate">{{ activeProject.name }}</p></div><button class="app-icon-btn !h-7 !min-w-7 !rounded" :title="t('common.close')" @click="historyOpen = false"><div class="i-mdi-close text-sm" /></button></div>
                 <div class="console-history-scope px-3 py-2"><button type="button" :class="{ 'is-active': historyScope === 'command' }" :disabled="!activeCommandKey()" @click="historyScope = 'command'">{{ t('dashboard.currentCommand') }}</button><button type="button" :class="{ 'is-active': historyScope === 'project' }" @click="historyScope = 'project'">{{ t('dashboard.currentProject') }}</button></div>
                 <div class="console-history-list flex-1 overflow-y-auto px-3">
                     <div v-if="visibleHistoryEntries.length === 0" class="console-history-empty"><div class="i-mdi-history text-3xl opacity-25" /><span>{{ t('dashboard.noRunHistory') }}</span></div>
                     <button v-for="entry in visibleHistoryEntries" :key="entry.historyId" type="button" class="console-history-row" :class="{ 'is-selected': selectedHistoryEntry?.historyId === entry.historyId }" @click="selectedHistoryId = entry.historyId">
                         <span class="console-history-status" :class="getSessionStatusClass(entry.status)"><div :class="getSessionStatusIcon(entry.status)" /></span>
-                        <span class="min-w-0 flex-1 text-left"><span class="block truncate text-xs font-medium">{{ entry.displayName }}</span><span class="block text-[10px] text-slate-400">{{ formatLocalDateTime(entry.endedAt) }}</span></span>
-                         <span class="text-[10px] text-slate-400 text-right shrink-0"><span v-if="entry.status === 'failed'" class="block">{{ t('dashboard.exitCodeShort', { code: entry.exitCode ?? 'null' }) }}</span><span>{{ formatDuration(entry.durationMs) }}</span></span>
+                        <span class="min-w-0 flex-1 text-left"><span class="block truncate app-text-control">{{ entry.displayName }}</span><span class="block app-text-meta text-slate-400">{{ formatLocalDateTime(entry.endedAt) }}</span></span>
+                         <span class="app-text-meta text-slate-400 text-right shrink-0"><span v-if="entry.status === 'failed'" class="block">{{ t('dashboard.exitCodeShort', { code: entry.exitCode ?? 'null' }) }}</span><span>{{ formatDuration(entry.durationMs) }}</span></span>
                     </button>
                 </div>
                 <div v-if="selectedHistoryEntry" class="console-history-detail px-3 py-3 border-t">
-                    <div class="flex items-center justify-between gap-2 mb-2"><span class="console-history-detail-status" :class="getSessionStatusClass(selectedHistoryEntry.status)"><div :class="getSessionStatusIcon(selectedHistoryEntry.status)" />{{ getHistoryStatusLabel(selectedHistoryEntry.status) }}</span><button type="button" class="console-rerun-command" :disabled="!historyCommandExists(selectedHistoryEntry)" :title="historyCommandExists(selectedHistoryEntry) ? t('dashboard.rerun') : t('dashboard.commandNoLongerExists')" @click="rerunHistoryEntry(selectedHistoryEntry)"><div class="i-mdi-restart text-[10px]" />{{ t('dashboard.rerun') }}</button></div>
+                    <div class="flex items-center justify-between gap-2 mb-2"><span class="console-history-detail-status app-text-meta" :class="getSessionStatusClass(selectedHistoryEntry.status)"><div :class="getSessionStatusIcon(selectedHistoryEntry.status)" />{{ getHistoryStatusLabel(selectedHistoryEntry.status) }}</span><button type="button" class="console-rerun-command" :disabled="!historyCommandExists(selectedHistoryEntry)" :title="historyCommandExists(selectedHistoryEntry) ? t('dashboard.rerun') : t('dashboard.commandNoLongerExists')" @click="rerunHistoryEntry(selectedHistoryEntry)"><div class="i-mdi-restart text-xs" />{{ t('dashboard.rerun') }}</button></div>
                     <dl class="console-history-metadata">
                         <div><dt>{{ t('dashboard.historyStarted') }}</dt><dd>{{ formatLocalDateTime(selectedHistoryEntry.startedAt) }}</dd></div>
                         <div><dt>{{ t('dashboard.historyEnded') }}</dt><dd>{{ formatLocalDateTime(selectedHistoryEntry.endedAt) }}</dd></div>
@@ -775,7 +775,7 @@ onBeforeUnmount(() => {
                         <div><dt>{{ t('dashboard.historyPackageManager') }}</dt><dd>{{ selectedHistoryEntry.packageManager || '-' }}</dd></div>
                         <div><dt>{{ t('dashboard.historyCwd') }}</dt><dd :title="selectedHistoryEntry.cwd">{{ selectedHistoryEntry.cwd }}</dd></div>
                     </dl>
-                    <p v-if="selectedHistoryEntry.errorMessage" class="console-history-error">{{ selectedHistoryEntry.errorMessage }}</p><p class="text-[10px] text-slate-400 mt-2">{{ t('dashboard.historySummaryOnly') }}</p>
+                    <p v-if="selectedHistoryEntry.errorMessage" class="console-history-error">{{ selectedHistoryEntry.errorMessage }}</p><p class="app-text-meta text-slate-400 mt-2">{{ t('dashboard.historySummaryOnly') }}</p>
                 </div>
                 <div class="console-history-footer px-3 py-2 border-t"><button type="button" class="console-history-clear" :disabled="projectHistory.length === 0" @click="clearProjectHistory"><div class="i-mdi-delete-sweep text-sm" />{{ t('dashboard.clearProjectHistory') }}</button></div>
             </aside>
@@ -798,7 +798,7 @@ onBeforeUnmount(() => {
 .console-log-stderr { border-left-color: color-mix(in srgb, var(--app-warning, #d97706) 32%, transparent); }
 .console-log-match { background: color-mix(in srgb, var(--app-warning, #d97706) 12%, transparent); }
 .console-log-match-selected { outline: 1px solid color-mix(in srgb, var(--app-warning, #d97706) 58%, transparent); outline-offset: 1px; }
-.launcher-btn { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: var(--app-radius-md); font-size: 11px; font-weight: 600; border: 1px solid transparent; cursor: pointer; transition: background-color var(--app-duration-fast) var(--app-ease), color var(--app-duration-fast) var(--app-ease); }
+.launcher-btn { display: inline-flex; align-items: center; gap: 4px; min-height: var(--app-control-height-sm); padding: 3px 10px; border-radius: var(--app-radius-md); font-size: var(--app-font-control); line-height: var(--app-line-height-control); font-weight: 600; border: 1px solid transparent; cursor: pointer; transition: background-color var(--app-duration-fast) var(--app-ease), color var(--app-duration-fast) var(--app-ease); }
 .launcher-btn-custom { background: color-mix(in srgb, var(--app-primary) 8%, transparent); color: var(--app-primary); border-color: color-mix(in srgb, var(--app-primary) 18%, transparent); border-style: dashed; }
 .launcher-btn-custom:hover { background: color-mix(in srgb, var(--app-primary) 16%, transparent); }
 .launcher-btn-primary { background: color-mix(in srgb, var(--app-success) 10%, transparent); color: var(--app-success); border-color: color-mix(in srgb, var(--app-success) 20%, transparent); }
@@ -807,39 +807,39 @@ onBeforeUnmount(() => {
 .launcher-btn-muted:hover { background: var(--app-surface); color: var(--app-text); }
 .launcher-btn-running { background: color-mix(in srgb, var(--app-danger, #ef4444) 12%, transparent); color: var(--app-danger, #ef4444); border-color: color-mix(in srgb, var(--app-danger, #ef4444) 22%, transparent); }
 .console-header-actions { display: flex; align-items: center; gap: 4px; }
-.console-header-command, .console-stop-command, .console-rerun-command, .console-status-command { display: inline-flex; align-items: center; gap: 5px; min-height: 24px; padding: 0 8px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-surface-soft); color: var(--app-text-secondary); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.console-header-command, .console-stop-command, .console-rerun-command, .console-status-command { display: inline-flex; align-items: center; gap: 5px; min-height: var(--app-control-height-sm); padding: 0 8px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-surface-soft); color: var(--app-text-secondary); font-size: var(--app-font-control); line-height: var(--app-line-height-control); font-weight: 600; white-space: nowrap; }
 .console-header-command:hover { color: var(--app-primary); border-color: color-mix(in srgb, var(--app-primary) 35%, transparent); }
 .console-stop-command { color: var(--app-danger, #dc2626); border-color: color-mix(in srgb, var(--app-danger, #dc2626) 22%, transparent); background: color-mix(in srgb, var(--app-danger, #dc2626) 8%, transparent); }
 .console-rerun-command { color: var(--app-warning, #b45309); border-color: color-mix(in srgb, var(--app-warning, #b45309) 25%, transparent); background: color-mix(in srgb, var(--app-warning, #b45309) 8%, transparent); }
 .console-status-command { color: var(--app-text-muted); opacity: .75; }
-.console-search-input { height: 26px; padding: 0 8px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-surface-soft); color: var(--app-text); font: inherit; font-size: 12px; outline: none; }
+.console-search-input { height: var(--app-control-height-sm); padding: 0 8px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-surface-soft); color: var(--app-text); font: inherit; font-size: var(--app-font-control); outline: none; }
 .console-search-input:focus { border-color: color-mix(in srgb, var(--app-primary) 52%, transparent); }
-.console-search-count { min-width: 46px; color: var(--app-text-muted); font-size: 10px; text-align: right; }
+.console-search-count { min-width: 46px; color: var(--app-text-muted); font-size: var(--app-font-meta); text-align: right; }
 .console-filter-group { display: inline-flex; align-items: center; gap: 2px; }
-.console-filter-button { min-height: 23px; padding: 0 7px; border: 1px solid transparent; border-radius: var(--app-radius-sm); background: transparent; color: var(--app-text-muted); font-size: 10px; }
+.console-filter-button { min-height: var(--app-control-height-sm); padding: 0 7px; border: 1px solid transparent; border-radius: var(--app-radius-sm); background: transparent; color: var(--app-text-muted); font-size: var(--app-font-control); }
 .console-filter-button:hover, .console-filter-button.is-active { border-color: var(--app-border); background: var(--app-surface-soft); color: var(--app-primary); }
 .console-stdin-bar { background: var(--app-surface); }
-.console-stdin-input { height: 28px; padding: 0 10px; border: 1px solid var(--app-border); border-radius: var(--app-radius-md); background: var(--app-surface-soft); color: var(--app-text); font-size: 12px; font-family: inherit; }
-.console-stdin-send { height: 28px; padding: 0 12px; border-radius: var(--app-radius-md); border: 1px solid color-mix(in srgb, var(--app-primary) 30%, transparent); background: color-mix(in srgb, var(--app-primary) 10%, transparent); color: var(--app-primary); font-size: 12px; font-weight: 600; }
-.console-empty-history { display: inline-flex; align-items: center; gap: 5px; margin-top: 12px; padding: 5px 9px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-surface-soft); color: var(--app-primary); font-size: 11px; }
+.console-stdin-input { height: var(--app-control-height-sm); padding: 0 10px; border: 1px solid var(--app-border); border-radius: var(--app-radius-md); background: var(--app-surface-soft); color: var(--app-text); font-size: var(--app-font-control); line-height: var(--app-line-height-control); font-family: inherit; }
+.console-stdin-send { height: var(--app-control-height-sm); padding: 0 12px; border-radius: var(--app-radius-md); border: 1px solid color-mix(in srgb, var(--app-primary) 30%, transparent); background: color-mix(in srgb, var(--app-primary) 10%, transparent); color: var(--app-primary); font-size: var(--app-font-control); line-height: var(--app-line-height-control); font-weight: 600; }
+.console-empty-history { display: inline-flex; align-items: center; gap: 5px; margin-top: 12px; padding: 5px 9px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); background: var(--app-surface-soft); color: var(--app-primary); font-size: var(--app-font-control); }
 .console-history-layer { position: absolute; inset: 0; z-index: 30; background: color-mix(in srgb, black 18%, transparent); }
 .console-history-drawer { position: absolute; inset: 0 0 0 auto; display: flex; flex-direction: column; width: min(420px, calc(100vw - 24px)); background: var(--app-surface); border-left: 1px solid var(--app-border); box-shadow: -8px 0 24px color-mix(in srgb, black 16%, transparent); }
 .console-history-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border-bottom: 1px solid var(--app-border); }
 .console-history-scope { display: flex; gap: 4px; border-bottom: 1px solid var(--app-border); }
-.console-history-scope button { flex: 1; min-height: 27px; border: 1px solid transparent; border-radius: var(--app-radius-sm); background: transparent; color: var(--app-text-muted); font-size: 11px; }
+.console-history-scope button { flex: 1; min-height: var(--app-control-height-sm); border: 1px solid transparent; border-radius: var(--app-radius-sm); background: transparent; color: var(--app-text-muted); font-size: var(--app-font-control); }
 .console-history-scope button:hover, .console-history-scope button.is-active { color: var(--app-primary); border-color: var(--app-border); background: var(--app-surface-soft); }
 .console-history-row { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 50px; padding: 7px 8px; border: 1px solid transparent; border-radius: var(--app-radius-sm); background: transparent; color: var(--app-text); }
 .console-history-row:hover, .console-history-row.is-selected { border-color: var(--app-border); background: var(--app-surface-soft); }
 .console-history-status { display: inline-flex; align-items: center; justify-content: center; width: 20px; flex-shrink: 0; font-size: 14px; }
-.console-history-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; height: 180px; color: var(--app-text-muted); font-size: 11px; }
+.console-history-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; height: 180px; color: var(--app-text-muted); font-size: var(--app-font-meta); }
 .console-history-detail { background: var(--app-surface-soft); }
-.console-history-detail-status { display: inline-flex; align-items: center; gap: 5px; padding: 3px 6px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); font-size: 11px; }
-.console-history-metadata { display: grid; gap: 5px; font-size: 10px; }
+.console-history-detail-status { display: inline-flex; align-items: center; gap: 5px; padding: 3px 6px; border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); font-size: var(--app-font-meta); }
+.console-history-metadata { display: grid; gap: 5px; font-size: var(--app-font-meta); }
 .console-history-metadata > div { display: grid; grid-template-columns: 86px minmax(0, 1fr); gap: 8px; }
 .console-history-metadata dt { color: var(--app-text-muted); }
 .console-history-metadata dd { overflow: hidden; color: var(--app-text-secondary); text-overflow: ellipsis; white-space: nowrap; }
-.console-history-error { margin-top: 8px; padding: 6px 7px; border-left: 2px solid var(--app-danger, #dc2626); color: var(--app-text-secondary); font-size: 10px; white-space: pre-wrap; word-break: break-word; }
+.console-history-error { margin-top: 8px; padding: 6px 7px; border-left: 2px solid var(--app-danger, #dc2626); color: var(--app-text-secondary); font-size: var(--app-font-meta); line-height: var(--app-line-height-body); white-space: pre-wrap; word-break: break-word; }
 .console-history-footer { background: var(--app-surface); }
-.console-history-clear { display: inline-flex; align-items: center; gap: 5px; min-height: 27px; color: var(--app-danger, #dc2626); font-size: 11px; }
+.console-history-clear { display: inline-flex; align-items: center; gap: 5px; min-height: var(--app-control-height-sm); color: var(--app-danger, #dc2626); font-size: var(--app-font-control); }
 .console-history-clear:disabled { color: var(--app-text-muted); opacity: .55; }
 </style>

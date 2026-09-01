@@ -9,6 +9,20 @@ import "./styles/theme.css";
 import "./styles/git-ui.css";
 import "virtual:uno.css";
 import i18n from "./i18n";
+import { applyUiSizeToRoot, normalizeUiSize } from './utils/uiSize';
+
+function applyInitialUiSize(): void {
+  let storedUiSize: unknown;
+  try {
+    const storedSettings = localStorage.getItem('settings');
+    if (storedSettings) storedUiSize = JSON.parse(storedSettings).uiSize;
+  } catch {
+    storedUiSize = undefined;
+  }
+  applyUiSizeToRoot(normalizeUiSize(storedUiSize));
+}
+
+applyInitialUiSize();
 
 // Disable right-click context menu
 if (import.meta.env.PROD) {

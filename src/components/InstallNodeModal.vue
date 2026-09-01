@@ -175,7 +175,7 @@ async function cancelInstall() {
       </el-input>
     </div>
 
-    <div v-if="fetchError" class="mb-3 flex items-center justify-between text-xs text-rose-500">
+    <div v-if="fetchError" class="app-text-control mb-3 flex items-center justify-between text-rose-500">
       <span>{{ t('nodes.releaseFetchFailed') }}</span>
       <el-button link type="primary" @click="fetchVersions">{{ t('common.refresh') }}</el-button>
     </div>
@@ -198,7 +198,7 @@ async function cancelInstall() {
         </el-table-column>
         <el-table-column prop="date" label="Date">
           <template #default="{ row }">
-            <span class="text-slate-500 text-xs">{{ row.date }}</span>
+            <span class="app-text-meta text-slate-500">{{ row.date }}</span>
           </template>
         </el-table-column>
         <el-table-column align="right" width="140">
@@ -209,18 +209,18 @@ async function cancelInstall() {
                 :disabled="!!installingVersion">
                 Install
               </el-button>
-              <span v-if="progressLabel(row.version)" class="text-[10px] text-blue-500">{{ progressLabel(row.version) }}</span>
+              <span v-if="progressLabel(row.version)" class="app-text-meta text-blue-500">{{ progressLabel(row.version) }}</span>
             </div>
           </template>
         </el-table-column>
       </el-table>
 
-      <div v-if="installError" class="mx-2 mb-2 rounded-md border border-rose-200 bg-rose-50 p-2 text-xs text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-300">
+      <div v-if="installError" class="app-text-control mx-2 mb-2 rounded-md border border-rose-200 bg-rose-50 p-2 text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/30 dark:text-rose-300">
         <div class="flex items-center justify-between gap-2">
           <strong>{{ t('nodes.installFailed') }}: {{ installError.version }}</strong>
           <el-button link type="danger" size="small" @click="install(installError!.version)">{{ t('nodes.retryInstall') }}</el-button>
         </div>
-        <pre class="mt-1 max-h-28 overflow-auto whitespace-pre-wrap break-words font-mono text-[10px]">{{ installError.detail }}</pre>
+        <pre class="app-text-code mt-1 max-h-28 overflow-auto whitespace-pre-wrap break-words font-mono">{{ installError.detail }}</pre>
       </div>
 
       <div

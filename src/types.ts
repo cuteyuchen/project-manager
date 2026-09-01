@@ -1,4 +1,5 @@
 import type { FrontendEnvGroup } from './utils/frontendEnvSwitcher';
+import type { UiSize } from './utils/uiSize';
 
 /** 内置命令 id：名称在渲染时按当前语言翻译，不写死在数据里 */
 export type BuiltinCommandId =
@@ -280,6 +281,8 @@ export interface Settings {
   workspaceExplorerWidth?: number;
   locale: 'zh' | 'en';
   themeMode: 'dark' | 'light' | 'auto';
+  /** 全局界面密度与可读性档位；旧数据缺省或非法时回落为 standard。 */
+  uiSize?: UiSize;
   /** 全局背景图片的本地文件路径 */
   backgroundImagePath?: string;
   /** 背景图片可见度，范围 0.1～1 */
