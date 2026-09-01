@@ -1,6 +1,6 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
-use std::collections::HashMap;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -8,11 +8,11 @@ use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+#[cfg(target_os = "windows")]
+use encoding_rs::{GBK, UTF_16BE, UTF_16LE};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tauri::Manager;
-#[cfg(target_os = "windows")]
-use encoding_rs::{GBK, UTF_16BE, UTF_16LE};
 
 #[cfg(target_os = "windows")]
 use winreg::enums::*;
@@ -135,7 +135,13 @@ fn decode_command_bytes(bytes: &[u8]) -> String {
 
     let likely_utf16_le = bytes.len() > 2
         && bytes.len() % 2 == 0
-        && bytes.iter().skip(1).step_by(2).filter(|byte| **byte == 0).count() > bytes.len() / 4;
+        && bytes
+            .iter()
+            .skip(1)
+            .step_by(2)
+            .filter(|byte| **byte == 0)
+            .count()
+            > bytes.len() / 4;
     if likely_utf16_le {
         let (decoded, _, _) = UTF_16LE.decode(bytes);
         return decoded.trim().to_string();
@@ -210,7 +216,7 @@ fn check_command_exists(cmd: &str) -> bool {
             .map(|output| output.status.success())
             .unwrap_or(false)
     }
-    
+
     #[cfg(not(target_os = "windows"))]
     {
         Command::new("which")
@@ -329,47 +335,75 @@ fn first_existing_path(paths: Vec<PathBuf>) -> Option<String> {
 }
 
 #[cfg(target_os = "windows")]
-fn resolve_editor_from_install(name: &str, install_location: &str, display_icon: &str) -> Option<EditorInfo> {
+fn resolve_editor_from_install(
+    name: &str,
+    install_location: &str,
+    display_icon: &str,
+) -> Option<EditorInfo> {
     let name_lower = name.to_lowercase();
     let install_dir = PathBuf::from(install_location);
     let icon_path = PathBuf::from(clean_registry_path(display_icon));
 
     let (label, candidates): (&str, Vec<PathBuf>) = if name_lower.contains("visual studio code") {
-        ("Visual Studio Code", vec![
-            install_dir.join("bin").join("code.cmd"),
-            install_dir.join("bin").join("code"),
-            install_dir.join("Code.exe"),
-            icon_path,
-        ])
+        (
+            "Visual Studio Code",
+            vec![
+                install_dir.join("bin").join("code.cmd"),
+                install_dir.join("bin").join("code"),
+                install_dir.join("Code.exe"),
+                icon_path,
+            ],
+        )
     } else if name_lower.contains("trae") {
-        ("Trae CN", vec![
-            install_dir.join("bin").join("trae.cmd"),
-            install_dir.join("bin").join("trae"),
-            install_dir.join("Trae.exe"),
-            icon_path,
-        ])
+        (
+            "Trae CN",
+            vec![
+                install_dir.join("bin").join("trae.cmd"),
+                install_dir.join("bin").join("trae"),
+                install_dir.join("Trae.exe"),
+                icon_path,
+            ],
+        )
     } else if name_lower.contains("cursor") {
-        ("Cursor", vec![
-            install_dir.join("bin").join("cursor.cmd"),
-            install_dir.join("bin").join("cursor"),
-            install_dir.join("Cursor.exe"),
-            icon_path,
-        ])
+        (
+            "Cursor",
+            vec![
+                install_dir.join("bin").join("cursor.cmd"),
+                install_dir.join("bin").join("cursor"),
+                install_dir.join("Cursor.exe"),
+                icon_path,
+            ],
+        )
     } else if name_lower.contains("windsurf") {
-        ("Windsurf", vec![
-            install_dir.join("bin").join("windsurf.cmd"),
-            install_dir.join("bin").join("windsurf"),
-            install_dir.join("Windsurf.exe"),
-            icon_path,
-        ])
+        (
+            "Windsurf",
+            vec![
+                install_dir.join("bin").join("windsurf.cmd"),
+                install_dir.join("bin").join("windsurf"),
+                install_dir.join("Windsurf.exe"),
+                icon_path,
+            ],
+        )
     } else if name_lower.contains("webstorm") {
-        ("WebStorm", vec![install_dir.join("bin").join("webstorm64.exe"), icon_path])
+        (
+            "WebStorm",
+            vec![install_dir.join("bin").join("webstorm64.exe"), icon_path],
+        )
     } else if name_lower.contains("intellij idea") {
-        ("IntelliJ IDEA", vec![install_dir.join("bin").join("idea64.exe"), icon_path])
+        (
+            "IntelliJ IDEA",
+            vec![install_dir.join("bin").join("idea64.exe"), icon_path],
+        )
     } else if name_lower.contains("sublime text") {
-        ("Sublime Text", vec![install_dir.join("sublime_text.exe"), icon_path])
+        (
+            "Sublime Text",
+            vec![install_dir.join("sublime_text.exe"), icon_path],
+        )
     } else if name_lower.contains("notepad++") {
-        ("Notepad++", vec![install_dir.join("notepad++.exe"), icon_path])
+        (
+            "Notepad++",
+            vec![install_dir.join("notepad++.exe"), icon_path],
+        )
     } else {
         return None;
     };
@@ -468,18 +502,18 @@ pub fn set_context_menu(enable: bool, locale: String) -> Result<(), String> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let exe_path = get_exe_path()?;
     let exe_str = exe_path.to_str().ok_or("Invalid path")?;
-    
+
     let menu_text = if locale == "zh" {
         "在项目管理器中打开"
     } else {
         "Open in Project Manager"
     };
-    
+
     let keys = vec![
         r"Software\Classes\Directory\shell\project-manager",
-        r"Software\Classes\Directory\Background\shell\project-manager"
+        r"Software\Classes\Directory\Background\shell\project-manager",
     ];
-    
+
     for key_path in keys {
         if enable {
             let (key, _) = hkcu.create_subkey(key_path).map_err(|e| e.to_string())?;
@@ -518,45 +552,50 @@ pub fn set_context_menu(enable: bool, locale: String) -> Result<(), String> {
 
     if enable {
         if !applications_dir.exists() {
-             fs::create_dir_all(&applications_dir).map_err(|e| e.to_string())?;
+            fs::create_dir_all(&applications_dir).map_err(|e| e.to_string())?;
         }
 
         let exe_path = get_exe_path()?;
         let exe_str = exe_path.to_str().ok_or("Invalid path")?;
-        
+
         // Basic .desktop file for "Open With" support
         // MimeType=inode/directory registers it for folders
-        let content = format!(r#"[Desktop Entry]
+        let content = format!(
+            r#"[Desktop Entry]
 Type=Application
 Name={}
 Exec="{}" "%f"
 Icon=folder-open
 NoDisplay=true
 MimeType=inode/directory;
-"#, menu_text, exe_str);
+"#,
+            menu_text, exe_str
+        );
 
         let mut file = fs::File::create(&desktop_file_path).map_err(|e| e.to_string())?;
-        file.write_all(content.as_bytes()).map_err(|e| e.to_string())?;
-        
+        file.write_all(content.as_bytes())
+            .map_err(|e| e.to_string())?;
+
         // Make executable
-        let mut perms = fs::metadata(&desktop_file_path).map_err(|e| e.to_string())?.permissions();
+        let mut perms = fs::metadata(&desktop_file_path)
+            .map_err(|e| e.to_string())?
+            .permissions();
         perms.set_mode(0o755);
         fs::set_permissions(&desktop_file_path, perms).map_err(|e| e.to_string())?;
-        
+
         // Try to update desktop database (optional)
         std::process::Command::new("update-desktop-database")
             .arg(&applications_dir)
             .output()
             .ok();
-            
     } else {
         if desktop_file_path.exists() {
             fs::remove_file(&desktop_file_path).map_err(|e| e.to_string())?;
-            
-             std::process::Command::new("update-desktop-database")
-            .arg(&applications_dir)
-            .output()
-            .ok();
+
+            std::process::Command::new("update-desktop-database")
+                .arg(&applications_dir)
+                .output()
+                .ok();
         }
     }
     Ok(())
@@ -565,18 +604,22 @@ MimeType=inode/directory;
 #[cfg(target_os = "linux")]
 #[tauri::command]
 pub fn check_context_menu() -> bool {
-     let home = match std::env::var("HOME") {
+    let home = match std::env::var("HOME") {
         Ok(h) => h,
         Err(_) => return false,
     };
-    let path = std::path::Path::new(&home).join(".local/share/applications/project-manager-context.desktop");
+    let path = std::path::Path::new(&home)
+        .join(".local/share/applications/project-manager-context.desktop");
     path.exists()
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
 #[tauri::command]
 pub fn set_context_menu(_enable: bool, _locale: String) -> Result<(), String> {
-    Err("Not supported on this platform yet. Please use 'Open With' system configuration.".to_string())
+    Err(
+        "Not supported on this platform yet. Please use 'Open With' system configuration."
+            .to_string(),
+    )
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
@@ -641,10 +684,11 @@ fn list_used_ports_windows() -> Result<Vec<PortEntry>, String> {
       ConvertTo-Json -Compress
     "#;
     let processes_raw = run_powershell(processes_script)?;
-    let process_map: HashMap<u32, WindowsProcessRow> = parse_json_rows::<WindowsProcessRow>(&processes_raw)?
-        .into_iter()
-        .map(|process| (process.process_id, process))
-        .collect();
+    let process_map: HashMap<u32, WindowsProcessRow> =
+        parse_json_rows::<WindowsProcessRow>(&processes_raw)?
+            .into_iter()
+            .map(|process| (process.process_id, process))
+            .collect();
 
     let mut entries: Vec<PortEntry> = ports
         .into_iter()
@@ -657,11 +701,18 @@ fn list_used_ports_windows() -> Result<Vec<PortEntry>, String> {
                 protocol: row.protocol.unwrap_or_else(|| "TCP".to_string()),
                 local_address: row.local_address.unwrap_or_else(|| "0.0.0.0".to_string()),
                 local_port,
-                remote_address: row
-                    .remote_address
-                    .and_then(|value| if value.is_empty() { None } else { Some(value) }),
+                remote_address: row.remote_address.and_then(|value| {
+                    if value.is_empty() {
+                        None
+                    } else {
+                        Some(value)
+                    }
+                }),
                 remote_port: row.remote_port,
-                state: row.state.unwrap_or_else(|| "UNKNOWN".to_string()).to_uppercase(),
+                state: row
+                    .state
+                    .unwrap_or_else(|| "UNKNOWN".to_string())
+                    .to_uppercase(),
                 pid,
                 process_name: process.and_then(|item| item.name.clone()),
                 executable_path: process.and_then(|item| item.executable_path.clone()),
@@ -674,7 +725,11 @@ fn list_used_ports_windows() -> Result<Vec<PortEntry>, String> {
         left.local_port
             .cmp(&right.local_port)
             .then(left.protocol.cmp(&right.protocol))
-            .then(left.pid.unwrap_or_default().cmp(&right.pid.unwrap_or_default()))
+            .then(
+                left.pid
+                    .unwrap_or_default()
+                    .cmp(&right.pid.unwrap_or_default()),
+            )
             .then(left.local_address.cmp(&right.local_address))
     });
 
@@ -733,11 +788,12 @@ fn list_used_ports_linux() -> Result<Vec<PortEntry>, String> {
         };
 
         // Parse process info from the last field, e.g. users:(("node",pid=1234,fd=5))
-        let (pid, process_name) = if let Some(users_field) = parts.iter().find(|p| p.starts_with("users:")) {
-            parse_ss_users(users_field)
-        } else {
-            (None, None)
-        };
+        let (pid, process_name) =
+            if let Some(users_field) = parts.iter().find(|p| p.starts_with("users:")) {
+                parse_ss_users(users_field)
+            } else {
+                (None, None)
+            };
 
         let executable_path = pid.and_then(|p| {
             std::fs::read_link(format!("/proc/{}/exe", p))
@@ -766,7 +822,8 @@ fn list_used_ports_linux() -> Result<Vec<PortEntry>, String> {
     }
 
     entries.sort_by(|a, b| {
-        a.local_port.cmp(&b.local_port)
+        a.local_port
+            .cmp(&b.local_port)
             .then(a.protocol.cmp(&b.protocol))
             .then(a.pid.unwrap_or(0).cmp(&b.pid.unwrap_or(0)))
     });
@@ -937,7 +994,12 @@ fn list_used_ports_macos() -> Result<Vec<PortEntry>, String> {
     }
 
     // Get executable paths for all unique PIDs
-    let unique_pids: Vec<u32> = entries.iter().filter_map(|e| e.pid).collect::<std::collections::HashSet<_>>().into_iter().collect();
+    let unique_pids: Vec<u32> = entries
+        .iter()
+        .filter_map(|e| e.pid)
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
     let mut exe_map: HashMap<u32, (Option<String>, Option<String>)> = HashMap::new();
 
     for pid in unique_pids {
@@ -948,7 +1010,11 @@ fn list_used_ports_macos() -> Result<Vec<PortEntry>, String> {
             .and_then(|o| {
                 if o.status.success() {
                     let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                    if s.is_empty() { None } else { Some(s) }
+                    if s.is_empty() {
+                        None
+                    } else {
+                        Some(s)
+                    }
                 } else {
                     None
                 }
@@ -960,7 +1026,11 @@ fn list_used_ports_macos() -> Result<Vec<PortEntry>, String> {
             .and_then(|o| {
                 if o.status.success() {
                     let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                    if s.is_empty() { None } else { Some(s) }
+                    if s.is_empty() {
+                        None
+                    } else {
+                        Some(s)
+                    }
                 } else {
                     None
                 }
@@ -978,7 +1048,8 @@ fn list_used_ports_macos() -> Result<Vec<PortEntry>, String> {
     }
 
     entries.sort_by(|a, b| {
-        a.local_port.cmp(&b.local_port)
+        a.local_port
+            .cmp(&b.local_port)
             .then(a.protocol.cmp(&b.protocol))
             .then(a.pid.unwrap_or(0).cmp(&b.pid.unwrap_or(0)))
     });
@@ -1055,14 +1126,23 @@ fn parse_lsof_endpoint(s: &str) -> Option<(String, u16)> {
 pub async fn list_used_ports() -> Result<Vec<PortEntry>, String> {
     run_system_task(move || {
         #[cfg(target_os = "windows")]
-        { list_used_ports_windows() }
+        {
+            list_used_ports_windows()
+        }
         #[cfg(target_os = "linux")]
-        { list_used_ports_linux() }
+        {
+            list_used_ports_linux()
+        }
         #[cfg(target_os = "macos")]
-        { list_used_ports_macos() }
+        {
+            list_used_ports_macos()
+        }
         #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
-        { Err("Port management is not supported on this platform".to_string()) }
-    }).await?
+        {
+            Err("Port management is not supported on this platform".to_string())
+        }
+    })
+    .await?
 }
 
 #[cfg(target_os = "windows")]

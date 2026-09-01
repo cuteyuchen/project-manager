@@ -18,19 +18,20 @@ pub struct PmResolveResult {
     pub reason: Option<String>,
 }
 
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
-#[cfg(target_os = "windows")]
-use std::os::windows::io::AsRawHandle;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
+#[cfg(target_os = "windows")]
+use std::os::windows::io::AsRawHandle;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-    SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 };
 
 #[cfg(target_os = "windows")]
@@ -53,7 +54,10 @@ impl WindowsJobObject {
     fn new() -> Result<Self, String> {
         let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
         if handle.is_null() {
-            return Err(format!("Failed to create Windows job object: {}", std::io::Error::last_os_error()));
+            return Err(format!(
+                "Failed to create Windows job object: {}",
+                std::io::Error::last_os_error()
+            ));
         }
 
         let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
@@ -117,12 +121,10 @@ impl ProcessState {
         Self {
             processes: Arc::new(Mutex::new(HashMap::new())),
             #[cfg(target_os = "windows")]
-            job_object: WindowsJobObject::new()
-                .map(Some)
-                .unwrap_or_else(|error| {
-                    eprintln!("{}", error);
-                    None
-                }),
+            job_object: WindowsJobObject::new().map(Some).unwrap_or_else(|error| {
+                eprintln!("{}", error);
+                None
+            }),
         }
     }
 }
@@ -133,7 +135,9 @@ struct StreamDecoder {
 
 impl StreamDecoder {
     fn new() -> Self {
-        Self { pending: Vec::new() }
+        Self {
+            pending: Vec::new(),
+        }
     }
 
     fn push(&mut self, chunk: &[u8]) -> (Vec<String>, Option<String>) {
@@ -212,7 +216,9 @@ fn spawn_output_reader<R: Read + Send + 'static>(
             }
             if let Some(partial) = partial {
                 let now = Instant::now();
-                if partial != last_partial || now.duration_since(last_partial_emit) >= Duration::from_millis(80) {
+                if partial != last_partial
+                    || now.duration_since(last_partial_emit) >= Duration::from_millis(80)
+                {
                     last_partial = partial.clone();
                     last_partial_emit = now;
                     let _ = app.emit(
@@ -345,7 +351,7 @@ impl LogManager {
         if let Err(e) = writeln!(self.file, "{}", line) {
             eprintln!("Failed to write to log file: {}", e);
         }
-        
+
         self.lines_since_rewrite += 1;
 
         // Periodic rewrite to keep file size in check (every 500 new lines)
@@ -364,13 +370,13 @@ impl LogManager {
             eprintln!("Failed to seek log file: {}", e);
             return;
         }
-        
+
         for line in &self.buffer {
             if let Err(e) = writeln!(self.file, "{}", line) {
                 eprintln!("Failed to write to log file during rewrite: {}", e);
             }
         }
-        
+
         // Ensure we are back at the end for future appends (though writeln moves cursor, explicit seek is safer if mixed)
         // Actually writeln moves the cursor. set_len(0) + seek(0) + writeln... leaves cursor at end.
     }
@@ -401,10 +407,14 @@ pub fn run_project_command(
         if let Some(parent) = exe_path.parent() {
             parent.join("logs")
         } else {
-            app.path().app_log_dir().unwrap_or_else(|_| std::path::PathBuf::from("logs"))
+            app.path()
+                .app_log_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("logs"))
         }
     } else {
-        app.path().app_log_dir().unwrap_or_else(|_| std::path::PathBuf::from("logs"))
+        app.path()
+            .app_log_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("logs"))
     };
 
     // Determine Project Name
@@ -427,9 +437,10 @@ pub fn run_project_command(
     }
 
     // Sanitize Project Name for directory
-    let safe_project_name = project_name.replace(|c: char| {
-        matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
-    }, "_");
+    let safe_project_name = project_name.replace(
+        |c: char| matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'),
+        "_",
+    );
 
     let project_log_dir = base_log_dir.join(&safe_project_name);
 
@@ -438,10 +449,11 @@ pub fn run_project_command(
     }
 
     // Sanitize script name for filename
-    let safe_script = script.replace(|c: char| {
-        matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
-    }, "_");
-    
+    let safe_script = script.replace(
+        |c: char| matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'),
+        "_",
+    );
+
     let log_file_path = project_log_dir.join(format!("{}.log", safe_script));
 
     let log_manager = Arc::new(Mutex::new(LogManager::new(&log_file_path)?));
@@ -453,16 +465,16 @@ pub fn run_project_command(
     #[cfg(target_os = "windows")]
     {
         let current_path = std::env::var("PATH").unwrap_or_default();
-        
+
         // Handle if node_path is a file (e.g. node.exe) instead of directory
         let mut node_dir_str = node_path.clone();
         if !node_path.is_empty() {
-             let p = std::path::Path::new(&node_path);
-             if p.is_file() {
-                 if let Some(parent) = p.parent() {
-                     node_dir_str = parent.to_string_lossy().to_string();
-                 }
-             }
+            let p = std::path::Path::new(&node_path);
+            if p.is_file() {
+                if let Some(parent) = p.parent() {
+                    node_dir_str = parent.to_string_lossy().to_string();
+                }
+            }
         }
 
         // Ensure node.exe exists (nvm-windows compat for node64.exe)
@@ -512,7 +524,11 @@ pub fn run_project_command(
                     .join("bin")
                     .join("npm-cli.js");
                 if npm_cli_js.exists() {
-                    format!("\"{}\" \"{}\"", node_exe_path.to_string_lossy(), npm_cli_js.to_string_lossy())
+                    format!(
+                        "\"{}\" \"{}\"",
+                        node_exe_path.to_string_lossy(),
+                        npm_cli_js.to_string_lossy()
+                    )
                 } else {
                     let pm_path_cmd = node_dir.join(format!("{}.cmd", package_manager));
                     if pm_path_cmd.exists() {
@@ -522,7 +538,10 @@ pub fn run_project_command(
                     }
                 }
             } else {
-                if package_manager == "npm" || package_manager == "pnpm" || package_manager == "yarn" {
+                if package_manager == "npm"
+                    || package_manager == "pnpm"
+                    || package_manager == "yarn"
+                {
                     format!("{}.cmd", package_manager)
                 } else {
                     package_manager.clone()
@@ -537,7 +556,11 @@ pub fn run_project_command(
                 .join("bin")
                 .join("npm-cli.js");
             if npm_cli_js.exists() {
-                format!("\"{}\" \"{}\"", node_exe_path.to_string_lossy(), npm_cli_js.to_string_lossy())
+                format!(
+                    "\"{}\" \"{}\"",
+                    node_exe_path.to_string_lossy(),
+                    npm_cli_js.to_string_lossy()
+                )
             } else {
                 let pm_path_cmd = node_dir.join(format!("{}.cmd", package_manager));
                 if pm_path_cmd.exists() {
@@ -556,7 +579,7 @@ pub fn run_project_command(
 
         // Quote the script name to handle special characters (e.g. "build:prod")
         full_cmd_str = format!("{} -v && {} run \"{}\"", node_executable, pm_cmd, script);
-        
+
         command_builder = Command::new("cmd");
         command_builder
             .raw_arg(format!(" /C \"{}\"", full_cmd_str))
@@ -568,21 +591,21 @@ pub fn run_project_command(
     #[cfg(not(target_os = "windows"))]
     {
         let current_path = std::env::var("PATH").unwrap_or_default();
-        
+
         let mut node_dir_str = node_path.clone();
         if !node_path.is_empty() {
-             let p = std::path::Path::new(&node_path);
-             // On Unix, nodePath is usually .../bin/node
-             if p.is_file() {
-                 if let Some(parent) = p.parent() {
-                     node_dir_str = parent.to_string_lossy().to_string();
-                 }
-             } else if !p.exists() {
-                 // Maybe it is a dir but checks failed? Or user provided bad path.
-                 // We keep it as is or try to append bin?
-                 // Let's assume user might provide version root instead of bin
-                 // But for now let's stick to simple file check
-             }
+            let p = std::path::Path::new(&node_path);
+            // On Unix, nodePath is usually .../bin/node
+            if p.is_file() {
+                if let Some(parent) = p.parent() {
+                    node_dir_str = parent.to_string_lossy().to_string();
+                }
+            } else if !p.exists() {
+                // Maybe it is a dir but checks failed? Or user provided bad path.
+                // We keep it as is or try to append bin?
+                // Let's assume user might provide version root instead of bin
+                // But for now let's stick to simple file check
+            }
         }
 
         // 构建 PATH：项目 Node 目录优先，其次 PM 所在 Node 目录（source='default' 时）
@@ -627,12 +650,26 @@ pub fn run_project_command(
                     .join("npm-cli.js");
                 let npm_cli_js_lib = node_dir
                     .parent()
-                    .map(|p| p.join("lib").join("node_modules").join("npm").join("bin").join("npm-cli.js"))
+                    .map(|p| {
+                        p.join("lib")
+                            .join("node_modules")
+                            .join("npm")
+                            .join("bin")
+                            .join("npm-cli.js")
+                    })
                     .unwrap_or_else(|| std::path::PathBuf::from(""));
                 if npm_cli_js_bin.exists() {
-                    format!("\"{}\" \"{}\"", node_dir.join("node").to_string_lossy(), npm_cli_js_bin.to_string_lossy())
+                    format!(
+                        "\"{}\" \"{}\"",
+                        node_dir.join("node").to_string_lossy(),
+                        npm_cli_js_bin.to_string_lossy()
+                    )
                 } else if npm_cli_js_lib.exists() {
-                    format!("\"{}\" \"{}\"", node_dir.join("node").to_string_lossy(), npm_cli_js_lib.to_string_lossy())
+                    format!(
+                        "\"{}\" \"{}\"",
+                        node_dir.join("node").to_string_lossy(),
+                        npm_cli_js_lib.to_string_lossy()
+                    )
                 } else {
                     package_manager.clone()
                 }
@@ -648,12 +685,26 @@ pub fn run_project_command(
                 .join("npm-cli.js");
             let npm_cli_js_lib = node_dir
                 .parent()
-                .map(|p| p.join("lib").join("node_modules").join("npm").join("bin").join("npm-cli.js"))
+                .map(|p| {
+                    p.join("lib")
+                        .join("node_modules")
+                        .join("npm")
+                        .join("bin")
+                        .join("npm-cli.js")
+                })
                 .unwrap_or_else(|| std::path::PathBuf::from(""));
             if npm_cli_js_bin.exists() {
-                format!("\"{}\" \"{}\"", node_dir.join("node").to_string_lossy(), npm_cli_js_bin.to_string_lossy())
+                format!(
+                    "\"{}\" \"{}\"",
+                    node_dir.join("node").to_string_lossy(),
+                    npm_cli_js_bin.to_string_lossy()
+                )
             } else if npm_cli_js_lib.exists() {
-                format!("\"{}\" \"{}\"", node_dir.join("node").to_string_lossy(), npm_cli_js_lib.to_string_lossy())
+                format!(
+                    "\"{}\" \"{}\"",
+                    node_dir.join("node").to_string_lossy(),
+                    npm_cli_js_lib.to_string_lossy()
+                )
             } else {
                 package_manager.clone()
             }
@@ -726,8 +777,22 @@ pub fn run_project_command(
 
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
-    spawn_output_reader(app.clone(), id.clone(), "stdout", stdout, log_manager.clone(), None);
-    spawn_output_reader(app.clone(), id.clone(), "stderr", stderr, log_manager.clone(), Some("ERR: "));
+    spawn_output_reader(
+        app.clone(),
+        id.clone(),
+        "stdout",
+        stdout,
+        log_manager.clone(),
+        None,
+    );
+    spawn_output_reader(
+        app.clone(),
+        id.clone(),
+        "stderr",
+        stderr,
+        log_manager.clone(),
+        Some("ERR: "),
+    );
 
     let id_clone3 = id.clone();
     let app_clone3 = app.clone();
@@ -743,10 +808,7 @@ pub fn run_project_command(
             manager.rewrite_file();
         }
 
-        let _ = app_clone3.emit(
-            "project-exit",
-            serde_json::json!({ "id": id_clone3 }),
-        );
+        let _ = app_clone3.emit("project-exit", serde_json::json!({ "id": id_clone3 }));
     });
 
     Ok(())
@@ -788,15 +850,13 @@ pub fn send_project_input(
     };
     drop(processes);
     let mut stdin = stdin.lock().map_err(|e| e.to_string())?;
-    stdin
-        .write_all(input.as_bytes())
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::BrokenPipe {
-                "broken pipe".to_string()
-            } else {
-                e.to_string()
-            }
-        })?;
+    stdin.write_all(input.as_bytes()).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::BrokenPipe {
+            "broken pipe".to_string()
+        } else {
+            e.to_string()
+        }
+    })?;
     stdin.flush().map_err(|e| {
         if e.kind() == std::io::ErrorKind::BrokenPipe {
             "broken pipe".to_string()
@@ -836,10 +896,14 @@ pub fn run_custom_command(
         if let Some(parent) = exe_path.parent() {
             parent.join("logs")
         } else {
-            app.path().app_log_dir().unwrap_or_else(|_| std::path::PathBuf::from("logs"))
+            app.path()
+                .app_log_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("logs"))
         }
     } else {
-        app.path().app_log_dir().unwrap_or_else(|_| std::path::PathBuf::from("logs"))
+        app.path()
+            .app_log_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("logs"))
     };
 
     let project_path_buf = std::path::Path::new(&path);
@@ -848,9 +912,10 @@ pub fn run_custom_command(
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "unknown_project".to_string());
 
-    let safe_project_name = project_name.replace(|c: char| {
-        matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
-    }, "_");
+    let safe_project_name = project_name.replace(
+        |c: char| matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'),
+        "_",
+    );
 
     let project_log_dir = base_log_dir.join(&safe_project_name);
     if !project_log_dir.exists() {
@@ -858,10 +923,14 @@ pub fn run_custom_command(
     }
 
     // Use a hash of the command as filename to avoid path issues
-    let safe_cmd = command.replace(|c: char| {
-        matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*')
-    }, "_");
-    let log_file_path = project_log_dir.join(format!("custom_{}.log", &safe_cmd[..safe_cmd.len().min(50)]));
+    let safe_cmd = command.replace(
+        |c: char| matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'),
+        "_",
+    );
+    let log_file_path = project_log_dir.join(format!(
+        "custom_{}.log",
+        &safe_cmd[..safe_cmd.len().min(50)]
+    ));
 
     let log_manager = Arc::new(Mutex::new(LogManager::new(&log_file_path)?));
 
@@ -878,9 +947,7 @@ pub fn run_custom_command(
     #[cfg(not(target_os = "windows"))]
     {
         command_builder = Command::new("sh");
-        command_builder
-            .arg("-c")
-            .arg(&command);
+        command_builder.arg("-c").arg(&command);
     }
 
     command_builder
@@ -926,8 +993,22 @@ pub fn run_custom_command(
 
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
-    spawn_output_reader(app.clone(), id.clone(), "stdout", stdout, log_manager.clone(), None);
-    spawn_output_reader(app.clone(), id.clone(), "stderr", stderr, log_manager.clone(), Some("ERR: "));
+    spawn_output_reader(
+        app.clone(),
+        id.clone(),
+        "stdout",
+        stdout,
+        log_manager.clone(),
+        None,
+    );
+    spawn_output_reader(
+        app.clone(),
+        id.clone(),
+        "stderr",
+        stderr,
+        log_manager.clone(),
+        Some("ERR: "),
+    );
 
     let id_clone3 = id.clone();
     let app_clone3 = app.clone();
@@ -943,10 +1024,7 @@ pub fn run_custom_command(
             manager.rewrite_file();
         }
 
-        let _ = app_clone3.emit(
-            "project-exit",
-            serde_json::json!({ "id": id_clone3 }),
-        );
+        let _ = app_clone3.emit("project-exit", serde_json::json!({ "id": id_clone3 }));
     });
 
     Ok(())
@@ -1014,7 +1092,10 @@ fn ensure_node_exe_in_dir(dir: &std::path::Path) {
         if alt_path.exists() {
             // Create a hard link so `node` resolves correctly in PATH
             if let Err(e) = fs::hard_link(&alt_path, &node_exe) {
-                println!("[nvm-compat] Failed to hard-link {} -> node.exe: {}", alt, e);
+                println!(
+                    "[nvm-compat] Failed to hard-link {} -> node.exe: {}",
+                    alt, e
+                );
                 // Fallback: try a copy
                 if let Err(e2) = fs::copy(&alt_path, &node_exe) {
                     println!("[nvm-compat] Failed to copy {} -> node.exe: {}", alt, e2);
@@ -1033,7 +1114,9 @@ fn resolve_terminal_node_dir(node_path: &str) -> Option<String> {
 
     let path = std::path::Path::new(trimmed);
     if path.is_file() {
-        return path.parent().map(|parent| parent.to_string_lossy().to_string());
+        return path
+            .parent()
+            .map(|parent| parent.to_string_lossy().to_string());
     }
 
     if path.is_dir() {
@@ -1082,8 +1165,7 @@ fn dir_has_node_tools(dir: &str) -> bool {
     {
         // Windows: 检查 node.exe / npm.cmd / npm.exe / npx.cmd / pnpm.cmd / yarn.cmd / cnpm.cmd
         let names = [
-            "node.exe", "npm.cmd", "npm.exe", "npx.cmd",
-            "pnpm.cmd", "yarn.cmd", "cnpm.cmd",
+            "node.exe", "npm.cmd", "npm.exe", "npx.cmd", "pnpm.cmd", "yarn.cmd", "cnpm.cmd",
         ];
         names.iter().any(|n| p.join(n).exists())
     }
@@ -1132,7 +1214,10 @@ fn filter_path_entries(node_dir: &str, path_value: &str) -> String {
 fn normalize_path_str(s: &str) -> String {
     #[cfg(target_os = "windows")]
     {
-        s.to_lowercase().replace('/', "\\").trim_end_matches('\\').to_string()
+        s.to_lowercase()
+            .replace('/', "\\")
+            .trim_end_matches('\\')
+            .to_string()
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -1191,7 +1276,11 @@ fn resolve_npm_cli_js(node_dir: &str) -> Option<String> {
     }
     let p = std::path::Path::new(node_dir);
 
-    let primary = p.join("node_modules").join("npm").join("bin").join("npm-cli.js");
+    let primary = p
+        .join("node_modules")
+        .join("npm")
+        .join("bin")
+        .join("npm-cli.js");
     if primary.exists() {
         return Some(primary.to_string_lossy().to_string());
     }
@@ -1290,7 +1379,10 @@ fn build_pm_alias(node_dir: &str, package_manager: &str, shell: StartupShell) ->
 
     match shell {
         // PowerShell function 覆盖；$args 自动转发参数
-        StartupShell::PowerShell => format!("function npm {{ node '{}' @args }}", cli.replace('\'', "''")),
+        StartupShell::PowerShell => format!(
+            "function npm {{ node '{}' @args }}",
+            cli.replace('\'', "''")
+        ),
         // CMD doskey 宏；$* 是 doskey 的全部参数占位符
         StartupShell::Cmd => format!("doskey npm=node \"{}\" $*", cli),
         // Bash/Git-Bash function
@@ -1307,14 +1399,25 @@ fn build_startup_script(node_dir: &str, package_manager: &str, shell: StartupShe
 }
 
 #[tauri::command]
-pub fn open_in_terminal(path: String, terminal: String, node_path: String, package_manager: String) -> Result<(), String> {
+pub fn open_in_terminal(
+    path: String,
+    terminal: String,
+    node_path: String,
+    package_manager: String,
+) -> Result<(), String> {
     let resolved_node_dir = resolve_terminal_node_dir(&node_path).unwrap_or_default();
     #[cfg(target_os = "windows")]
-    let startup_check_ps = build_startup_script(&resolved_node_dir, &package_manager, StartupShell::PowerShell);
+    let startup_check_ps = build_startup_script(
+        &resolved_node_dir,
+        &package_manager,
+        StartupShell::PowerShell,
+    );
     #[cfg(target_os = "windows")]
-    let startup_check_cmd = build_startup_script(&resolved_node_dir, &package_manager, StartupShell::Cmd);
+    let startup_check_cmd =
+        build_startup_script(&resolved_node_dir, &package_manager, StartupShell::Cmd);
     #[cfg(any(target_os = "windows", target_os = "linux"))]
-    let startup_check_bash = build_startup_script(&resolved_node_dir, &package_manager, StartupShell::Bash);
+    let startup_check_bash =
+        build_startup_script(&resolved_node_dir, &package_manager, StartupShell::Bash);
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     let _ = &resolved_node_dir;
 
@@ -1339,7 +1442,8 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String, packa
             .and_then(|value| value.to_str())
             .unwrap_or(&terminal)
             .to_lowercase();
-        let is_custom_executable = terminal.contains('\\') || terminal.contains('/') || terminal_key.ends_with(".exe");
+        let is_custom_executable =
+            terminal.contains('\\') || terminal.contains('/') || terminal_key.ends_with(".exe");
         let is_windows_powershell = terminal_key == "powershell"
             || terminal_key == "powershell.exe"
             || terminal_executable_name == "powershell.exe";
@@ -1352,16 +1456,29 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String, packa
                 // 用 join 拼接：非 node 项目 startup_check 为空时不会留下悬空的 `;`
                 let startup_script = join_shell_commands(
                     &[
-                        &path_env_ps.as_ref().map(|v| format!("$env:PATH='{}'", v)).unwrap_or_default(),
+                        &path_env_ps
+                            .as_ref()
+                            .map(|v| format!("$env:PATH='{}'", v))
+                            .unwrap_or_default(),
                         &format!("Set-Location '{}'", win_path_ps),
                         &startup_check_ps,
                     ],
                     "; ",
                 );
-                let executable = if is_custom_executable { terminal.as_str() } else { "powershell" };
+                let executable = if is_custom_executable {
+                    terminal.as_str()
+                } else {
+                    "powershell"
+                };
                 // 直接启动 PowerShell，避免 `cmd /C start` 再解析一次 `-Command`，导致 PATH 脚本被截断。
                 let mut command = Command::new(executable);
-                command.args(["-NoLogo", "-NoProfile", "-NoExit", "-Command", &startup_script]);
+                command.args([
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NoExit",
+                    "-Command",
+                    &startup_script,
+                ]);
                 command.current_dir(&win_path);
                 command.creation_flags(CREATE_NEW_CONSOLE);
                 if let Some(path_env) = &terminal_path_env {
@@ -1372,15 +1489,28 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String, packa
             _ if is_pwsh => {
                 let startup_script = join_shell_commands(
                     &[
-                        &path_env_ps.as_ref().map(|v| format!("$env:PATH='{}'", v)).unwrap_or_default(),
+                        &path_env_ps
+                            .as_ref()
+                            .map(|v| format!("$env:PATH='{}'", v))
+                            .unwrap_or_default(),
                         &format!("Set-Location '{}'", win_path_ps),
                         &startup_check_ps,
                     ],
                     "; ",
                 );
-                let executable = if is_custom_executable { terminal.as_str() } else { "pwsh" };
+                let executable = if is_custom_executable {
+                    terminal.as_str()
+                } else {
+                    "pwsh"
+                };
                 let mut command = Command::new(executable);
-                command.args(["-NoLogo", "-NoProfile", "-NoExit", "-Command", &startup_script]);
+                command.args([
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NoExit",
+                    "-Command",
+                    &startup_script,
+                ]);
                 command.current_dir(&win_path);
                 command.creation_flags(CREATE_NEW_CONSOLE);
                 if let Some(path_env) = &terminal_path_env {
@@ -1392,9 +1522,15 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String, packa
                 let mut command = Command::new("wt");
                 let startup_command = join_shell_commands(
                     &[
-                        &path_env_cmd.as_ref().map(|v| format!("set \"PATH={}\"", v)).unwrap_or_default(),
+                        &path_env_cmd
+                            .as_ref()
+                            .map(|v| format!("set \"PATH={}\"", v))
+                            .unwrap_or_default(),
                         // wt 已用 -d 切到目标目录，这里仅在需要改 PATH 时补一次 cd 保证同一会话内生效
-                        &path_env_cmd.as_ref().map(|_| format!("cd /d \"{}\"", win_path_cmd)).unwrap_or_default(),
+                        &path_env_cmd
+                            .as_ref()
+                            .map(|_| format!("cd /d \"{}\"", win_path_cmd))
+                            .unwrap_or_default(),
                         &startup_check_cmd,
                     ],
                     " && ",
@@ -1410,7 +1546,13 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String, packa
             "git-bash" => {
                 if let Some(git_bash_path) = get_git_bash_path() {
                     let mut command = Command::new("cmd");
-                    command.args(["/C", "start", "", &git_bash_path, &format!("--cd={}", win_path)]);
+                    command.args([
+                        "/C",
+                        "start",
+                        "",
+                        &git_bash_path,
+                        &format!("--cd={}", win_path),
+                    ]);
                     if let Some(path_env) = &path_env_cmd {
                         command.env("PATH", path_env);
                     }
@@ -1421,7 +1563,10 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String, packa
                     let bash_inner = join_shell_commands(&[&startup_check_bash, "exec bash"], "; ");
                     let startup_command = join_shell_commands(
                         &[
-                            &path_env_cmd.as_ref().map(|v| format!("set \"PATH={}\"", v)).unwrap_or_default(),
+                            &path_env_cmd
+                                .as_ref()
+                                .map(|v| format!("set \"PATH={}\"", v))
+                                .unwrap_or_default(),
                             &format!("cd /d \"{}\"", win_path_cmd),
                             &format!("bash -c \"{}\"", bash_inner.replace('"', "\\\"")),
                         ],
@@ -1435,7 +1580,10 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String, packa
                 let mut command = Command::new("cmd");
                 let startup_command = join_shell_commands(
                     &[
-                        &path_env_cmd.as_ref().map(|v| format!("set \"PATH={}\"", v)).unwrap_or_default(),
+                        &path_env_cmd
+                            .as_ref()
+                            .map(|v| format!("set \"PATH={}\"", v))
+                            .unwrap_or_default(),
                         &format!("cd /d \"{}\"", win_path_cmd),
                         "cmder",
                         &startup_check_cmd,
@@ -1447,21 +1595,27 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String, packa
             }
             _ => {
                 // Check if terminal is a custom executable path
-                if terminal.contains('\\') || terminal.contains('/') || terminal_key.ends_with(".exe") {
+                if terminal.contains('\\')
+                    || terminal.contains('/')
+                    || terminal_key.ends_with(".exe")
+                {
                     let mut command = Command::new(&terminal);
                     command.current_dir(&win_path);
                     if let Some(path_env) = &terminal_path_env {
                         command.env("PATH", path_env);
                     }
-                    command
-                        .spawn()
-                        .map_err(|e| format!("Failed to launch custom terminal '{}': {}", terminal, e))?;
+                    command.spawn().map_err(|e| {
+                        format!("Failed to launch custom terminal '{}': {}", terminal, e)
+                    })?;
                 } else {
                     // CMD (Default)
                     let mut command = Command::new("cmd");
                     let startup_command = join_shell_commands(
                         &[
-                            &path_env_cmd.as_ref().map(|v| format!("set \"PATH={}\"", v)).unwrap_or_default(),
+                            &path_env_cmd
+                                .as_ref()
+                                .map(|v| format!("set \"PATH={}\"", v))
+                                .unwrap_or_default(),
                             &format!("cd /d \"{}\"", win_path_cmd),
                             &startup_check_cmd,
                         ],
@@ -1492,9 +1646,9 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String, packa
                     if let Some(path_env) = &terminal_path_env {
                         command.env("PATH", path_env);
                     }
-                    command
-                        .spawn()
-                        .map_err(|e| format!("Failed to launch custom terminal '{}': {}", terminal, e))?;
+                    command.spawn().map_err(|e| {
+                        format!("Failed to launch custom terminal '{}': {}", terminal, e)
+                    })?;
                 } else {
                     let mut command = Command::new("open");
                     command.args(&["-a", "Terminal", &path]);
@@ -1523,7 +1677,14 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String, packa
         match terminal_key.as_str() {
             "gnome-terminal" => {
                 let mut command = Command::new("gnome-terminal");
-                command.args(&["--working-directory", &path, "--", "bash", "-c", &bash_inner]);
+                command.args(&[
+                    "--working-directory",
+                    &path,
+                    "--",
+                    "bash",
+                    "-c",
+                    &bash_inner,
+                ]);
                 if let Some(path_env) = &terminal_path_env {
                     command.env("PATH", path_env);
                 }
@@ -1547,7 +1708,14 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String, packa
             }
             "alacritty" => {
                 let mut command = Command::new("alacritty");
-                command.args(&["--working-directory", &path, "-e", "bash", "-c", &bash_inner]);
+                command.args(&[
+                    "--working-directory",
+                    &path,
+                    "-e",
+                    "bash",
+                    "-c",
+                    &bash_inner,
+                ]);
                 if let Some(path_env) = &terminal_path_env {
                     command.env("PATH", path_env);
                 }
@@ -1568,9 +1736,9 @@ pub fn open_in_terminal(path: String, terminal: String, node_path: String, packa
                     if let Some(path_env) = &terminal_path_env {
                         command.env("PATH", path_env);
                     }
-                    command
-                        .spawn()
-                        .map_err(|e| format!("Failed to launch custom terminal '{}': {}", terminal, e))?;
+                    command.spawn().map_err(|e| {
+                        format!("Failed to launch custom terminal '{}': {}", terminal, e)
+                    })?;
                 } else {
                     let mut command = Command::new("x-terminal-emulator");
                     command.args(&["-e", "bash", "-lc", &shell_command]);
@@ -1641,10 +1809,10 @@ pub fn reveal_in_folder(path: String) -> Result<(), String> {
         };
 
         Command::new("explorer.exe")
-        .arg(format!("/select,\"{target}\""))
-        .creation_flags(CREATE_NO_WINDOW)
-        .spawn()
-        .map_err(|e| e.to_string())?;
+            .arg(format!("/select,\"{target}\""))
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+            .map_err(|e| e.to_string())?;
     }
 
     #[cfg(target_os = "macos")]
@@ -1695,8 +1863,8 @@ pub fn open_url(url: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn install_pm(node_path: String, pm_name: String) -> Result<(), String> {
-    let node_dir = resolve_terminal_node_dir(&node_path)
-        .ok_or_else(|| "Invalid node path".to_string())?;
+    let node_dir =
+        resolve_terminal_node_dir(&node_path).ok_or_else(|| "Invalid node path".to_string())?;
 
     // Build the npm command using the specific Node version's npm
     #[cfg(target_os = "windows")]
@@ -1790,7 +1958,11 @@ fn check_pm_in_node_dir(node_dir: &str, pm: &str) -> (bool, Option<String>) {
         }
         // npm 特殊：node_modules/npm/bin/npm-cli.js
         if pm == "npm" {
-            let npm_cli = dir.join("node_modules").join("npm").join("bin").join("npm-cli.js");
+            let npm_cli = dir
+                .join("node_modules")
+                .join("npm")
+                .join("bin")
+                .join("npm-cli.js");
             if npm_cli.exists() {
                 return (true, Some(npm_cli.to_string_lossy().to_string()));
             }
@@ -1806,13 +1978,22 @@ fn check_pm_in_node_dir(node_dir: &str, pm: &str) -> (bool, Option<String>) {
         }
         // npm 特殊：lib/node_modules/npm/bin/npm-cli.js
         if pm == "npm" {
-            let npm_cli_bin = dir.join("node_modules").join("npm").join("bin").join("npm-cli.js");
+            let npm_cli_bin = dir
+                .join("node_modules")
+                .join("npm")
+                .join("bin")
+                .join("npm-cli.js");
             if npm_cli_bin.exists() {
                 return (true, Some(npm_cli_bin.to_string_lossy().to_string()));
             }
             // 检查上级目录的 lib 结构（nvm 安装格式）
             if let Some(parent) = dir.parent() {
-                let npm_cli_lib = parent.join("lib").join("node_modules").join("npm").join("bin").join("npm-cli.js");
+                let npm_cli_lib = parent
+                    .join("lib")
+                    .join("node_modules")
+                    .join("npm")
+                    .join("bin")
+                    .join("npm-cli.js");
                 if npm_cli_lib.exists() {
                     return (true, Some(npm_cli_lib.to_string_lossy().to_string()));
                 }
@@ -1911,7 +2092,11 @@ mod tests {
     fn empty_package_manager_produces_no_startup_script() {
         // 非 node 项目（Go/Rust/Python…）由前端传空包管理器，
         // 终端应只做 cd，不输出 `node -v`——在未装 Node 的机器上那会直接报错。
-        for shell in [StartupShell::PowerShell, StartupShell::Cmd, StartupShell::Bash] {
+        for shell in [
+            StartupShell::PowerShell,
+            StartupShell::Cmd,
+            StartupShell::Bash,
+        ] {
             assert_eq!(
                 build_startup_check("", "", shell),
                 "",

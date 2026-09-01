@@ -1184,8 +1184,7 @@ fn is_reparse_directory(path: &Path) -> bool {
         return false;
     };
     let attributes = link_metadata.file_attributes();
-    attributes & FILE_ATTRIBUTE_DIRECTORY != 0
-        && attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    attributes & FILE_ATTRIBUTE_DIRECTORY != 0 && attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
 }
 
 #[cfg(not(windows))]
@@ -1234,18 +1233,20 @@ fn create_directory_link(link_path: &Path, target_path: &Path) -> Result<(), io:
     use std::ptr::{null, null_mut};
     use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::Storage::FileSystem::{
-        CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES,
-        OPEN_EXISTING,
+        CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES, OPEN_EXISTING,
     };
-    use windows_sys::Win32::System::IO::DeviceIoControl;
     use windows_sys::Win32::System::Ioctl::FSCTL_SET_REPARSE_POINT;
     use windows_sys::Win32::System::SystemServices::IO_REPARSE_TAG_MOUNT_POINT;
+    use windows_sys::Win32::System::IO::DeviceIoControl;
 
     if !target_path.is_dir() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
-            format!("Junction target is not a directory: {}", target_path.display()),
+            format!(
+                "Junction target is not a directory: {}",
+                target_path.display()
+            ),
         ));
     }
 
@@ -1254,8 +1255,7 @@ fn create_directory_link(link_path: &Path, target_path: &Path) -> Result<(), io:
     // is only for display and diagnostics.
     let target = target_path.to_string_lossy().to_string();
     let target_without_extended_prefix = target.strip_prefix(r"\\?\").unwrap_or(&target);
-    let substitute = if let Some(unc_path) = target_without_extended_prefix.strip_prefix(r"\\")
-    {
+    let substitute = if let Some(unc_path) = target_without_extended_prefix.strip_prefix(r"\\") {
         format!(r"\??\UNC\{unc_path}")
     } else {
         format!(r"\??\{target_without_extended_prefix}")
@@ -1272,25 +1272,50 @@ fn create_directory_link(link_path: &Path, target_path: &Path) -> Result<(), io:
         .len()
         .checked_mul(2)
         .and_then(|value| u16::try_from(value).ok())
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Junction target path is too long"))?;
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Junction target path is too long",
+            )
+        })?;
     let print_offset = substitute_units
         .len()
         .checked_add(1)
         .and_then(|value| value.checked_mul(2))
         .and_then(|value| u16::try_from(value).ok())
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Junction target path is too long"))?;
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Junction target path is too long",
+            )
+        })?;
     let print_length = print_units
         .len()
         .checked_mul(2)
         .and_then(|value| u16::try_from(value).ok())
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Junction target path is too long"))?;
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Junction target path is too long",
+            )
+        })?;
     let reparse_data_length = 8usize
         .checked_add(path_units.len().saturating_mul(2))
         .and_then(|value| u16::try_from(value).ok())
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Junction target path is too long"))?;
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Junction target path is too long",
+            )
+        })?;
     let buffer_length = 8usize
         .checked_add(usize::from(reparse_data_length))
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Junction target path is too long"))?;
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Junction target path is too long",
+            )
+        })?;
     let mut buffer = vec![0u8; buffer_length];
     buffer[0..4].copy_from_slice(&IO_REPARSE_TAG_MOUNT_POINT.to_le_bytes());
     buffer[4..6].copy_from_slice(&reparse_data_length.to_le_bytes());
@@ -1344,7 +1369,9 @@ fn create_directory_link(link_path: &Path, target_path: &Path) -> Result<(), io:
         )
     };
     let error = if result == 0 {
-        Some(io::Error::from_raw_os_error(unsafe { GetLastError() } as i32))
+        Some(io::Error::from_raw_os_error(
+            unsafe { GetLastError() } as i32
+        ))
     } else {
         None
     };
@@ -2318,7 +2345,10 @@ mod tests {
         };
 
         let controller = resolve_controller(temp.path(), &state);
-        assert_eq!(controller.kind, SystemNodeControllerKind::ProjectManagerLink);
+        assert_eq!(
+            controller.kind,
+            SystemNodeControllerKind::ProjectManagerLink
+        );
         assert!(path_strings_equal(&controller.link_path, &expected));
     }
 
@@ -2331,6 +2361,9 @@ mod tests {
 
         let error = read_link_snapshot(&link).expect_err("ordinary directory must be rejected");
         assert!(error.message().contains("ordinary directory"));
-        assert!(link.is_dir(), "the ordinary user directory must remain intact");
+        assert!(
+            link.is_dir(),
+            "the ordinary user directory must remain intact"
+        );
     }
 }

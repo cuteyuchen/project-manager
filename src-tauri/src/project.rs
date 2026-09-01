@@ -1,9 +1,9 @@
-use tauri::command;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use encoding_rs::Encoding;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
-use base64::{engine::general_purpose::STANDARD, Engine as _};
-use encoding_rs::Encoding;
+use tauri::command;
 
 async fn run_project_task<T, F>(task: F) -> Result<T, String>
 where
@@ -71,9 +71,14 @@ fn detect_maven(dir: &Path) -> bool {
 /// 多模块项目的根目录可能只有 settings.gradle 而没有 build.gradle，
 /// 所以这两个文件名也要算上——只看 build.gradle 会漏掉整个仓库根。
 fn detect_gradle(dir: &Path) -> bool {
-    ["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"]
-        .iter()
-        .any(|name| dir.join(name).exists())
+    [
+        "build.gradle",
+        "build.gradle.kts",
+        "settings.gradle",
+        "settings.gradle.kts",
+    ]
+    .iter()
+    .any(|name| dir.join(name).exists())
 }
 
 /// pom.xml 里是否真的引了 Spring Boot（而不是所有 Maven 项目都算）
@@ -148,7 +153,12 @@ pub async fn read_text_file(path: String) -> Result<String, String> {
             return Ok(text);
         }
 
-        for label in [b"gb18030".as_slice(), b"gbk".as_slice(), b"utf-16le".as_slice(), b"utf-16be".as_slice()] {
+        for label in [
+            b"gb18030".as_slice(),
+            b"gbk".as_slice(),
+            b"utf-16le".as_slice(),
+            b"utf-16be".as_slice(),
+        ] {
             if let Some(encoding) = Encoding::for_label(label) {
                 let (text, _, had_errors) = encoding.decode(&bytes);
                 if !had_errors {
@@ -206,7 +216,8 @@ pub async fn scan_project(path: String) -> Result<ProjectInfo, String> {
                 let has_wrapper = if is_maven {
                     project_path.join("mvnw").exists() || project_path.join("mvnw.cmd").exists()
                 } else {
-                    project_path.join("gradlew").exists() || project_path.join("gradlew.bat").exists()
+                    project_path.join("gradlew").exists()
+                        || project_path.join("gradlew.bat").exists()
                 };
 
                 return Ok(ProjectInfo {
@@ -282,12 +293,33 @@ pub async fn scan_project(path: String) -> Result<ProjectInfo, String> {
 
 /** 扫描时忽略的目录名 */
 const SCAN_IGNORED_DIRS: &[&str] = &[
-    "node_modules", ".git", ".svn", ".hg", "dist", "build", "out",
-    ".idea", ".vscode", "__pycache__", ".next", ".nuxt", "target",
-    "vendor", "coverage", ".cache", "tmp", "temp", ".gradle",
+    "node_modules",
+    ".git",
+    ".svn",
+    ".hg",
+    "dist",
+    "build",
+    "out",
+    ".idea",
+    ".vscode",
+    "__pycache__",
+    ".next",
+    ".nuxt",
+    "target",
+    "vendor",
+    "coverage",
+    ".cache",
+    "tmp",
+    "temp",
+    ".gradle",
     // 部署/对外暴露的纯静态资源目录：只含 index.html 和资源文件，
     // 既无构建系统也无源码组织，不应被识别为项目。
-    "public", "static", "www", "htdocs", "public_html", "httpdocs",
+    "public",
+    "static",
+    "www",
+    "htdocs",
+    "public_html",
+    "httpdocs",
 ];
 
 /**
@@ -326,12 +358,13 @@ pub struct ImportNode {
 /** 读取 package.json 判断是否依赖某个包（dependencies + devDependencies） */
 fn package_json_has_dep(dir: &Path, dep: &str) -> bool {
     let pkg_path = dir.join("package.json");
-    let Ok(content) = fs::read_to_string(&pkg_path) else { return false };
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else { return false };
-    let in_deps = json
-        .get("dependencies")
-        .and_then(|d| d.get(dep))
-        .is_some();
+    let Ok(content) = fs::read_to_string(&pkg_path) else {
+        return false;
+    };
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+    let in_deps = json.get("dependencies").and_then(|d| d.get(dep)).is_some();
     let in_dev = json
         .get("devDependencies")
         .and_then(|d| d.get(dep))
@@ -342,8 +375,12 @@ fn package_json_has_dep(dir: &Path, dep: &str) -> bool {
 /** 读取 package.json 的 scripts 名称列表 */
 fn read_package_scripts(dir: &Path) -> Vec<String> {
     let pkg_path = dir.join("package.json");
-    let Ok(content) = fs::read_to_string(&pkg_path) else { return Vec::new() };
-    let Ok(pkg) = serde_json::from_str::<PackageJson>(&content) else { return Vec::new() };
+    let Ok(content) = fs::read_to_string(&pkg_path) else {
+        return Vec::new();
+    };
+    let Ok(pkg) = serde_json::from_str::<PackageJson>(&content) else {
+        return Vec::new();
+    };
     let mut scripts: Vec<String> = pkg.scripts.unwrap_or_default().keys().cloned().collect();
     scripts.sort();
     scripts
@@ -359,7 +396,11 @@ fn identify_module(dir: &Path) -> Option<(String, Option<String>)> {
     // 服务端 (Maven)：只有真的引了 spring-boot 才报 Spring Boot，
     // 否则一律报 Maven —— 原先所有带 pom.xml 的项目都被标成 Spring Boot。
     if has("pom.xml") {
-        let framework = if pom_has_spring_boot(dir) { "Spring Boot" } else { "Maven" };
+        let framework = if pom_has_spring_boot(dir) {
+            "Spring Boot"
+        } else {
+            "Maven"
+        };
         return Some(("backend".into(), Some(framework.into())));
     }
     // 服务端 (Gradle)：settings.gradle(.kts) 也要算，
@@ -451,7 +492,11 @@ fn scan_project_tree(
     let has_git = dir.join(".git").exists();
     let identified = identify_module(dir);
     let has_pkg = dir.join("package.json").exists();
-    let scripts = if has_pkg { read_package_scripts(dir) } else { Vec::new() };
+    let scripts = if has_pkg {
+        read_package_scripts(dir)
+    } else {
+        Vec::new()
+    };
 
     // Java 构建信息：与 scan_project 用同一套判定，避免两条导入路径识别不一致
     let is_maven = detect_maven(dir);
@@ -471,18 +516,19 @@ fn scan_project_tree(
         }
     });
 
-    let make_node = |kind: String, framework: Option<String>, children: Vec<ImportNode>| ImportNode {
-        name: name.clone(),
-        path: dir.to_string_lossy().to_string(),
-        kind,
-        framework,
-        has_git,
-        has_package_json: has_pkg,
-        scripts: scripts.clone(),
-        build_tool: build_tool.clone(),
-        has_wrapper,
-        children,
-    };
+    let make_node =
+        |kind: String, framework: Option<String>, children: Vec<ImportNode>| ImportNode {
+            name: name.clone(),
+            path: dir.to_string_lossy().to_string(),
+            kind,
+            framework,
+            has_git,
+            has_package_json: has_pkg,
+            scripts: scripts.clone(),
+            build_tool: build_tool.clone(),
+            has_wrapper,
+            children,
+        };
 
     // Git 仓库：本身即项目边界，同时继续向内递归挂载其内部模块。
     if has_git {
@@ -524,7 +570,9 @@ fn scan_child_dirs(
         return Vec::new();
     }
 
-    let Ok(entries) = fs::read_dir(dir) else { return Vec::new() };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
     let mut child_dirs: Vec<std::path::PathBuf> = entries
         .flatten()
         .filter(|entry| entry.file_type().map(|t| t.is_dir()).unwrap_or(false))
@@ -717,7 +765,11 @@ mod tests {
             paths
         );
         // a/b/c 三层容器最终都没有可识别子孙，应作为空容器一并丢弃
-        assert!(tree.is_empty(), "没有任何可识别模块时结果应为空，实际为 {:?}", names(&tree));
+        assert!(
+            tree.is_empty(),
+            "没有任何可识别模块时结果应为空，实际为 {:?}",
+            names(&tree)
+        );
 
         fs::remove_dir_all(&root).ok();
     }
@@ -734,12 +786,20 @@ mod tests {
         let tree = scan(&root, MAX_SCAN_DEPTH);
 
         let my_app = find(&tree, "MyApp");
-        assert_eq!(names(&my_app.children), vec!["packages"], "MyApp 的直接子级只应有 packages");
+        assert_eq!(
+            names(&my_app.children),
+            vec!["packages"],
+            "MyApp 的直接子级只应有 packages"
+        );
 
         let packages = find(&my_app.children, "packages");
         let mut leaf_names = names(&packages.children);
         leaf_names.sort();
-        assert_eq!(leaf_names, vec!["api", "web"], "两个模块应挂在 packages 之下");
+        assert_eq!(
+            leaf_names,
+            vec!["api", "web"],
+            "两个模块应挂在 packages 之下"
+        );
 
         fs::remove_dir_all(&root).ok();
     }

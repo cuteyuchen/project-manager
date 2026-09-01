@@ -56,7 +56,10 @@ fn validate_config_filename(filename: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn app_config_file_path(app: &tauri::AppHandle, filename: &str) -> Result<PathBuf, String> {
+pub(crate) fn app_config_file_path(
+    app: &tauri::AppHandle,
+    filename: &str,
+) -> Result<PathBuf, String> {
     validate_config_filename(filename)?;
     let mut path = app.path().app_data_dir().map_err(|e| e.to_string())?;
     path.push(filename);

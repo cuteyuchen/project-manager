@@ -1274,9 +1274,7 @@ pub async fn git_add_ignore_pattern(
         if local.unwrap_or(false) {
             for file in &normalized_files {
                 if run_git(&path, &["ls-files", "--error-unmatch", "--", file]).is_ok() {
-                    return Err(format!(
-                        "Tracked file cannot use local-only ignore: {file}"
-                    ));
+                    return Err(format!("Tracked file cannot use local-only ignore: {file}"));
                 }
             }
         }
@@ -2697,8 +2695,8 @@ mod tests {
     use super::clone_branch_args;
     use super::git_diff_for_ai_sync;
     use super::git_diff_sync;
-    use super::is_image_file_path;
     use super::git_own_commits_sync;
+    use super::is_image_file_path;
     use super::is_legacy_single_branch_fetch_refspec;
     use super::make_image_side;
     use super::normalize_repo_relative_path;

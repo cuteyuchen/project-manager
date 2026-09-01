@@ -87,7 +87,10 @@ fn canonical_root(root: &str) -> Result<PathBuf, String> {
     let canonical = fs::canonicalize(path)
         .map_err(|e| format!("Failed to resolve workspace root {}: {e}", path.display()))?;
     if !canonical.is_dir() {
-        return Err(format!("Workspace root is not a directory: {}", path.display()));
+        return Err(format!(
+            "Workspace root is not a directory: {}",
+            path.display()
+        ));
     }
     Ok(canonical)
 }
@@ -96,15 +99,22 @@ fn ensure_within(root: &Path, candidate: &Path) -> Result<(), String> {
     if candidate.starts_with(root) {
         Ok(())
     } else {
-        Err(format!("Path escapes workspace root: {}", candidate.display()))
+        Err(format!(
+            "Path escapes workspace root: {}",
+            candidate.display()
+        ))
     }
 }
 
 fn secure_existing_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
     let relative_path = validate_relative_path(relative, true)?;
     let candidate = root.join(relative_path);
-    let canonical = fs::canonicalize(&candidate)
-        .map_err(|e| format!("Failed to resolve workspace path {}: {e}", candidate.display()))?;
+    let canonical = fs::canonicalize(&candidate).map_err(|e| {
+        format!(
+            "Failed to resolve workspace path {}: {e}",
+            candidate.display()
+        )
+    })?;
     ensure_within(root, &canonical)?;
     Ok(canonical)
 }
@@ -119,12 +129,18 @@ fn secure_new_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
     let parent = candidate
         .parent()
         .ok_or_else(|| "Workspace path has no parent".to_string())?;
-    let canonical_parent = fs::canonicalize(parent)
-        .map_err(|e| format!("Failed to resolve workspace parent {}: {e}", parent.display()))?;
+    let canonical_parent = fs::canonicalize(parent).map_err(|e| {
+        format!(
+            "Failed to resolve workspace parent {}: {e}",
+            parent.display()
+        )
+    })?;
     ensure_within(root, &canonical_parent)?;
-    Ok(canonical_parent.join(candidate.file_name().ok_or_else(|| {
-        "Workspace path has no file name".to_string()
-    })?))
+    Ok(canonical_parent.join(
+        candidate
+            .file_name()
+            .ok_or_else(|| "Workspace path has no file name".to_string())?,
+    ))
 }
 
 fn workspace_root_and_path(root: &str, relative: &str) -> Result<(PathBuf, PathBuf), String> {
@@ -182,7 +198,11 @@ fn decode_editor_bytes(bytes: &[u8]) -> (String, &'static str, bool) {
     if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
         return match String::from_utf8(bytes[3..].to_vec()) {
             Ok(text) => (text, "utf-8-bom", false),
-            Err(error) => (String::from_utf8_lossy(error.as_bytes()).into_owned(), "other", true),
+            Err(error) => (
+                String::from_utf8_lossy(error.as_bytes()).into_owned(),
+                "other",
+                true,
+            ),
         };
     }
     if bytes.starts_with(&[0xFF, 0xFE]) {
@@ -210,11 +230,7 @@ fn decode_editor_bytes(bytes: &[u8]) -> (String, &'static str, bool) {
         }
     }
 
-    (
-        String::from_utf8_lossy(bytes).into_owned(),
-        "other",
-        true,
-    )
+    (String::from_utf8_lossy(bytes).into_owned(), "other", true)
 }
 
 fn normalize_editor_content(content: &str, eol: &str, bom: bool) -> Vec<u8> {
@@ -236,7 +252,9 @@ fn atomic_replace(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path
         .parent()
         .ok_or_else(|| format!("Path has no parent: {}", path.display()))?;
-    let original_permissions = fs::metadata(path).ok().map(|metadata| metadata.permissions());
+    let original_permissions = fs::metadata(path)
+        .ok()
+        .map(|metadata| metadata.permissions());
     let mut temp = NamedTempFile::new_in(parent)
         .map_err(|e| format!("Failed to create editor temporary file: {e}"))?;
     temp.write_all(bytes)
@@ -334,7 +352,9 @@ fn workspace_stat_sync(root: &str, relative: &str) -> Result<WorkspaceStat, Stri
     let mut cursor = candidate.as_path();
     loop {
         let Some(parent) = cursor.parent() else {
-            return Err(format!("Failed to resolve missing workspace path: {relative}"));
+            return Err(format!(
+                "Failed to resolve missing workspace path: {relative}"
+            ));
         };
         if parent.exists() {
             let canonical_parent = fs::canonicalize(parent).map_err(|e| e.to_string())?;
@@ -345,7 +365,10 @@ fn workspace_stat_sync(root: &str, relative: &str) -> Result<WorkspaceStat, Stri
     }
 }
 
-fn workspace_read_editor_file_sync(root: &str, relative: &str) -> Result<EditorFileSnapshot, String> {
+fn workspace_read_editor_file_sync(
+    root: &str,
+    relative: &str,
+) -> Result<EditorFileSnapshot, String> {
     let (workspace_root, path) = workspace_root_and_path(root, relative)?;
     if path.is_dir() {
         return Err("Cannot open a directory in the editor".to_string());
@@ -404,7 +427,9 @@ fn workspace_create_file_sync(root: &str, relative: &str) -> Result<(), String> 
     if path.exists() {
         return Err(format!("Path already exists: {relative}"));
     }
-    File::create_new(path).map(|_| ()).map_err(|e| e.to_string())
+    File::create_new(path)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 fn workspace_create_directory_sync(root: &str, relative: &str) -> Result<(), String> {
@@ -452,7 +477,10 @@ fn workspace_read_binary_sync(root: &str, relative: &str) -> Result<String, Stri
 }
 
 #[tauri::command]
-pub async fn workspace_read_dir(root: String, relative_path: String) -> Result<Vec<WorkspaceDirEntry>, String> {
+pub async fn workspace_read_dir(
+    root: String,
+    relative_path: String,
+) -> Result<Vec<WorkspaceDirEntry>, String> {
     run_workspace_task(move || workspace_read_dir_sync(&root, &relative_path)).await
 }
 
@@ -557,7 +585,11 @@ mod tests {
         assert!(stat.exists);
         assert!(!stat.is_directory);
         workspace_rename_sync(&root, "src/App.vue", "src/Main.vue").expect("rename should work");
-        assert!(workspace_stat_sync(&root, "src/Main.vue").expect("new stat").exists);
+        assert!(
+            workspace_stat_sync(&root, "src/Main.vue")
+                .expect("new stat")
+                .exists
+        );
         assert!(workspace_rename_sync(&root, "", "renamed").is_err());
     }
 
@@ -624,7 +656,8 @@ mod tests {
         workspace_create_directory_sync(&root, "src/nested").expect("nested directory");
         workspace_create_file_sync(&root, "src/nested/file.ts").expect("file");
         fs::remove_dir_all(temp.path().join("src")).expect("remove parent tree");
-        let stat = workspace_stat_sync(&root, "src/nested/file.ts").expect("missing ancestor should still stat");
+        let stat = workspace_stat_sync(&root, "src/nested/file.ts")
+            .expect("missing ancestor should still stat");
         assert!(!stat.exists);
         assert!(stat.disk_version.starts_with("missing:"));
     }
@@ -639,7 +672,10 @@ mod tests {
         let after = workspace_stat_sync(&root, "new.ts").expect("new stat");
         assert!(after.exists);
         assert_ne!(before.disk_version, after.disk_version);
-        assert!(after.disk_version.contains("new.ts") || after.disk_version.to_lowercase().contains("new.ts"));
+        assert!(
+            after.disk_version.contains("new.ts")
+                || after.disk_version.to_lowercase().contains("new.ts")
+        );
     }
 
     #[cfg(unix)]
