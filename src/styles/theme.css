@@ -865,6 +865,22 @@ body:has(.app-shell-with-titlebar) .el-overlay-dialog {
   line-height: var(--app-line-height-body);
 }
 
+.el-dropdown-menu {
+  width: max-content;
+  min-width: 180px;
+  max-width: min(320px, calc(100vw - 16px));
+  overflow: hidden;
+}
+
+.el-dropdown-menu__item {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .el-table {
   font-size: var(--app-font-control);
 }

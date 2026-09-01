@@ -1928,7 +1928,7 @@ window.services = {
         if (process.platform === 'win32') {
             const normalized = filePath.replace(/\//g, '\\');
             const target = fs.existsSync(normalized) ? normalized : path.dirname(normalized);
-            spawn('explorer.exe', ['/select,"' + target + '"'], { windowsHide: true });
+            spawn('explorer.exe', ['/select,', target], { windowsHide: true });
             return;
         }
         if (process.platform === 'darwin') {
