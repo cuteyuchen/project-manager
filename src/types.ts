@@ -14,6 +14,44 @@ export interface CustomCommand {
   builtinId?: BuiltinCommandId;
 }
 
+/***********************运行会话*********************/
+export type RunSessionCommandType = 'script' | 'custom';
+
+export type RunSessionStatus =
+  | 'starting'
+  | 'running'
+  | 'stopping'
+  | 'success'
+  | 'failed'
+  | 'stopped';
+
+/** 一次具体命令执行的内存态元数据；不写入 Project/data.json。 */
+export interface RunSession {
+  sessionId: string;
+  /** 稳定命令键，格式为 projectId:script:<name> 或 projectId:custom:<id>。 */
+  commandKey: string;
+
+  projectId: string;
+  commandType: RunSessionCommandType;
+  commandId: string;
+  displayName: string;
+
+  cwd: string;
+  status: RunSessionStatus;
+
+  startedAt: number;
+  endedAt?: number;
+  durationMs?: number;
+
+  exitCode?: number | null;
+  errorMessage?: string;
+
+  nodeRuntimeId?: string;
+  nodeVersion?: string;
+  nodePath?: string;
+  packageManager?: string;
+}
+
 /***********************一级页快捷命令*********************/
 /** 一级项目列表展示的快捷运行命令，type 用于区分同名 script 与 custom command。 */
 export interface ProjectQuickCommand {

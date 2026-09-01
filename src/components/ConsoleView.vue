@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, ref, watch, nextTick } from 'vue';
+import { computed, ref, watch, nextTick, onBeforeUnmount, onMounted } from 'vue';
 import { ElMessage } from 'element-plus';
 import { useProjectStore } from '../stores/project';
-import type { CustomCommand, Project } from '../types';
+import type { CustomCommand, Project, RunSession } from '../types';
 import { useI18n } from 'vue-i18n';
 import { AnsiUp } from 'ansi_up';
 import { api } from '../api';
@@ -13,6 +13,7 @@ import {
     getRunnableProjectScripts,
     parseProjectCommandKey,
 } from '../utils/projectCommands';
+import { formatDuration, isRunSessionActive } from '../utils/runSession';
 
 const { t } = useI18n();
 const projectStore = useProjectStore();
@@ -123,31 +124,57 @@ function getCachedParsedAnsi(text: string) {
 // So we should add to 'openTabs' when runningStatus changes to true.
 
 const openTabs = ref<Set<string>>(new Set());
+const closedTabs = ref<Set<string>>(new Set());
+const knownLatestSessionIds = new Map<string, string>();
+const currentTime = ref(Date.now());
+let durationTimer: number | null = null;
+
+const projectCommandPrefix = computed(() => `${activeProject.value.id}:`);
+
+function getSessionForTab(tabId: string): RunSession | undefined {
+    const command = parseProjectCommandKey(tabId);
+    if (!command || !activeProject.value) return undefined;
+    const commandKey = getProjectCommandRunId(activeProject.value.id, command.type, command.id);
+    const sessionId = projectStore.latestSessionIdByCommand[commandKey];
+    const session = sessionId ? projectStore.runSessions[sessionId] : undefined;
+    return session?.projectId === activeProject.value.id && session.commandKey === commandKey ? session : undefined;
+}
+
+const projectLatestSessions = computed(() => Object.entries(projectStore.latestSessionIdByCommand)
+    .filter(([commandKey]) => commandKey.startsWith(projectCommandPrefix.value))
+    .map(([commandKey, sessionId]) => ({
+        commandKey,
+        sessionId,
+        tabId: commandKey.slice(projectCommandPrefix.value.length),
+        session: projectStore.runSessions[sessionId],
+    }))
+    .filter((entry): entry is { commandKey: string; sessionId: string; tabId: string; session: RunSession } =>
+        !!entry.session && entry.session.projectId === activeProject.value.id && entry.session.commandKey === entry.commandKey
+    ));
 
 const activeRunningTabs = computed(() => {
-    if (!activeProject.value) return [];
-    const prefix = `${activeProject.value.id}:`;
-
-    return Object.entries(projectStore.runningStatus)
-        .filter(([key, running]) => running && key.startsWith(prefix))
-        .map(([key]) => key.substring(prefix.length));
+    return projectLatestSessions.value
+        .filter(({ session }) => isRunSessionActive(session.status))
+        .map(({ tabId }) => tabId);
 });
 
-watch(activeRunningTabs, (runningTabs) => {
-    for (const script of runningTabs) {
-        openTabs.value.add(script);
-    }
-    // Only switch when the currently viewed command has ended
-    if (activeScript.value && !runningTabs.includes(activeScript.value)) {
-        if (runningTabs.length > 0) {
-            activeScript.value = runningTabs[runningTabs.length - 1];
+watch(projectLatestSessions, (entries) => {
+    for (const entry of entries) {
+        if (knownLatestSessionIds.get(entry.commandKey) !== entry.sessionId) {
+            knownLatestSessionIds.set(entry.commandKey, entry.sessionId);
+            closedTabs.value.delete(entry.tabId);
+            openTabs.value.add(entry.tabId);
         }
     }
-    // Initialize activeScript if not set
+    const runningTabs = activeRunningTabs.value;
     if (!activeScript.value && runningTabs.length > 0) {
         activeScript.value = runningTabs[runningTabs.length - 1];
+    } else if (activeScript.value && !runningTabs.includes(activeScript.value) && runningTabs.length > 0) {
+        const current = getSessionForTab(activeScript.value);
+        if (!current || isRunSessionActive(current.status)) return;
+        activeScript.value = runningTabs[runningTabs.length - 1];
     }
-}, { immediate: true });
+}, { immediate: true, deep: true });
 
 /**
  * 从已有日志/运行状态初始化输出 tab。
@@ -160,13 +187,17 @@ watch(activeRunningTabs, (runningTabs) => {
 function initOpenTabsFromProject() {
     const project = activeProject.value;
     openTabs.value.clear();
+    closedTabs.value.clear();
+    knownLatestSessionIds.clear();
     activeScript.value = null;
 
     // Check node scripts
     if (project.scripts) {
         project.scripts.forEach(s => {
-            const key = getProjectCommandRunId(project.id, 'script', s);
-            if (projectStore.runningStatus[key] || (projectStore.logs[key] && projectStore.logs[key].length > 0)) {
+            const commandKey = getProjectCommandRunId(project.id, 'script', s);
+            const sessionId = projectStore.latestSessionIdByCommand[commandKey];
+            if (sessionId && projectStore.runSessions[sessionId]?.projectId === project.id) {
+                knownLatestSessionIds.set(commandKey, sessionId);
                 openTabs.value.add(getProjectCommandKey('script', s));
             }
         });
@@ -175,8 +206,10 @@ function initOpenTabsFromProject() {
     // Check custom commands
     if (project.customCommands) {
         project.customCommands.forEach(c => {
-            const key = getProjectCommandRunId(project.id, 'custom', c.id);
-            if (projectStore.runningStatus[key] || (projectStore.logs[key] && projectStore.logs[key].length > 0)) {
+            const commandKey = getProjectCommandRunId(project.id, 'custom', c.id);
+            const sessionId = projectStore.latestSessionIdByCommand[commandKey];
+            if (sessionId && projectStore.runSessions[sessionId]?.projectId === project.id) {
+                knownLatestSessionIds.set(commandKey, sessionId);
                 openTabs.value.add(getProjectCommandKey('custom', c.id));
             }
         });
@@ -215,10 +248,7 @@ const hasRunnableCommands = computed(() =>
 );
 
 function isCommandKeyRunning(commandKey: string): boolean {
-    const project = activeProject.value;
-    const command = parseProjectCommandKey(commandKey);
-    if (!project || !command) return false;
-    return !!projectStore.runningStatus[getProjectCommandRunId(project.id, command.type, command.id)];
+    return isRunSessionActive(getSessionForTab(commandKey)?.status);
 }
 
 function getCustomCmdLabel(cmd: Pick<CustomCommand, 'name' | 'builtinId'>): string {
@@ -235,7 +265,7 @@ function getTabLabel(tabId: string): string {
     return command.id;
 }
 
-function activeRunId(): string | null {
+function activeCommandKey(): string | null {
     if (!activeProject.value || !activeScript.value) return null;
     const command = parseProjectCommandKey(activeScript.value);
     if (!command) return null;
@@ -243,16 +273,16 @@ function activeRunId(): string | null {
 }
 
 const logs = computed(() => {
-    const runId = activeRunId();
-    if (!runId) return [];
-    const allLogs = projectStore.logs[runId] || [];
+    const sessionId = currentSessionId.value;
+    if (!sessionId) return [];
+    const allLogs = projectStore.sessionLogs[sessionId] || [];
     return allLogs.slice(-500);
 });
 
 const promptPreview = computed(() => {
-    const runId = activeRunId();
-    if (!runId || !isRunning.value) return '';
-    return projectStore.partialOutput[runId] || '';
+    const sessionId = currentSessionId.value;
+    if (!sessionId || !isRunning.value) return '';
+    return projectStore.sessionPartialOutput[sessionId] || '';
 });
 
 const renderedLogs = computed(() => {
@@ -262,8 +292,83 @@ const renderedLogs = computed(() => {
     }));
 });
 
-const isRunning = computed(() => {
-    return activeScript.value ? isCommandKeyRunning(activeScript.value) : false;
+const currentSessionId = computed(() => {
+    const command = activeScript.value ? parseProjectCommandKey(activeScript.value) : null;
+    if (!activeProject.value || !command) return null;
+    const commandKey = getProjectCommandRunId(activeProject.value.id, command.type, command.id);
+    const sessionId = projectStore.latestSessionIdByCommand[commandKey];
+    const session = sessionId ? projectStore.runSessions[sessionId] : undefined;
+    return session?.projectId === activeProject.value.id && session.commandKey === commandKey ? sessionId : null;
+});
+
+const currentSession = computed(() => currentSessionId.value
+    ? projectStore.runSessions[currentSessionId.value]
+    : undefined);
+
+const isRunning = computed(() => isRunSessionActive(currentSession.value?.status));
+const isInteractive = computed(() => currentSession.value?.status === 'running');
+const currentSessionDuration = computed(() => {
+    void currentTime.value;
+    const session = currentSession.value;
+    if (!session) return null;
+    return session.durationMs ?? (isRunSessionActive(session.status) ? Math.max(0, Date.now() - session.startedAt) : null);
+});
+
+function getSessionStatusLabel(status: RunSession['status']): string {
+    const labels: Record<RunSession['status'], string> = {
+        starting: t('dashboard.runStatusStarting'),
+        running: t('dashboard.runStatusRunning'),
+        stopping: t('dashboard.runStatusStopping'),
+        success: t('dashboard.runStatusSuccess'),
+        failed: t('dashboard.runStatusFailed'),
+        stopped: t('dashboard.runStatusStopped'),
+    };
+    return labels[status];
+}
+
+function getSessionStatusIcon(status: RunSession['status']): string {
+    switch (status) {
+        case 'starting': return 'i-mdi-loading animate-spin';
+        case 'running': return 'i-mdi-circle';
+        case 'success': return 'i-mdi-check-circle-outline';
+        case 'failed': return 'i-mdi-alert-circle-outline';
+        case 'stopped': return 'i-mdi-stop-circle-outline';
+        case 'stopping': return 'i-mdi-loading animate-spin';
+    }
+}
+
+function getSessionStatusClass(status: RunSession['status']): string {
+    return `console-session-status-${status}`;
+}
+
+function getTabStatusIcon(commandKey: string): string {
+    return getSessionStatusIcon(getSessionForTab(commandKey)?.status || 'stopped');
+}
+
+function getTabStatusClass(commandKey: string): string {
+    return getSessionStatusClass(getSessionForTab(commandKey)?.status || 'stopped');
+}
+
+function canCloseTab(commandKey: string): boolean {
+    return !isRunSessionActive(getSessionForTab(commandKey)?.status);
+}
+
+function getTabTooltip(commandKey: string): string {
+    const session = getSessionForTab(commandKey);
+    if (!session) return getTabLabel(commandKey);
+    const exit = session.exitCode === undefined ? '' : ` · exit ${session.exitCode ?? 'null'}`;
+    const duration = session.durationMs === undefined ? '' : ` · ${formatDuration(session.durationMs)}`;
+    return `${getSessionStatusLabel(session.status)}${exit}${duration}`;
+}
+
+onMounted(() => {
+    durationTimer = window.setInterval(() => {
+        currentTime.value = Date.now();
+    }, 1000);
+});
+
+onBeforeUnmount(() => {
+    if (durationTimer !== null) window.clearInterval(durationTimer);
 });
 
 function isNearLogBottom() {
@@ -331,46 +436,26 @@ watch(activeScript, () => {
 // props 化后 project 在实例生命周期内恒定，它永远不会触发；而 parsedLogCache
 // 是每实例私有的，也不存在跨项目残留，故整段删除。
 
-function handleStop() {
+function handleStop(): void {
     const command = activeScript.value ? parseProjectCommandKey(activeScript.value) : null;
     if (activeProject.value && command) {
-        projectStore.stopProject(activeProject.value, command.id, command.type);
+        void projectStore.stopProject(activeProject.value, command.id, command.type);
     }
 }
 
-async function handleRestart() {
+function handleRerun(): void {
     const command = activeScript.value ? parseProjectCommandKey(activeScript.value) : null;
-    if (activeProject.value && command) {
-        const runId = getProjectCommandRunId(activeProject.value.id, command.type, command.id);
-        
-        // 如果已经在运行，先停止
-        if (projectStore.runningStatus[runId]) {
-            await projectStore.stopProject(activeProject.value, command.id, command.type);
-            
-            // 等待进程真正退出
-            const maxWait = 5000;
-            const startTime = Date.now();
-            while (projectStore.runningStatus[runId] && (Date.now() - startTime) < maxWait) {
-                await new Promise(resolve => setTimeout(resolve, 100));
-            }
-        }
-        
-        // 启动
-        if (activeProject.value && activeScript.value) {
-            if (command.type === 'custom') {
-                projectStore.runCustomCommand(activeProject.value, command.id);
-            } else {
-                projectStore.runProject(activeProject.value, command.id);
-            }
-        }
+    const session = currentSession.value;
+    if (!activeProject.value || !command || !session || isRunSessionActive(session.status)) return;
+    if (command.type === 'custom') {
+        void projectStore.runCustomCommand(activeProject.value, command.id);
+    } else {
+        void projectStore.runProject(activeProject.value, command.id);
     }
 }
 
-function handleClear() {
-    const command = activeScript.value ? parseProjectCommandKey(activeScript.value) : null;
-    if (activeProject.value && command) {
-        projectStore.clearLog(getProjectCommandRunId(activeProject.value.id, command.type, command.id));
-    }
+function handleClear(): void {
+    if (currentSessionId.value) projectStore.clearSessionOutput(currentSessionId.value);
 }
 
 function handleRun(commandKey: string) {
@@ -403,11 +488,11 @@ async function sendStdin(event?: KeyboardEvent): Promise<void> {
         event.preventDefault();
         event.stopPropagation();
     }
-    const runId = activeRunId();
-    if (!runId || !isRunning.value || sendingInput.value) return;
+    const commandKey = activeCommandKey();
+    if (!commandKey || !isInteractive.value || sendingInput.value) return;
     sendingInput.value = true;
     try {
-        await api.sendProjectInput(runId, `${stdinInput.value}\n`);
+        await api.sendProjectInput(commandKey, `${stdinInput.value}\n`);
         stdinInput.value = '';
     } catch (error) {
         ElMessage.error(String(error));
@@ -428,13 +513,14 @@ function handleStdinKeydown(event: KeyboardEvent): void {
 }
 
 function handleCloseTab(commandKey: string) {
-    // Stop the script if running
-    const command = parseProjectCommandKey(commandKey);
-    if (activeProject.value && command && isCommandKeyRunning(commandKey)) {
-        projectStore.stopProject(activeProject.value, command.id, command.type);
+    const session = getSessionForTab(commandKey);
+    if (session && isRunSessionActive(session.status)) {
+        ElMessage.warning(t('dashboard.closeRunningTabHint'));
+        return;
     }
 
     openTabs.value.delete(commandKey);
+    closedTabs.value.add(commandKey);
     if (activeScript.value === commandKey) {
         activeScript.value = Array.from(openTabs.value)[0] || null;
     }
@@ -478,19 +564,19 @@ function handleCloseTab(commandKey: string) {
             <!-- Tabs for outputs -->
             <div v-if="availableTabs.length > 0" class="flex px-3 gap-0.5 overflow-x-auto custom-scrollbar pt-1.5">
                 <div v-for="commandKey in availableTabs" :key="commandKey" @click="activeScript = commandKey"
+                    :title="getTabTooltip(commandKey)"
                     class="group relative px-3 py-1.5 text-xs font-medium rounded-t-md border-t border-x transition-all duration-150 cursor-pointer select-none flex items-center gap-2 min-w-[90px] justify-between"
                         :class="activeScript === commandKey
                         ? 'bg-[var(--app-bg-muted)] text-[var(--app-primary)] border-[var(--app-border)] border-b-transparent z-10'
                         : 'bg-[var(--app-surface)] text-muted hover:text-secondary border-[var(--app-border)] hover:bg-[var(--app-surface-soft)]'">
                     <div class="flex items-center gap-1.5">
-                        <span v-if="isCommandKeyRunning(commandKey)"
-                            class="console-status-dot console-status-dot-running"></span>
-                        <span v-else class="console-status-dot"></span>
+                        <span class="console-tab-status-icon" :class="[getTabStatusClass(commandKey), getTabStatusIcon(commandKey)]"></span>
                         {{ getTabLabel(commandKey) }}
                     </div>
 
                     <button @click.stop="handleCloseTab(commandKey)"
-                        class="app-icon-btn !h-5 !min-w-5 opacity-0 group-hover:opacity-100 !rounded">
+                        class="app-icon-btn !h-5 !min-w-5 opacity-0 group-hover:opacity-100 !rounded"
+                        :title="canCloseTab(commandKey) ? t('dashboard.closeTab') : t('dashboard.closeRunningTabHint')">
                         <div class="i-mdi-close text-[10px]" />
                     </button>
                 </div>
@@ -498,31 +584,35 @@ function handleCloseTab(commandKey: string) {
         </div>
 
         <!-- Logs Control Bar (only if script selected) -->
-        <div v-if="activeScript"
+        <div v-if="activeScript && currentSession"
             class="app-panel-toolbar flex items-center justify-between px-3 py-1.5">
-            <div class="text-[11px] text-slate-400 dark:text-slate-500 font-mono flex items-center gap-2">
+            <div class="text-[11px] text-slate-400 dark:text-slate-500 font-mono flex items-center gap-2 min-w-0 flex-wrap">
                 <span>{{ getTabLabel(activeScript) }}</span>
-                <span v-if="isRunning" class="text-emerald-500 flex items-center gap-1">
-                    <div class="i-mdi-loading animate-spin text-[10px]" /> {{ t('dashboard.running') }}
+                <span class="console-session-status px-1.5 py-0.5 rounded border flex items-center gap-1" :class="getSessionStatusClass(currentSession.status)">
+                    <div :class="getSessionStatusIcon(currentSession.status)" class="text-[10px]" />
+                    {{ getSessionStatusLabel(currentSession.status) }}
                 </span>
-                <span v-else class="text-slate-300 dark:text-slate-600">{{ t('dashboard.stopped') }}</span>
+                <span v-if="currentSession.exitCode !== undefined">exit {{ currentSession.exitCode === null ? 'null' : currentSession.exitCode }}</span>
+                <span v-if="currentSessionDuration !== null">{{ formatDuration(currentSessionDuration) }}</span>
+                <span v-if="currentSession.nodeVersion" class="truncate max-w-[220px]">Node {{ currentSession.nodeVersion }}</span>
+                <span v-else-if="currentSession.nodePath" class="truncate max-w-[220px]">Node {{ currentSession.nodePath }}</span>
             </div>
             <div class="flex gap-1.5">
                 <button @click="handleClear" class="app-icon-btn !h-6 !min-w-6 !rounded"
-                    title="Clear Logs">
+                    :title="t('dashboard.clearOutput')">
                     <div class="i-mdi-delete-sweep text-sm" />
                 </button>
-                <button v-if="isRunning" @click="handleRestart"
-                    class="px-2 py-0.5 bg-amber-500/8 hover:bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/15 rounded text-[11px] flex items-center gap-1 transition-all duration-150">
-                    <div class="i-mdi-restart text-[10px]" /> {{ t('dashboard.restart') }}
-                </button>
-                <button v-if="isRunning" @click="handleStop"
+                <button v-if="currentSession.status === 'starting' || currentSession.status === 'running'" @click="handleStop"
                     class="px-2 py-0.5 bg-rose-500/8 hover:bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/15 rounded text-[11px] flex items-center gap-1 transition-all duration-150">
                     <div class="i-mdi-stop text-[10px]" /> {{ t('dashboard.stop') }}
                 </button>
-                <button v-else @click="handleRun(activeScript!)"
-                    class="px-2 py-0.5 bg-blue-500/8 hover:bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/15 rounded text-[11px] flex items-center gap-1 transition-all duration-150">
-                    <div class="i-mdi-play text-[10px]" /> {{ t('dashboard.start') }}
+                <button v-else-if="currentSession.status === 'stopping'" disabled
+                    class="px-2 py-0.5 text-slate-400 border border-[var(--app-border)] rounded text-[11px] flex items-center gap-1 opacity-70">
+                    <div class="i-mdi-loading animate-spin text-[10px]" /> {{ t('dashboard.runStatusStopping') }}
+                </button>
+                <button v-else @click="handleRerun"
+                    class="px-2 py-0.5 bg-amber-500/8 hover:bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/15 rounded text-[11px] flex items-center gap-1 transition-all duration-150">
+                    <div class="i-mdi-restart text-[10px]" /> {{ t('dashboard.rerun') }}
                 </button>
             </div>
         </div>
@@ -555,7 +645,7 @@ function handleCloseTab(commandKey: string) {
             </button>
         </div>
 
-        <div v-if="activeScript && isRunning" class="console-stdin-bar shrink-0 flex items-center gap-2 border-t px-3 py-2">
+        <div v-if="activeScript && isInteractive" class="console-stdin-bar shrink-0 flex items-center gap-2 border-t px-3 py-2">
             <input
                 v-model="stdinInput"
                 class="console-stdin-input min-w-0 flex-1"
@@ -611,6 +701,38 @@ function handleCloseTab(commandKey: string) {
   background: var(--app-success);
   box-shadow: 0 0 4px color-mix(in srgb, var(--app-success) 54%, transparent);
   animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.console-tab-status-icon {
+  width: 12px;
+  height: 12px;
+  display: inline-block;
+}
+.console-session-status-starting,
+.console-session-status-running {
+  color: var(--app-success);
+  border-color: color-mix(in srgb, var(--app-success) 26%, transparent);
+  background: color-mix(in srgb, var(--app-success) 8%, transparent);
+}
+.console-session-status-stopping {
+  color: var(--app-warning, #d97706);
+  border-color: color-mix(in srgb, var(--app-warning, #d97706) 26%, transparent);
+  background: color-mix(in srgb, var(--app-warning, #d97706) 8%, transparent);
+}
+.console-session-status-success {
+  color: var(--app-success);
+  border-color: color-mix(in srgb, var(--app-success) 26%, transparent);
+  background: color-mix(in srgb, var(--app-success) 8%, transparent);
+}
+.console-session-status-failed {
+  color: var(--app-danger, #dc2626);
+  border-color: color-mix(in srgb, var(--app-danger, #dc2626) 26%, transparent);
+  background: color-mix(in srgb, var(--app-danger, #dc2626) 8%, transparent);
+}
+.console-session-status-stopped {
+  color: var(--app-text-secondary);
+  border-color: var(--app-border);
+  background: var(--app-surface-soft);
 }
 
 .console-log-row:hover {

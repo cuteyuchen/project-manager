@@ -14,6 +14,8 @@ import type {
     WorkspaceStat,
     EditorFileSnapshot,
     EditorWriteResult,
+    ProjectOutputPayload,
+    ProjectExitPayload,
 } from '../types';
 import type {
     NodeVersion,
@@ -172,24 +174,24 @@ export class TauriAdapter implements PlatformAPI {
     }
 
     // Runner
-    async runProjectCommand(id: string, path: string, script: string, packageManager: string, nodePath: string, commandPath?: string, pmNodePath?: string): Promise<void> {
-        return invoke('run_project_command', { id, path, script, packageManager, nodePath, commandPath: commandPath || null, pmNodePath: pmNodePath || null });
+    async runProjectCommand(commandKey: string, sessionId: string, path: string, script: string, packageManager: string, nodePath: string, commandPath?: string, pmNodePath?: string): Promise<void> {
+        return invoke('run_project_command', { commandKey, sessionId, path, script, packageManager, nodePath, commandPath: commandPath || null, pmNodePath: pmNodePath || null });
     }
 
-    async runCustomCommand(id: string, path: string, command: string): Promise<void> {
-        return invoke('run_custom_command', { id, path, command });
+    async runCustomCommand(commandKey: string, sessionId: string, path: string, command: string): Promise<void> {
+        return invoke('run_custom_command', { commandKey, sessionId, path, command });
     }
 
-    async stopProjectCommand(id: string): Promise<void> {
-        return invoke('stop_project_command', { id });
+    async stopProjectCommand(commandKey: string): Promise<void> {
+        return invoke('stop_project_command', { commandKey });
     }
 
-    async sendProjectInput(runId: string, input: string): Promise<void> {
-        return invoke('send_project_input', { runId, input });
+    async sendProjectInput(commandKey: string, input: string): Promise<void> {
+        return invoke('send_project_input', { commandKey, input });
     }
 
-    async closeProjectInput(runId: string): Promise<void> {
-        return invoke('close_project_input', { runId });
+    async closeProjectInput(commandKey: string): Promise<void> {
+        return invoke('close_project_input', { commandKey });
     }
 
     async installPm(nodePath: string, pmName: string): Promise<void> {
@@ -333,14 +335,14 @@ export class TauriAdapter implements PlatformAPI {
     }
 
     // Events
-    async onProjectOutput(callback: (payload: { id: string; data: string; partial?: boolean }) => void): Promise<() => void> {
-        return listen<any>('project-output', (event) => {
+    async onProjectOutput(callback: (payload: ProjectOutputPayload) => void): Promise<() => void> {
+        return listen<ProjectOutputPayload>('project-output', (event) => {
             callback(event.payload);
         });
     }
 
-    async onProjectExit(callback: (payload: { id: string }) => void): Promise<() => void> {
-        return listen<any>('project-exit', (event) => {
+    async onProjectExit(callback: (payload: ProjectExitPayload) => void): Promise<() => void> {
+        return listen<ProjectExitPayload>('project-exit', (event) => {
             callback(event.payload);
         });
     }

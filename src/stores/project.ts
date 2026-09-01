@@ -1,8 +1,8 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import { api } from '../api';
-import type { Project, ProjectGroup, WorkspaceTab } from '../types';
-import type { PackageManagerResolveResult, ImportNode } from '../api/types';
+import type { Project, ProjectGroup, RunSession, RunSessionCommandType, WorkspaceTab } from '../types';
+import type { PackageManagerResolveResult, ImportNode, ProjectExitPayload } from '../api/types';
 import { useNodeStore } from './node';
 import { useSettingsStore } from './settings';
 import { useUsageStore } from './usage';
@@ -21,6 +21,7 @@ import { normalizeProjectTags } from '../utils/projectTags';
 import { createProjectId } from '../utils/projectId';
 import { flattenImportNodeTree } from '../utils/importProjectTree';
 import { MAX_PROJECT_DEPTH, normalizeProjectPath, assignSortOrders, aggregateRunningSubtreeCount, compareProjectsByPinnedThenOrder, computeManualOrderAssignments } from '../utils/projectTree';
+import { classifyProjectExit, createRunSessionId, formatExitSummary, isActiveRunSession, isRunSessionActive } from '../utils/runSession';
 import { ElMessage } from 'element-plus';
 
 export const useProjectStore = defineStore('project', () => {
@@ -30,6 +31,11 @@ export const useProjectStore = defineStore('project', () => {
   const runningProjectCount = ref<Record<string, number>>({});
   const logs = ref<Record<string, string[]>>({});
   const partialOutput = ref<Record<string, string>>({});
+  const runSessions = ref<Record<string, RunSession>>({});
+  const latestSessionIdByCommand = ref<Record<string, string>>({});
+  const activeSessionIdByCommand = ref<Record<string, string>>({});
+  const sessionLogs = ref<Record<string, string[]>>({});
+  const sessionPartialOutput = ref<Record<string, string>>({});
   // activeProjectId 语义为「当前叶子/子项目」：命令运行、git、环境切换绑定它（ConsoleView/GitView 读取此值）
   const activeProjectId = ref<string | null>(null);
   // activeRootId 语义为「当前钻取进入的一级项目」：文件、备忘录绑定它
@@ -47,19 +53,21 @@ export const useProjectStore = defineStore('project', () => {
   // Log buffering mechanism to optimize rendering performance
   const logBuffer: Record<string, string[]> = {};
   let logFlushTimer: number | null = null;
+  const backendStartedSessionIds = new Set<string>();
+  const MAX_RUN_SESSIONS_PER_PROJECT = 50;
 
-  function getProjectIdFromRunId(runId: string) {
-    const separatorIndex = runId.indexOf(':');
-    return separatorIndex === -1 ? runId : runId.slice(0, separatorIndex);
+  function getProjectIdFromCommandKey(commandKey: string) {
+    const separatorIndex = commandKey.indexOf(':');
+    return separatorIndex === -1 ? commandKey : commandKey.slice(0, separatorIndex);
   }
 
-  function setRunningState(runId: string, nextRunning: boolean) {
-    const prevRunning = !!runningStatus.value[runId];
+  function setRunningState(commandKey: string, nextRunning: boolean) {
+    const prevRunning = !!runningStatus.value[commandKey];
     if (prevRunning === nextRunning) return;
 
-    runningStatus.value[runId] = nextRunning;
+    runningStatus.value[commandKey] = nextRunning;
 
-    const projectId = getProjectIdFromRunId(runId);
+    const projectId = getProjectIdFromCommandKey(commandKey);
     const currentCount = runningProjectCount.value[projectId] || 0;
     const nextCount = nextRunning ? currentCount + 1 : Math.max(0, currentCount - 1);
 
@@ -80,58 +88,189 @@ export const useProjectStore = defineStore('project', () => {
     aggregateRunningSubtreeCount(projects.value, runningProjectCount.value)
   );
 
+  function syncLegacyCommandBuckets(session: RunSession): void {
+    if (latestSessionIdByCommand.value[session.commandKey] !== session.sessionId) return;
+    logs.value[session.commandKey] = sessionLogs.value[session.sessionId] || [];
+    if (sessionPartialOutput.value[session.sessionId] !== undefined) {
+      partialOutput.value[session.commandKey] = sessionPartialOutput.value[session.sessionId];
+    } else {
+      delete partialOutput.value[session.commandKey];
+    }
+  }
+
+  function trimSessionLogs(sessionId: string): void {
+    const current = sessionLogs.value[sessionId];
+    if (current && current.length > 2000) {
+      current.splice(0, current.length - 2000);
+    }
+  }
+
+  function flushSessionLogBuffer(sessionId: string): void {
+    const buffered = logBuffer[sessionId];
+    if (!buffered?.length) return;
+
+    const current = sessionLogs.value[sessionId];
+    if (current) {
+      current.push(...buffered);
+      trimSessionLogs(sessionId);
+      const session = runSessions.value[sessionId];
+      if (session) syncLegacyCommandBuckets(session);
+    }
+    logBuffer[sessionId] = [];
+  }
+
   function flushLogs() {
-    for (const id in logBuffer) {
-      if (logBuffer[id].length > 0) {
-        if (!logs.value[id]) logs.value[id] = [];
-        // Use spread to push multiple items at once, reducing reactivity triggers
-        logs.value[id].push(...logBuffer[id]);
-
-        // Keep logs within limit (e.g., 2000 lines to allow scrolling back a bit, ConsoleView shows 500)
-        if (logs.value[id].length > 2000) {
-          logs.value[id] = logs.value[id].slice(-2000);
-        }
-
-        logBuffer[id] = [];
-      }
+    for (const sessionId in logBuffer) {
+      flushSessionLogBuffer(sessionId);
     }
     logFlushTimer = null;
   }
 
-  // Setup listeners
-  api.onProjectOutput(({ id, data, partial }) => {
+  function appendSessionLog(sessionId: string, line: string): void {
+    const current = sessionLogs.value[sessionId];
+    if (!current) return;
+    current.push(line);
+    trimSessionLogs(sessionId);
+    const session = runSessions.value[sessionId];
+    if (session) syncLegacyCommandBuckets(session);
+  }
+
+  function pruneRunSessions(projectId: string): void {
+    const activeIdSet = new Set(Object.values(activeSessionIdByCommand.value));
+    const latestIdSet = new Set(Object.values(latestSessionIdByCommand.value));
+    const candidates = Object.values(runSessions.value)
+      .filter(session => session.projectId === projectId)
+      .filter(session => !activeIdSet.has(session.sessionId) && !latestIdSet.has(session.sessionId))
+      .sort((left, right) => left.startedAt - right.startedAt);
+
+    const projectSessionCount = Object.values(runSessions.value).filter(session => session.projectId === projectId).length;
+    const removeCount = Math.max(0, projectSessionCount - MAX_RUN_SESSIONS_PER_PROJECT);
+    for (const session of candidates.slice(0, removeCount)) {
+      delete runSessions.value[session.sessionId];
+      delete sessionLogs.value[session.sessionId];
+      delete sessionPartialOutput.value[session.sessionId];
+      delete logBuffer[session.sessionId];
+      backendStartedSessionIds.delete(session.sessionId);
+    }
+  }
+
+  function updateRunSession(sessionId: string, patch: Partial<RunSession>): RunSession | undefined {
+    const session = runSessions.value[sessionId];
+    if (!session) return undefined;
+    Object.assign(session, patch);
+    return session;
+  }
+
+  function createRunSession(
+    project: Project,
+    commandType: RunSessionCommandType,
+    commandId: string,
+    displayName: string,
+  ): RunSession | null {
+    const commandKey = getProjectCommandRunId(project.id, commandType, commandId);
+    const currentId = activeSessionIdByCommand.value[commandKey];
+    const current = currentId ? runSessions.value[currentId] : undefined;
+    if (runningStatus.value[commandKey] || (current && isRunSessionActive(current.status))) return null;
+
+    const previousLatestId = latestSessionIdByCommand.value[commandKey];
+    if (previousLatestId) {
+      delete sessionLogs.value[previousLatestId];
+      delete sessionPartialOutput.value[previousLatestId];
+      delete logBuffer[previousLatestId];
+      backendStartedSessionIds.delete(previousLatestId);
+    }
+
+    const session: RunSession = {
+      sessionId: createRunSessionId(),
+      commandKey,
+      projectId: project.id,
+      commandType,
+      commandId,
+      displayName,
+      cwd: project.path,
+      status: 'starting',
+      startedAt: Date.now(),
+      nodeRuntimeId: project.nodeRuntimeId,
+      nodeVersion: project.nodeVersion,
+      packageManager: project.packageManager,
+    };
+
+    runSessions.value[session.sessionId] = session;
+    latestSessionIdByCommand.value[commandKey] = session.sessionId;
+    activeSessionIdByCommand.value[commandKey] = session.sessionId;
+    sessionLogs.value[session.sessionId] = [];
+    logs.value[commandKey] = sessionLogs.value[session.sessionId];
+    delete partialOutput.value[commandKey];
+
+    activeProjectId.value = project.id;
+    requestRightTab('console', project.id);
+    setRunningState(commandKey, true);
+    try { useUsageStore().recordUsage(project.id); } catch {}
+    return session;
+  }
+
+  function finishRunSession(sessionId: string, payload: ProjectExitPayload): void {
+    const session = runSessions.value[sessionId];
+    if (!session || session.commandKey !== payload.commandKey || !isRunSessionActive(session.status)) return;
+
+    flushSessionLogBuffer(sessionId);
+    delete sessionPartialOutput.value[sessionId];
+
+    const status = classifyProjectExit(payload);
+    updateRunSession(sessionId, {
+      status,
+      endedAt: Date.now(),
+      durationMs: Math.max(0, payload.durationMs),
+      exitCode: payload.exitCode,
+      errorMessage: payload.waitError,
+    });
+    appendSessionLog(sessionId, formatExitSummary(payload));
+    backendStartedSessionIds.delete(sessionId);
+
+    if (isActiveRunSession(activeSessionIdByCommand.value, session.commandKey, sessionId)) {
+      delete activeSessionIdByCommand.value[session.commandKey];
+      setRunningState(session.commandKey, false);
+    }
+    syncLegacyCommandBuckets(session);
+    pruneRunSessions(session.projectId);
+  }
+
+  function failRunSession(sessionId: string, error: unknown): void {
+    const session = runSessions.value[sessionId];
+    if (!session || !isRunSessionActive(session.status)) return;
+    const message = String(error);
+    appendSessionLog(sessionId, `[Runner] ${message}`);
+    finishRunSession(sessionId, {
+      commandKey: session.commandKey,
+      sessionId,
+      exitCode: null,
+      stopped: false,
+      durationMs: Date.now() - session.startedAt,
+      waitError: message,
+    });
+  }
+
+  // Setup listeners. New events are routed by sessionId; an unknown/old session is ignored.
+  api.onProjectOutput(({ commandKey, sessionId, data, partial }) => {
+    const session = runSessions.value[sessionId];
+    if (!session || session.commandKey !== commandKey || !isRunSessionActive(session.status) || !sessionLogs.value[sessionId]) return;
     if (partial) {
-      partialOutput.value[id] = data;
+      sessionPartialOutput.value[sessionId] = data;
+      syncLegacyCommandBuckets(session);
       return;
     }
-    if (partialOutput.value[id]) {
-      const next = { ...partialOutput.value };
-      delete next[id];
-      partialOutput.value = next;
-    }
-    if (!logBuffer[id]) logBuffer[id] = [];
-    logBuffer[id].push(data);
+    delete sessionPartialOutput.value[sessionId];
+    syncLegacyCommandBuckets(session);
+    if (!logBuffer[sessionId]) logBuffer[sessionId] = [];
+    logBuffer[sessionId].push(data);
 
     if (!logFlushTimer) {
       logFlushTimer = requestAnimationFrame(flushLogs);
     }
   });
 
-  api.onProjectExit(({ id }) => {
-    if (partialOutput.value[id]) {
-      const next = { ...partialOutput.value };
-      delete next[id];
-      partialOutput.value = next;
-    }
-    setRunningState(id, false);
-    // Ensure any buffered logs are flushed first
-    if (logBuffer[id] && logBuffer[id].length > 0) {
-      if (!logs.value[id]) logs.value[id] = [];
-      logs.value[id].push(...logBuffer[id]);
-      logBuffer[id] = [];
-    }
-    if (!logs.value[id]) logs.value[id] = [];
-    logs.value[id].push('[Process exited]');
+  api.onProjectExit((payload) => {
+    finishRunSession(payload.sessionId, payload);
   });
 
   function addProject(project: Project) {
@@ -153,6 +292,38 @@ export const useProjectStore = defineStore('project', () => {
     // 级联删除：收集自身 + 所有后代项目 id 一并移除
     const idsToRemove = collectDescendantIds(id);
     idsToRemove.add(id);
+
+    const commandPrefixes = new Set(Array.from(idsToRemove, projectId => `${projectId}:`));
+    for (const session of Object.values(runSessions.value)) {
+      if (!idsToRemove.has(session.projectId)) continue;
+      if (isRunSessionActive(session.status)) {
+        void api.stopProjectCommand(session.commandKey).catch(error => {
+          console.warn(`Failed to stop removed project session ${session.sessionId}`, error);
+        });
+        if (runningStatus.value[session.commandKey]) setRunningState(session.commandKey, false);
+      }
+      delete runSessions.value[session.sessionId];
+      delete sessionLogs.value[session.sessionId];
+      delete sessionPartialOutput.value[session.sessionId];
+      delete logBuffer[session.sessionId];
+      backendStartedSessionIds.delete(session.sessionId);
+    }
+    for (const commandKey of Object.keys(latestSessionIdByCommand.value)) {
+      if (Array.from(commandPrefixes).some(prefix => commandKey.startsWith(prefix))) {
+        delete latestSessionIdByCommand.value[commandKey];
+        delete activeSessionIdByCommand.value[commandKey];
+        delete runningStatus.value[commandKey];
+        delete logs.value[commandKey];
+        delete partialOutput.value[commandKey];
+      }
+    }
+    for (const commandKey of Object.keys(runningStatus.value)) {
+      if (Array.from(commandPrefixes).some(prefix => commandKey.startsWith(prefix))) {
+        delete runningStatus.value[commandKey];
+      }
+    }
+    for (const projectId of idsToRemove) delete runningProjectCount.value[projectId];
+
     projects.value = projects.value.filter((p) => !idsToRemove.has(p.id));
     if (activeProjectId.value && idsToRemove.has(activeProjectId.value)) activeProjectId.value = null;
     if (activeRootId.value && idsToRemove.has(activeRootId.value)) activeRootId.value = null;
@@ -369,103 +540,121 @@ export const useProjectStore = defineStore('project', () => {
   }
 
   async function runProject(project: Project, script: string) {
-    const runId = getProjectCommandRunId(project.id, 'script', script);
+    const commandKey = getProjectCommandRunId(project.id, 'script', script);
+    if (runningStatus.value[commandKey]) return;
 
-    if (runningStatus.value[runId]) return;
-
-    const nodeStore = useNodeStore();
-
-    // Ensure node versions are loaded
-    if (project.type === 'node') {
-      await nodeStore.loadRuntimes();
-    }
-
-    const initialResolution = resolveProjectRuntime(project, nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime);
-    let nodePath = initialResolution.runtime?.path || '';
-
-    if (initialResolution.unavailable && project.nodeRuntimeId) {
-      ElMessage.error('项目绑定的 Node Runtime 不可用，请重新选择 Runtime 后再运行。');
-      return;
-    }
-
-    // If a specific version is configured but not installed, auto-install managed runtime
-    if (!nodePath && isExplicitNodeVersion(project.nodeVersion) && nodeStore.managedSupported) {
-      const version = normalizeNodeVersion(project.nodeVersion!)!;
-      try {
-        ElMessage.info({ message: `正在自动安装 Node ${version}...`, duration: 3000 });
-        await nodeStore.installManagedNode(version);
-        ElMessage.success({ message: `Node ${version} 自动安装完成`, duration: 3000 });
-        nodePath = resolveProjectNodePath(project, nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime);
-      } catch (installError) {
-        ElMessage.error(`Node ${version} 自动安装失败: ${String(installError)}`);
-        console.error('Failed to auto-install node version for project run', installError);
-      }
-    }
-
-    if (!nodePath && project.type === 'node') {
-      try {
-        const info = await api.scanProject(project.path);
-        const hint = projectNodeVersionHint(info);
-        nodePath = resolveNodePathFromVersion(hint, nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime);
-        if (nodePath && hint) {
-          const runtime = nodeStore.versions.find(item => item.path === nodePath);
-          project.nodeVersion = runtime?.version || hint;
-          if (runtime) project.nodeRuntimeId = runtime.runtimeId;
-        }
-      } catch (error) {
-        console.warn('Failed to rescan project node version before running project', error);
-      }
-    }
-
-    // 解析包管理器可用性
-    let pmCommandPath: string | undefined;
-    let pmNodePath: string | undefined;
-    if (project.type === 'node' && project.packageManager) {
-      const pmResult = await resolvePmForProject(project);
-      if (!pmResult.available) {
-        // 构建禁用原因日志
-        ElMessage.error(`命令不可用：${pmResult.reason || '包管理器不可用'}`);
-        return;
-      }
-      pmCommandPath = pmResult.commandPath;
-
-      // 当来源为 default 时，需要将默认 Node 目录传给后端加入 PATH
-      const source = project.packageManagerSource || 'project';
-      if (source === 'default') {
-        pmNodePath = resolveAppDefaultNodePath(nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime) || undefined;
-      }
-    }
+    const session = createRunSession(project, 'script', script, script);
+    if (!session) return;
+    const sessionId = session.sessionId;
 
     try {
-      logs.value[runId] = [];
+      const nodeStore = useNodeStore();
 
-      activeProjectId.value = project.id;
-      requestRightTab('console', project.id);
-      setRunningState(runId, true);
-      try { useUsageStore().recordUsage(project.id); } catch {}
+      if (project.type === 'node') {
+        await nodeStore.loadRuntimes();
+      }
+      if (runSessions.value[sessionId]?.status !== 'starting') return;
 
-      logs.value[runId].push(`[Runner] Starting script: ${script}`);
-      logs.value[runId].push(`[Runner] Project: ${project.name}`);
-      logs.value[runId].push(`[Runner] Package Manager: ${project.packageManager || 'npm'}`);
-      logs.value[runId].push(`[Runner] Node Version: ${project.nodeVersion || 'Default'}`);
-      logs.value[runId].push(`[Runner] Node Path: ${nodePath || 'System Default'}`);
-      if (pmCommandPath) {
-        logs.value[runId].push(`[Runner] PM Command Path: ${pmCommandPath}`);
+      const initialResolution = resolveProjectRuntime(project, nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime);
+      let nodePath = initialResolution.runtime?.path || '';
+
+      if (initialResolution.unavailable && project.nodeRuntimeId) {
+        const message = '项目绑定的 Node Runtime 不可用，请重新选择 Runtime 后再运行。';
+        ElMessage.error(message);
+        failRunSession(sessionId, message);
+        return;
       }
 
+      // If a specific version is configured but not installed, auto-install managed runtime
+      if (!nodePath && isExplicitNodeVersion(project.nodeVersion) && nodeStore.managedSupported) {
+        const version = normalizeNodeVersion(project.nodeVersion!)!;
+        try {
+          ElMessage.info({ message: `正在自动安装 Node ${version}...`, duration: 3000 });
+          await nodeStore.installManagedNode(version);
+          ElMessage.success({ message: `Node ${version} 自动安装完成`, duration: 3000 });
+          nodePath = resolveProjectNodePath(project, nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime);
+        } catch (installError) {
+          ElMessage.error(`Node ${version} 自动安装失败: ${String(installError)}`);
+          console.error('Failed to auto-install node version for project run', installError);
+        }
+      }
+
+      if (runSessions.value[sessionId]?.status !== 'starting') return;
+
+      if (!nodePath && project.type === 'node') {
+        try {
+          const info = await api.scanProject(project.path);
+          const hint = projectNodeVersionHint(info);
+          nodePath = resolveNodePathFromVersion(hint, nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime);
+          if (nodePath && hint) {
+            const runtime = nodeStore.versions.find(item => item.path === nodePath);
+            project.nodeVersion = runtime?.version || hint;
+            if (runtime) project.nodeRuntimeId = runtime.runtimeId;
+          }
+        } catch (error) {
+          console.warn('Failed to rescan project node version before running project', error);
+        }
+      }
+
+      if (runSessions.value[sessionId]?.status !== 'starting') return;
+
+      // 解析包管理器可用性
+      let pmCommandPath: string | undefined;
+      let pmNodePath: string | undefined;
+      if (project.type === 'node' && project.packageManager) {
+        const pmResult = await resolvePmForProject(project);
+        if (!pmResult.available) {
+          const message = `命令不可用：${pmResult.reason || '包管理器不可用'}`;
+          ElMessage.error(message);
+          failRunSession(sessionId, message);
+          return;
+        }
+        pmCommandPath = pmResult.commandPath;
+
+        // 当来源为 default 时，需要将默认 Node 目录传给后端加入 PATH
+        const source = project.packageManagerSource || 'project';
+        if (source === 'default') {
+          pmNodePath = resolveAppDefaultNodePath(nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime) || undefined;
+        }
+      }
+
+      if (runSessions.value[sessionId]?.status !== 'starting') return;
+
+      const runtime = nodeStore.versions.find(item => item.path === nodePath || item.runtimeId === project.nodeRuntimeId);
+      updateRunSession(sessionId, {
+        nodePath: nodePath || undefined,
+        nodeRuntimeId: runtime?.runtimeId || project.nodeRuntimeId,
+        nodeVersion: runtime?.version || project.nodeVersion,
+        packageManager: project.packageManager,
+      });
+      appendSessionLog(sessionId, `[Runner] Starting script: ${script}`);
+      appendSessionLog(sessionId, `[Runner] Project: ${project.name}`);
+      appendSessionLog(sessionId, `[Runner] Package Manager: ${project.packageManager || 'npm'}`);
+      appendSessionLog(sessionId, `[Runner] Node Version: ${project.nodeVersion || 'Default'}`);
+      appendSessionLog(sessionId, `[Runner] Node Path: ${nodePath || 'System Default'}`);
+      if (pmCommandPath) {
+        appendSessionLog(sessionId, `[Runner] PM Command Path: ${pmCommandPath}`);
+      }
+
+      backendStartedSessionIds.add(sessionId);
       await api.runProjectCommand(
-        runId,
+        commandKey,
+        sessionId,
         project.path,
         script,
         project.packageManager || 'npm',
         nodePath,
         pmCommandPath,
-        pmNodePath
+        pmNodePath,
       );
-    } catch (e) {
-      console.error(e);
-      setRunningState(runId, false);
-      logs.value[runId].push(`Error starting project: ${e}`);
+
+      if (runSessions.value[sessionId]?.status === 'starting') {
+        updateRunSession(sessionId, { status: 'running' });
+      }
+    } catch (error) {
+      console.error(error);
+      failRunSession(sessionId, error);
+      ElMessage.error(`命令启动失败：${String(error)}`);
     }
   }
 
@@ -474,37 +663,40 @@ export const useProjectStore = defineStore('project', () => {
     if (!cmd) return;
     const settingsStore = useSettingsStore();
 
-    const runId = getProjectCommandRunId(project.id, 'custom', cmd.id);
+    const commandKey = getProjectCommandRunId(project.id, 'custom', cmd.id);
+    if (runningStatus.value[commandKey]) return;
 
-    if (runningStatus.value[runId]) return;
-
-    // Node 项目只要 PM 不可用，项目内所有命令都禁用
-    if (project.type === 'node' && project.packageManager) {
-      const pmResult = await resolvePmForProject(project);
-      if (!pmResult.available) {
-        ElMessage.error(`命令不可用：${pmResult.reason || '包管理器不可用'}`);
-        return;
-      }
-    }
+    const displayName = getCustomCommandDisplayNameByLocale(cmd, settingsStore.settings.locale);
+    const session = createRunSession(project, 'custom', cmd.id, displayName);
+    if (!session) return;
+    const sessionId = session.sessionId;
 
     try {
-      logs.value[runId] = [];
-      activeProjectId.value = project.id;
-      requestRightTab('console', project.id);
-      setRunningState(runId, true);
-      try { useUsageStore().recordUsage(project.id); } catch {}
+      // Node 项目只要 PM 不可用，项目内所有命令都禁用
+      if (project.type === 'node' && project.packageManager) {
+        const pmResult = await resolvePmForProject(project);
+        if (!pmResult.available) {
+          const message = `命令不可用：${pmResult.reason || '包管理器不可用'}`;
+          ElMessage.error(message);
+          failRunSession(sessionId, message);
+          return;
+        }
+      }
+      if (runSessions.value[sessionId]?.status !== 'starting') return;
 
-      logs.value[runId].push(
-        `[Runner] Starting custom command: ${getCustomCommandDisplayNameByLocale(cmd, settingsStore.settings.locale)}`
-      );
-      logs.value[runId].push(`[Runner] Command: ${cmd.command}`);
-      logs.value[runId].push(`[Runner] Project: ${project.name}`);
+      appendSessionLog(sessionId, `[Runner] Starting custom command: ${displayName}`);
+      appendSessionLog(sessionId, `[Runner] Command: ${cmd.command}`);
+      appendSessionLog(sessionId, `[Runner] Project: ${project.name}`);
 
-      await api.runCustomCommand(runId, project.path, cmd.command);
-    } catch (e) {
-      console.error(e);
-      setRunningState(runId, false);
-      logs.value[runId].push(`Error starting command: ${e}`);
+      backendStartedSessionIds.add(sessionId);
+      await api.runCustomCommand(commandKey, sessionId, project.path, cmd.command);
+      if (runSessions.value[sessionId]?.status === 'starting') {
+        updateRunSession(sessionId, { status: 'running' });
+      }
+    } catch (error) {
+      console.error(error);
+      failRunSession(sessionId, error);
+      ElMessage.error(`命令启动失败：${String(error)}`);
     }
   }
 
@@ -512,16 +704,66 @@ export const useProjectStore = defineStore('project', () => {
     // 旧调用方只传 id 时继续按既有规则推断；新调用方传 type 后可安全处理同名命令。
     const commandType = type
       ?? (project.customCommands?.some(command => command.id === commandId) ? 'custom' : 'script');
-    const runId = getProjectCommandRunId(project.id, commandType, commandId);
+    const commandKey = getProjectCommandRunId(project.id, commandType, commandId);
+    const sessionId = activeSessionIdByCommand.value[commandKey];
+    const session = sessionId ? runSessions.value[sessionId] : undefined;
+
+    if (!session || !isRunSessionActive(session.status)) {
+      if (!runningStatus.value[commandKey]) return;
+      try {
+        await api.stopProjectCommand(commandKey);
+      } catch (error) {
+        console.error(error);
+        ElMessage.error(`停止失败：${String(error)}`);
+      }
+      return;
+    }
+
+    const previousStatus = session.status;
+    updateRunSession(sessionId, { status: 'stopping' });
+
+    // 还没进入 backend 时，直接结束本地 starting session；runProject 会在异步预检返回后放弃 spawn。
+    if (!backendStartedSessionIds.has(sessionId)) {
+      finishRunSession(sessionId, {
+        commandKey,
+        sessionId,
+        exitCode: null,
+        stopped: true,
+        durationMs: Date.now() - session.startedAt,
+      });
+      return;
+    }
+
     try {
-      await api.stopProjectCommand(runId);
-    } catch (e) {
-      console.error(e);
+      await api.stopProjectCommand(commandKey);
+    } catch (error) {
+      console.error(error);
+      if (runSessions.value[sessionId]?.status === 'stopping') {
+        updateRunSession(sessionId, { status: previousStatus });
+      }
+      ElMessage.error(`停止失败：${String(error)}`);
     }
   }
 
-  function clearLog(runId: string) {
-    logs.value[runId] = [];
+  function clearSessionOutput(sessionId: string): void {
+    const session = runSessions.value[sessionId];
+    if (!session) return;
+    sessionLogs.value[sessionId] = [];
+    delete sessionPartialOutput.value[sessionId];
+    delete logBuffer[sessionId];
+    syncLegacyCommandBuckets(session);
+  }
+
+  function clearLog(commandKey: string): void {
+    const sessionId = runSessions.value[commandKey]
+      ? commandKey
+      : latestSessionIdByCommand.value[commandKey];
+    if (sessionId) {
+      clearSessionOutput(sessionId);
+      return;
+    }
+    logs.value[commandKey] = [];
+    delete partialOutput.value[commandKey];
   }
 
   async function refreshAll() {
@@ -758,6 +1000,11 @@ export const useProjectStore = defineStore('project', () => {
     runningSubtreeCount,
     logs,
     partialOutput,
+    runSessions,
+    latestSessionIdByCommand,
+    activeSessionIdByCommand,
+    sessionLogs,
+    sessionPartialOutput,
     activeProjectId,
     activeRootId,
     pendingWorkspaceRootId,
@@ -785,6 +1032,7 @@ export const useProjectStore = defineStore('project', () => {
     stopProject,
     resolvePmForProject,
     clearLog,
+    clearSessionOutput,
     refreshAll,
     scanFrontendEnvForProject,
     scanFrontendEnvForAll,

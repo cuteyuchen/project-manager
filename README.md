@@ -23,8 +23,10 @@
 - 一键在编辑器、终端、资源管理器中打开项目
 - 统一的亮色 / 暗色主题体系，主工作台、设置、Git、文件管理等高频区域风格一致
 - 支持选择本地图片作为全局背景，并调节背景显示强度
+- 命令运行采用 Run Session：清晰显示 Starting、Running、Success、Failed、Stopped
+- Session 显示 exit code、耗时和当前项目 Node Runtime 环境
 - 命令运行日志支持持续输出，并在高频日志场景下自动跟随到底部
-- 运行中的命令再次点击可停止，运行状态脉冲动画区分
+- 支持一键停止、重新运行和清空当前 Session 输出；同一命令保持一个 Console 标签
 - 智能排序：根据使用频率自动排列项目，新项目优先显示
 
 项目总览提供分组、标签、收藏、置顶、最近使用、运行状态、Git 改动、健康异常和路径缺失等筛选维度，并支持保存常用视图与启动组。
@@ -35,7 +37,7 @@
 
 ![多级项目工作区](docs/images/project-workspace.png)
 
-命令面板会自动识别项目脚本和内置安装依赖命令，适合统一运行开发、构建、检查与测试任务。
+命令面板会自动识别项目脚本和内置安装依赖命令，适合统一运行开发、构建、检查与测试任务。每次执行都会创建独立的 Run Session，命令可以从 Starting 进入 Running，最终明确落在 Success、Failed 或 Stopped。
 
 ![命令运行](docs/images/command-runner.png)
 
@@ -65,10 +67,11 @@
 
 ### 4. Node 版本管理
 
-- 可视化管理 NVM 中的 Node.js 版本
-- 支持安装、卸载、切换版本
-- 支持设置系统默认 Node
+- Project Manager Managed Node Runtime：由 Project Manager 统一管理应用使用的 Node Runtime
+- 兼容扫描已有 NVM Runtime，将 NVM 作为外部 Runtime 来源
+- 支持安装、卸载 Runtime，并设置 Project Manager 的系统 Node 切换
 - 支持识别系统已有 Node，或手动添加自定义 Node 可执行路径
+- 项目可以绑定具体 Runtime/version，运行命令时使用项目当前配置
 
 ![Node 版本管理](docs/images/node-manager.png)
 
@@ -119,11 +122,11 @@
 | 模块 | 功能 |
 |---|---|
 | 项目管理 | 项目列表、批量 / 手动导入、子项目自动扫描、多级项目工作区、Java Maven / Gradle、搜索、收藏、置顶、拖拽排序、智能排序、自定义命令 |
-| 命令运行 | 实时日志、自动贴底、点击停止、自动切换标签 |
+| 命令运行 | Run Session 状态、exit code、耗时、当前 Runtime、实时日志、Stop、Rerun、清空输出、自动切换标签 |
 | Git | 状态面板、按项目隔离的 Diff、提交、历史、分支、远程仓库、多选批量操作 |
 | 布局记忆 | Git 可调整布局自动保存并恢复（百分比存储） |
 | 文件与备忘录 | 项目文件管理、Markdown 备忘录 |
-| Node | NVM 版本管理、系统 Node 检测、自定义路径、默认版本设置 |
+| Node | Managed Node Runtime、兼容扫描 NVM Runtime、系统 Node 切换、项目 Runtime/version 绑定、自定义路径 |
 | 端口管理 | 查看占用端口、查看进程、结束进程（Windows / Linux / macOS） |
 | AI | 自动生成提交信息（专用暂存区 Diff）、多模型 / 多渠道回退 |
 | 快捷键 | 应用内搜索、系统级搜索、聚焦搜索、新建项目、刷新项目、Ctrl+1~5 侧边菜单 |
@@ -148,6 +151,8 @@
 ---
 
 ## 快速开始
+
+开发命令要求 Node.js `20.19+` 或 `22+`，推荐使用 Node.js 22 LTS。当前 Vite 6 依赖链不支持 Node.js 16 或 21。
 
 ```bash
 # 安装依赖

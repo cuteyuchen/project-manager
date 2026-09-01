@@ -34,6 +34,25 @@ export interface PackageManagerResolveResult {
     reason?: string;
 }
 
+export interface ProjectOutputPayload {
+    /** 稳定命令键；用于同一命令的互斥、停止和 stdin。 */
+    commandKey: string;
+    /** 一次具体执行的唯一会话 id；日志和生命周期必须按它路由。 */
+    sessionId: string;
+    stream: 'stdout' | 'stderr';
+    data: string;
+    partial?: boolean;
+}
+
+export interface ProjectExitPayload {
+    commandKey: string;
+    sessionId: string;
+    exitCode: number | null;
+    stopped: boolean;
+    durationMs: number;
+    waitError?: string;
+}
+
 export interface ProjectInfo {
     name: string;
     scripts: string[];
@@ -178,11 +197,11 @@ export interface PlatformAPI {
     gitCancelOperation(operationId: string): Promise<void>;
 
     // Runner
-    runProjectCommand(id: string, path: string, script: string, packageManager: string, nodePath: string, commandPath?: string, pmNodePath?: string): Promise<void>;
-    runCustomCommand(id: string, path: string, command: string): Promise<void>;
-    stopProjectCommand(id: string): Promise<void>;
-    sendProjectInput(runId: string, input: string): Promise<void>;
-    closeProjectInput(runId: string): Promise<void>;
+    runProjectCommand(commandKey: string, sessionId: string, path: string, script: string, packageManager: string, nodePath: string, commandPath?: string, pmNodePath?: string): Promise<void>;
+    runCustomCommand(commandKey: string, sessionId: string, path: string, command: string): Promise<void>;
+    stopProjectCommand(commandKey: string): Promise<void>;
+    sendProjectInput(commandKey: string, input: string): Promise<void>;
+    closeProjectInput(commandKey: string): Promise<void>;
     installPm(nodePath: string, pmName: string): Promise<void>;
 
     /**
@@ -245,8 +264,8 @@ export interface PlatformAPI {
     }): Promise<string | null>;
 
     // Events
-    onProjectOutput(callback: (payload: { id: string; data: string; partial?: boolean }) => void): Promise<() => void>;
-    onProjectExit(callback: (payload: { id: string }) => void): Promise<() => void>;
+    onProjectOutput(callback: (payload: ProjectOutputPayload) => void): Promise<() => void>;
+    onProjectExit(callback: (payload: ProjectExitPayload) => void): Promise<() => void>;
 
     // Window
     windowMinimize(): Promise<void>;

@@ -9,6 +9,8 @@ import type {
   WorkspaceStat,
   EditorFileSnapshot,
   EditorWriteResult,
+  ProjectOutputPayload,
+  ProjectExitPayload,
 } from '../types';
 import type {
   NodeVersion,
@@ -189,21 +191,21 @@ export class UToolsAdapter implements PlatformAPI {
     return this.service.gitCancelOperation ? this.service.gitCancelOperation(operationId) : Promise.resolve();
   }
 
-  runProjectCommand(id: string, path: string, script: string, packageManager: string, nodePath: string, commandPath?: string, pmNodePath?: string): Promise<void> {
+  runProjectCommand(commandKey: string, sessionId: string, path: string, script: string, packageManager: string, nodePath: string, commandPath?: string, pmNodePath?: string): Promise<void> {
     if ((this.service as any).runProjectCommandWithCommandPath) {
-      return (this.service as any).runProjectCommandWithCommandPath(id, path, script, packageManager, nodePath, commandPath || '', pmNodePath || '');
+      return (this.service as any).runProjectCommandWithCommandPath(commandKey, sessionId, path, script, packageManager, nodePath, commandPath || '', pmNodePath || '');
     }
-    return this.service.runProjectCommand(id, path, script, packageManager, nodePath);
+    return this.service.runProjectCommand(commandKey, sessionId, path, script, packageManager, nodePath);
   }
-  runCustomCommand(id: string, path: string, command: string): Promise<void> {
-    return this.service.runCustomCommand(id, path, command);
+  runCustomCommand(commandKey: string, sessionId: string, path: string, command: string): Promise<void> {
+    return this.service.runCustomCommand(commandKey, sessionId, path, command);
   }
-  stopProjectCommand(id: string): Promise<void> { return this.service.stopProjectCommand(id); }
-  sendProjectInput(runId: string, input: string): Promise<void> {
-    return this.service.sendProjectInput(runId, input);
+  stopProjectCommand(commandKey: string): Promise<void> { return this.service.stopProjectCommand(commandKey); }
+  sendProjectInput(commandKey: string, input: string): Promise<void> {
+    return this.service.sendProjectInput(commandKey, input);
   }
-  closeProjectInput(runId: string): Promise<void> {
-    return this.service.closeProjectInput(runId);
+  closeProjectInput(commandKey: string): Promise<void> {
+    return this.service.closeProjectInput(commandKey);
   }
   installPm(nodePath: string, pmName: string): Promise<void> {
       if ((this.service as any).installPm) {
@@ -299,10 +301,10 @@ export class UToolsAdapter implements PlatformAPI {
   openDialog(options: any): Promise<string | string[] | null> { return this.service.openDialog(options); }
   saveDialog(options: any): Promise<string | null> { return this.service.saveDialog(options); }
 
-  onProjectOutput(callback: (payload: { id: string; data: string; partial?: boolean }) => void): Promise<() => void> {
+  onProjectOutput(callback: (payload: ProjectOutputPayload) => void): Promise<() => void> {
     return this.service.onProjectOutput(callback);
   }
- async onProjectExit(callback: (payload: { id: string }) => void): Promise<() => void> {
+ async onProjectExit(callback: (payload: ProjectExitPayload) => void): Promise<() => void> {
     return this.service.onProjectExit(callback);
   }
 

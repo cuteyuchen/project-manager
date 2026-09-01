@@ -509,6 +509,7 @@ function scanChildDirs(dirPath, depth, maxDepth, seen) {
 }
 
 const processes = new Map();
+const runnerProcessStates = new Map();
 let outputCallback = null;
 let exitCallback = null;
 
@@ -547,6 +548,36 @@ function terminateProcessTree(child, { synchronous = false } = {}) {
     }
 
     const timer = setTimeout(escalate, 1500);
+    if (typeof timer.unref === 'function') timer.unref();
+}
+
+function terminateRunnerProcessTree(child) {
+    if (!child || !child.pid) throw new Error('commandKey 不存在');
+
+    if (process.platform === 'win32') {
+        execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
+            stdio: 'ignore',
+            windowsHide: true,
+        });
+        return;
+    }
+
+    let terminated = false;
+    try {
+        process.kill(-child.pid, 'SIGTERM');
+        terminated = true;
+    } catch (_) {
+        try { terminated = child.kill('SIGTERM'); } catch (_) {}
+    }
+    if (!terminated) throw new Error(`Failed to stop process ${child.pid}`);
+
+    const timer = setTimeout(() => {
+        try {
+            process.kill(-child.pid, 'SIGKILL');
+        } catch (_) {
+            try { child.kill('SIGKILL'); } catch (_) {}
+        }
+    }, 1500);
     if (typeof timer.unref === 'function') timer.unref();
 }
 
@@ -590,6 +621,7 @@ function cleanupAllProcesses({ synchronous = false } = {}) {
         } catch (_) {}
     }
     processes.clear();
+    runnerProcessStates.clear();
 }
 
 function decodeTextBuffer(buffer) {
@@ -1069,32 +1101,40 @@ function createStreamDecoder() {
     };
 }
 
-function emitProcessOutput(id, type, data, partial, logFn) {
-    if (outputCallback) outputCallback({ id, type, data, partial: !!partial });
-    if (!partial && logFn) logFn(type === 'stderr' ? `ERR: ${data}` : data);
+function emitProcessOutput(commandKey, sessionId, stream, data, partial, logFn) {
+    if (outputCallback) outputCallback({
+        id: commandKey,
+        commandKey,
+        sessionId,
+        stream,
+        type: stream,
+        data,
+        partial: !!partial,
+    });
+    if (!partial && logFn) logFn(stream === 'stderr' ? `ERR: ${data}` : data);
 }
 
-function attachProcessIo(id, child, logFn) {
+function attachProcessIo(commandKey, sessionId, child, logFn) {
     const stdoutDecoder = createStreamDecoder();
     const stderrDecoder = createStreamDecoder();
     const handleChunk = (decoder, type, chunk) => {
         const { lines, partial } = decoder.push(chunk);
-        for (const line of lines) emitProcessOutput(id, type, line, false, logFn);
-        if (partial) emitProcessOutput(id, type, partial, true, null);
+        for (const line of lines) emitProcessOutput(commandKey, sessionId, type, line, false, logFn);
+        if (partial) emitProcessOutput(commandKey, sessionId, type, partial, true, null);
     };
     if (child.stdout) child.stdout.on('data', (data) => handleChunk(stdoutDecoder, 'stdout', data));
     if (child.stderr) child.stderr.on('data', (data) => handleChunk(stderrDecoder, 'stderr', data));
-    child.on('exit', () => {
+    child.on('close', () => {
         const leftoverOut = stdoutDecoder.finish();
-        if (leftoverOut) emitProcessOutput(id, 'stdout', leftoverOut, false, logFn);
+        if (leftoverOut) emitProcessOutput(commandKey, sessionId, 'stdout', leftoverOut, false, logFn);
         const leftoverErr = stderrDecoder.finish();
-        if (leftoverErr) emitProcessOutput(id, 'stderr', leftoverErr, false, logFn);
+        if (leftoverErr) emitProcessOutput(commandKey, sessionId, 'stderr', leftoverErr, false, logFn);
     });
 }
 
-function writeChildStdin(id, input) {
-    const child = processes.get(id);
-    if (!child) return Promise.reject(new Error('runId 不存在'));
+function writeChildStdin(commandKey, input) {
+    const child = processes.get(commandKey);
+    if (!child) return Promise.reject(new Error('commandKey 不存在'));
     if (!child.stdin || child.stdin.destroyed || !child.stdin.writable) {
         return Promise.reject(new Error('stdin closed'));
     }
@@ -1229,10 +1269,10 @@ window.services = {
         throw new Error('Managed Node runtime is not supported in this plugin');
     },
     getNvmList: async () => [],
-    sendProjectInput: async (runId, input) => writeChildStdin(runId, input),
-    closeProjectInput: async (runId) => {
-        const child = processes.get(runId);
-        if (!child) throw new Error('runId 不存在');
+    sendProjectInput: async (commandKey, input) => writeChildStdin(commandKey, input),
+    closeProjectInput: async (commandKey) => {
+        const child = processes.get(commandKey);
+        if (!child) throw new Error('commandKey 不存在');
         if (child.stdin && !child.stdin.destroyed) child.stdin.end();
     },
 
@@ -1445,8 +1485,8 @@ window.services = {
         }
     },
 
-    runProjectCommand: async (id, projectPath, script, packageManager, nodePath) => {
-        if (processes.has(id)) throw new Error('Already running');
+    runProjectCommand: async (commandKey, sessionId, projectPath, script, packageManager, nodePath) => {
+        if (processes.has(commandKey)) throw new Error('Already running');
 
         // Setup logging
         let logFilePath = null;
@@ -1583,6 +1623,7 @@ window.services = {
             console.log('[Runner] Node Dir:', nodeDir);
             console.log('[Runner] Package Manager:', pm);
 
+            emitProcessOutput(commandKey, sessionId, 'stdout', `Executing: ${cmdStr}`, false, null);
             appendLog(`Executing: ${cmdStr}\n`);
             appendLog(`Node Path used: ${nodeDir || 'System Default'}\n`);
 
@@ -1596,27 +1637,43 @@ window.services = {
 
             spawnParentDeathWatch(child);
 
-            processes.set(id, child);
-            attachProcessIo(id, child, (text) => appendLog(typeof text === 'string' && text.endsWith('\n') ? text : `${text}\n`));
+            const startedAt = Date.now();
+            const runState = { child, sessionId, startedAt, stopRequested: false };
+            processes.set(commandKey, child);
+            runnerProcessStates.set(commandKey, runState);
+            attachProcessIo(commandKey, sessionId, child, (text) => appendLog(typeof text === 'string' && text.endsWith('\n') ? text : `${text}\n`));
 
-            child.on('exit', () => {
-                processes.delete(id);
-                // Final rewrite
+            let finished = false;
+            let waitError = null;
+            const finishRun = (exitCode, errorMessage = null) => {
+                if (finished) return;
+                finished = true;
+                const currentState = runnerProcessStates.get(commandKey);
+                const stopped = currentState?.sessionId === sessionId && currentState.stopRequested === true;
+                runnerProcessStates.delete(commandKey);
+                processes.delete(commandKey);
                 rewriteLogFile();
                 if (logStream) logStream.end();
-                if (exitCallback) exitCallback({ id });
-            });
+                if (exitCallback) {
+                    exitCallback({
+                        id: commandKey,
+                        commandKey,
+                        sessionId,
+                        exitCode: typeof exitCode === 'number' ? exitCode : null,
+                        stopped,
+                        durationMs: Math.max(0, Date.now() - startedAt),
+                        ...(errorMessage ? { waitError: errorMessage } : {}),
+                    });
+                }
+            };
 
+            child.on('close', (code) => finishRun(code, waitError));
             child.on('error', (err) => {
                 console.error('[Runner] Spawn error:', err);
                 const errMsg = `Error spawning process: ${err.message}`;
-                if (outputCallback) outputCallback({ id, data: errMsg });
+                emitProcessOutput(commandKey, sessionId, 'stderr', errMsg, false, null);
                 appendLog(`${errMsg}\n`);
-                rewriteLogFile(); // Ensure log is saved
-                if (logStream) {
-                    logStream.end();
-                }
-                processes.delete(id);
+                waitError = err.message;
             });
 
         } catch (e) {
@@ -1625,16 +1682,21 @@ window.services = {
         }
     },
 
-    stopProjectCommand: async (id) => {
-        const child = processes.get(id);
-        if (child) {
-            terminateProcessTree(child);
-            processes.delete(id);
+    stopProjectCommand: async (commandKey) => {
+        const state = runnerProcessStates.get(commandKey);
+        const child = processes.get(commandKey);
+        if (!state || !child) throw new Error('commandKey 不存在');
+        state.stopRequested = true;
+        try {
+            terminateRunnerProcessTree(child);
+        } catch (error) {
+            state.stopRequested = false;
+            throw error;
         }
     },
 
-    runCustomCommand: async (id, projectPath, command) => {
-        if (processes.has(id)) throw new Error('Already running');
+    runCustomCommand: async (commandKey, sessionId, projectPath, command) => {
+        if (processes.has(commandKey)) throw new Error('Already running');
 
         const child = spawn(command, {
             cwd: projectPath,
@@ -1646,17 +1708,39 @@ window.services = {
 
         spawnParentDeathWatch(child);
 
-        processes.set(id, child);
-        attachProcessIo(id, child);
+        const startedAt = Date.now();
+        const runState = { child, sessionId, startedAt, stopRequested: false };
+        processes.set(commandKey, child);
+        runnerProcessStates.set(commandKey, runState);
+        attachProcessIo(commandKey, sessionId, child);
 
-        child.on('exit', () => {
-            processes.delete(id);
-            if (exitCallback) exitCallback({ id });
-        });
+        let finished = false;
+        let waitError = null;
+        const finishRun = (exitCode, errorMessage = null) => {
+            if (finished) return;
+            finished = true;
+            const currentState = runnerProcessStates.get(commandKey);
+            const stopped = currentState?.sessionId === sessionId && currentState.stopRequested === true;
+            runnerProcessStates.delete(commandKey);
+            processes.delete(commandKey);
+            if (exitCallback) {
+                exitCallback({
+                    id: commandKey,
+                    commandKey,
+                    sessionId,
+                    exitCode: typeof exitCode === 'number' ? exitCode : null,
+                    stopped,
+                    durationMs: Math.max(0, Date.now() - startedAt),
+                    ...(errorMessage ? { waitError: errorMessage } : {}),
+                });
+            }
+        };
 
+        child.on('close', (code) => finishRun(code, waitError));
         child.on('error', (err) => {
-            if (outputCallback) outputCallback({ id, data: `Error: ${err.message}\n` });
-            processes.delete(id);
+            const errMsg = `Error spawning process: ${err.message}`;
+            emitProcessOutput(commandKey, sessionId, 'stderr', errMsg, false, null);
+            waitError = err.message;
         });
     },
 
@@ -3242,8 +3326,8 @@ $result | ConvertTo-Json -Compress`;
     },
 
     //************* 带 commandPath 的 runProjectCommand *************
-    runProjectCommandWithCommandPath: async (id, projectPath, script, packageManager, nodePath, commandPath, pmNodePath) => {
-        if (processes.has(id)) throw new Error('Already running');
+    runProjectCommandWithCommandPath: async (commandKey, sessionId, projectPath, script, packageManager, nodePath, commandPath, pmNodePath) => {
+        if (processes.has(commandKey)) throw new Error('Already running');
 
         // Setup logging (与 runProjectCommand 相同)
         let logFilePath = null;
@@ -3351,6 +3435,7 @@ $result | ConvertTo-Json -Compress`;
 
         const cmdStr = `${spawnCmd} run ${script}`;
         try {
+            emitProcessOutput(commandKey, sessionId, 'stdout', `Executing: ${cmdStr}`, false, null);
             appendLog(`Executing: ${cmdStr}\n`);
             appendLog(`Node Path used: ${nodeDir || 'System Default'}\n`);
             if (commandPath) appendLog(`PM Command Path: ${commandPath}\n`);
@@ -3364,24 +3449,43 @@ $result | ConvertTo-Json -Compress`;
             });
 
             spawnParentDeathWatch(child);
-            processes.set(id, child);
-            attachProcessIo(id, child, (text) => appendLog(typeof text === 'string' && text.endsWith('\n') ? text : `${text}\n`));
+            const startedAt = Date.now();
+            const runState = { child, sessionId, startedAt, stopRequested: false };
+            processes.set(commandKey, child);
+            runnerProcessStates.set(commandKey, runState);
+            attachProcessIo(commandKey, sessionId, child, (text) => appendLog(typeof text === 'string' && text.endsWith('\n') ? text : `${text}\n`));
 
-            child.on('exit', () => {
-                processes.delete(id);
+            let finished = false;
+            let waitError = null;
+            const finishRun = (exitCode, errorMessage = null) => {
+                if (finished) return;
+                finished = true;
+                const currentState = runnerProcessStates.get(commandKey);
+                const stopped = currentState?.sessionId === sessionId && currentState.stopRequested === true;
+                runnerProcessStates.delete(commandKey);
+                processes.delete(commandKey);
                 rewriteLogFile();
                 if (logStream) logStream.end();
-                if (exitCallback) exitCallback({ id });
-            });
+                if (exitCallback) {
+                    exitCallback({
+                        id: commandKey,
+                        commandKey,
+                        sessionId,
+                        exitCode: typeof exitCode === 'number' ? exitCode : null,
+                        stopped,
+                        durationMs: Math.max(0, Date.now() - startedAt),
+                        ...(errorMessage ? { waitError: errorMessage } : {}),
+                    });
+                }
+            };
 
+            child.on('close', (code) => finishRun(code, waitError));
             child.on('error', (err) => {
                 console.error('[Runner] Spawn error:', err);
                 const errMsg = `Error spawning process: ${err.message}`;
-                if (outputCallback) outputCallback({ id, data: errMsg });
+                emitProcessOutput(commandKey, sessionId, 'stderr', errMsg, false, null);
                 appendLog(`${errMsg}\n`);
-                rewriteLogFile();
-                if (logStream) logStream.end();
-                processes.delete(id);
+                waitError = err.message;
             });
         } catch (e) {
             if (logStream) logStream.end();

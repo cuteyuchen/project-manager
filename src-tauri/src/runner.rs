@@ -2,6 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::process::{ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -107,7 +108,9 @@ impl Drop for WindowsJobObject {
 
 pub struct RunningProcess {
     pub pid: u32,
+    pub session_id: String,
     pub stdin: Option<Arc<Mutex<ChildStdin>>>,
+    pub stop_requested: Arc<AtomicBool>,
 }
 
 pub struct ProcessState {
@@ -175,12 +178,13 @@ fn pending_utf8_prefix(bytes: &[u8]) -> Option<String> {
 
 fn spawn_output_reader<R: Read + Send + 'static>(
     app: AppHandle,
-    id: String,
+    command_key: String,
+    session_id: String,
     stream_type: &'static str,
     reader: R,
     log_manager: Arc<Mutex<LogManager>>,
     log_prefix: Option<&'static str>,
-) {
+) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         let mut reader = BufReader::new(reader);
         let mut decoder = StreamDecoder::new();
@@ -200,7 +204,10 @@ fn spawn_output_reader<R: Read + Send + 'static>(
                 let _ = app.emit(
                     "project-output",
                     serde_json::json!({
-                        "id": id,
+                        "id": command_key.clone(),
+                        "commandKey": command_key.clone(),
+                        "sessionId": session_id.clone(),
+                        "stream": stream_type,
                         "type": stream_type,
                         "data": payload,
                         "partial": false
@@ -224,7 +231,10 @@ fn spawn_output_reader<R: Read + Send + 'static>(
                     let _ = app.emit(
                         "project-output",
                         serde_json::json!({
-                            "id": id,
+                            "id": command_key.clone(),
+                            "commandKey": command_key.clone(),
+                            "sessionId": session_id.clone(),
+                            "stream": stream_type,
                             "type": stream_type,
                             "data": partial,
                             "partial": true
@@ -237,7 +247,10 @@ fn spawn_output_reader<R: Read + Send + 'static>(
             let _ = app.emit(
                 "project-output",
                 serde_json::json!({
-                    "id": id,
+                    "id": command_key.clone(),
+                    "commandKey": command_key.clone(),
+                    "sessionId": session_id.clone(),
+                    "stream": stream_type,
                     "type": stream_type,
                     "data": partial,
                     "partial": false
@@ -251,7 +264,7 @@ fn spawn_output_reader<R: Read + Send + 'static>(
                 manager.append(stored);
             }
         }
-    });
+    })
 }
 
 #[cfg(unix)]
@@ -274,8 +287,22 @@ fn spawn_parent_watchdog(child_pid: u32) {
         .spawn();
 }
 
+#[cfg(target_os = "windows")]
+fn terminate_process_tree(pid: u32) -> Result<(), String> {
+    let status = Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/F", "/T"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .map_err(|error| error.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("taskkill failed with status {status}"))
+    }
+}
+
 #[cfg(unix)]
-fn terminate_process_tree(pid: u32) {
+fn terminate_process_tree(pid: u32) -> Result<(), String> {
     let script = format!(
         "target={pid}; \
          kill -TERM -- -$target 2>/dev/null || kill -TERM $target 2>/dev/null; \
@@ -283,13 +310,15 @@ fn terminate_process_tree(pid: u32) {
          kill -KILL -- -$target 2>/dev/null || kill -KILL $target 2>/dev/null"
     );
 
-    let _ = Command::new("sh")
+    Command::new("sh")
         .arg("-c")
         .arg(script)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .stdin(Stdio::null())
-        .spawn();
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 pub fn cleanup_processes(state: &ProcessState) {
@@ -309,7 +338,7 @@ pub fn cleanup_processes(state: &ProcessState) {
             }
             #[cfg(not(target_os = "windows"))]
             {
-                terminate_process_tree(process.pid);
+                let _ = terminate_process_tree(process.pid);
             }
         }
         lock.clear();
@@ -386,7 +415,8 @@ impl LogManager {
 pub fn run_project_command(
     app: AppHandle,
     state: State<'_, ProcessState>,
-    id: String,
+    command_key: String,
+    session_id: String,
     path: String,
     script: String,
     package_manager: String,
@@ -397,7 +427,7 @@ pub fn run_project_command(
     let processes = state.processes.clone();
     let mut processes_lock = processes.lock().map_err(|e| e.to_string())?;
 
-    if processes_lock.contains_key(&id) {
+    if processes_lock.contains_key(&command_key) {
         return Err("Project is already running".to_string());
     }
 
@@ -747,9 +777,13 @@ pub fn run_project_command(
     let _ = app.emit(
         "project-output",
         serde_json::json!({
-            "id": id,
+            "id": command_key.clone(),
+            "commandKey": command_key.clone(),
+            "sessionId": session_id.clone(),
+            "stream": "stdout",
             "type": "stdout",
-            "data": format!("Executing: {}", full_cmd_str)
+            "data": format!("Executing: {}", full_cmd_str),
+            "partial": false
         }),
     );
 
@@ -767,70 +801,116 @@ pub fn run_project_command(
     }
 
     let pid = child.id();
+    let started_at = Instant::now();
 
     #[cfg(unix)]
     spawn_parent_watchdog(pid);
 
     let stdin = child.stdin.take().map(|stdin| Arc::new(Mutex::new(stdin)));
-    processes_lock.insert(id.clone(), RunningProcess { pid, stdin });
+    let stop_requested = Arc::new(AtomicBool::new(false));
+    processes_lock.insert(
+        command_key.clone(),
+        RunningProcess {
+            pid,
+            session_id: session_id.clone(),
+            stdin,
+            stop_requested: stop_requested.clone(),
+        },
+    );
     drop(processes_lock);
 
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
-    spawn_output_reader(
+    let stdout_reader = spawn_output_reader(
         app.clone(),
-        id.clone(),
+        command_key.clone(),
+        session_id.clone(),
         "stdout",
         stdout,
         log_manager.clone(),
         None,
     );
-    spawn_output_reader(
+    let stderr_reader = spawn_output_reader(
         app.clone(),
-        id.clone(),
+        command_key.clone(),
+        session_id.clone(),
         "stderr",
         stderr,
         log_manager.clone(),
         Some("ERR: "),
     );
 
-    let id_clone3 = id.clone();
+    let command_key_clone = command_key.clone();
+    let session_id_clone = session_id.clone();
     let app_clone3 = app.clone();
     let processes_clone = state.processes.clone();
     let log_manager3 = log_manager.clone();
     thread::spawn(move || {
-        let _ = child.wait();
+        let wait_result = child.wait();
+        let (exit_code, wait_error) = match wait_result {
+            Ok(status) => (status.code(), None),
+            Err(error) => (None, Some(error.to_string())),
+        };
+        let duration_ms = started_at.elapsed().as_millis() as u64;
+
+        // child.wait() may complete before the last stdout/stderr reader flushes.
+        // The exit event is emitted only after both reader threads have joined.
+        let _ = stdout_reader
+            .join()
+            .map_err(|_| eprintln!("stdout reader panicked for {}", command_key_clone));
+        let _ = stderr_reader
+            .join()
+            .map_err(|_| eprintln!("stderr reader panicked for {}", command_key_clone));
+
+        let stopped = stop_requested.load(Ordering::SeqCst);
         if let Ok(mut lock) = processes_clone.lock() {
-            lock.remove(&id_clone3);
+            if lock
+                .get(&command_key_clone)
+                .is_some_and(|process| process.session_id == session_id_clone)
+            {
+                lock.remove(&command_key_clone);
+            }
         }
 
         if let Ok(mut manager) = log_manager3.lock() {
             manager.rewrite_file();
         }
 
-        let _ = app_clone3.emit("project-exit", serde_json::json!({ "id": id_clone3 }));
+        let _ = app_clone3.emit(
+            "project-exit",
+            serde_json::json!({
+                "id": command_key_clone.clone(),
+                "commandKey": command_key_clone,
+                "sessionId": session_id_clone,
+                "exitCode": exit_code,
+                "stopped": stopped,
+                "durationMs": duration_ms,
+                "waitError": wait_error,
+            }),
+        );
     });
 
     Ok(())
 }
 
 #[tauri::command]
-pub fn stop_project_command(state: State<'_, ProcessState>, id: String) -> Result<(), String> {
+pub fn stop_project_command(
+    state: State<'_, ProcessState>,
+    command_key: String,
+) -> Result<(), String> {
     let processes = state.processes.clone();
-    let lock = processes.lock().map_err(|e| e.to_string())?;
+    let (pid, stop_requested) = {
+        let lock = processes.lock().map_err(|e| e.to_string())?;
+        let process = lock
+            .get(&command_key)
+            .ok_or_else(|| format!("commandKey 不存在: {command_key}"))?;
+        (process.pid, process.stop_requested.clone())
+    };
 
-    if let Some(process) = lock.get(&id) {
-        #[cfg(target_os = "windows")]
-        {
-            let _ = Command::new("taskkill")
-                .args(&["/PID", &process.pid.to_string(), "/F", "/T"])
-                .creation_flags(CREATE_NO_WINDOW)
-                .spawn();
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            terminate_process_tree(process.pid);
-        }
+    stop_requested.store(true, Ordering::SeqCst);
+    if let Err(error) = terminate_process_tree(pid) {
+        stop_requested.store(false, Ordering::SeqCst);
+        return Err(error);
     }
     Ok(())
 }
@@ -838,12 +918,12 @@ pub fn stop_project_command(state: State<'_, ProcessState>, id: String) -> Resul
 #[tauri::command]
 pub fn send_project_input(
     state: State<'_, ProcessState>,
-    run_id: String,
+    command_key: String,
     input: String,
 ) -> Result<(), String> {
     let processes = state.processes.lock().map_err(|e| e.to_string())?;
-    let Some(process) = processes.get(&run_id) else {
-        return Err("runId 不存在".to_string());
+    let Some(process) = processes.get(&command_key) else {
+        return Err("commandKey 不存在".to_string());
     };
     let Some(stdin) = process.stdin.clone() else {
         return Err("stdin closed".to_string());
@@ -867,10 +947,13 @@ pub fn send_project_input(
 }
 
 #[tauri::command]
-pub fn close_project_input(state: State<'_, ProcessState>, run_id: String) -> Result<(), String> {
+pub fn close_project_input(
+    state: State<'_, ProcessState>,
+    command_key: String,
+) -> Result<(), String> {
     let mut processes = state.processes.lock().map_err(|e| e.to_string())?;
-    let Some(process) = processes.get_mut(&run_id) else {
-        return Err("runId 不存在".to_string());
+    let Some(process) = processes.get_mut(&command_key) else {
+        return Err("commandKey 不存在".to_string());
     };
     process.stdin = None;
     Ok(())
@@ -880,14 +963,15 @@ pub fn close_project_input(state: State<'_, ProcessState>, run_id: String) -> Re
 pub fn run_custom_command(
     app: AppHandle,
     state: State<'_, ProcessState>,
-    id: String,
+    command_key: String,
+    session_id: String,
     path: String,
     command: String,
 ) -> Result<(), String> {
     let processes = state.processes.clone();
     let mut processes_lock = processes.lock().map_err(|e| e.to_string())?;
 
-    if processes_lock.contains_key(&id) {
+    if processes_lock.contains_key(&command_key) {
         return Err("Command is already running".to_string());
     }
 
@@ -963,9 +1047,13 @@ pub fn run_custom_command(
     let _ = app.emit(
         "project-output",
         serde_json::json!({
-            "id": id,
+            "id": command_key.clone(),
+            "commandKey": command_key.clone(),
+            "sessionId": session_id.clone(),
+            "stream": "stdout",
             "type": "stdout",
-            "data": format!("Executing: {}", command)
+            "data": format!("Executing: {}", command),
+            "partial": false
         }),
     );
 
@@ -983,48 +1071,92 @@ pub fn run_custom_command(
     }
 
     let pid = child.id();
+    let started_at = Instant::now();
 
     #[cfg(unix)]
     spawn_parent_watchdog(pid);
 
     let stdin = child.stdin.take().map(|stdin| Arc::new(Mutex::new(stdin)));
-    processes_lock.insert(id.clone(), RunningProcess { pid, stdin });
+    let stop_requested = Arc::new(AtomicBool::new(false));
+    processes_lock.insert(
+        command_key.clone(),
+        RunningProcess {
+            pid,
+            session_id: session_id.clone(),
+            stdin,
+            stop_requested: stop_requested.clone(),
+        },
+    );
     drop(processes_lock);
 
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
-    spawn_output_reader(
+    let stdout_reader = spawn_output_reader(
         app.clone(),
-        id.clone(),
+        command_key.clone(),
+        session_id.clone(),
         "stdout",
         stdout,
         log_manager.clone(),
         None,
     );
-    spawn_output_reader(
+    let stderr_reader = spawn_output_reader(
         app.clone(),
-        id.clone(),
+        command_key.clone(),
+        session_id.clone(),
         "stderr",
         stderr,
         log_manager.clone(),
         Some("ERR: "),
     );
 
-    let id_clone3 = id.clone();
+    let command_key_clone = command_key.clone();
+    let session_id_clone = session_id.clone();
     let app_clone3 = app.clone();
     let processes_clone = state.processes.clone();
     let log_manager3 = log_manager.clone();
     thread::spawn(move || {
-        let _ = child.wait();
+        let wait_result = child.wait();
+        let (exit_code, wait_error) = match wait_result {
+            Ok(status) => (status.code(), None),
+            Err(error) => (None, Some(error.to_string())),
+        };
+        let duration_ms = started_at.elapsed().as_millis() as u64;
+
+        // The close/exit event must be the last lifecycle event for this session.
+        let _ = stdout_reader
+            .join()
+            .map_err(|_| eprintln!("stdout reader panicked for {}", command_key_clone));
+        let _ = stderr_reader
+            .join()
+            .map_err(|_| eprintln!("stderr reader panicked for {}", command_key_clone));
+
+        let stopped = stop_requested.load(Ordering::SeqCst);
         if let Ok(mut lock) = processes_clone.lock() {
-            lock.remove(&id_clone3);
+            if lock
+                .get(&command_key_clone)
+                .is_some_and(|process| process.session_id == session_id_clone)
+            {
+                lock.remove(&command_key_clone);
+            }
         }
 
         if let Ok(mut manager) = log_manager3.lock() {
             manager.rewrite_file();
         }
 
-        let _ = app_clone3.emit("project-exit", serde_json::json!({ "id": id_clone3 }));
+        let _ = app_clone3.emit(
+            "project-exit",
+            serde_json::json!({
+                "id": command_key_clone.clone(),
+                "commandKey": command_key_clone,
+                "sessionId": session_id_clone,
+                "exitCode": exit_code,
+                "stopped": stopped,
+                "durationMs": duration_ms,
+                "waitError": wait_error,
+            }),
+        );
     });
 
     Ok(())

@@ -7,14 +7,22 @@
   },
   "version": "1.6.2",
   "type": "module",
+  "engines": {
+    "node": "^20.19.0 || >=22.0.0"
+  },
   "scripts": {
+    "predev": "node scripts/check-node.cjs",
     "dev": "vite",
+    "prebuild": "node scripts/check-node.cjs",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
+    "pretauri": "node scripts/check-node.cjs",
     "tauri": "tauri",
     "tauri-dev": "tauri dev",
     "tauri-build": "tauri build",
+    "prebuild:utools": "node scripts/check-node.cjs",
     "build:utools": "vue-tsc --noEmit && vite build --mode utools && copy utools\\plugin.json dist-utools\\plugin.json && copy utools\\preload.js dist-utools\\preload.js && copy public\\logo.png dist-utools\\logo.png && copy utools\\package.json dist-utools\\package.json",
+    "prebuild:ztools": "node scripts/check-node.cjs",
     "build:ztools": "vue-tsc --noEmit && vite build --mode ztools && node scripts/post-build-ztools.cjs",
     "publish:ztools": "node scripts/publish-ztools.cjs",
     "publish:ztools:dry": "node scripts/publish-ztools.cjs --dry-run",

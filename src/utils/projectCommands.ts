@@ -3,7 +3,7 @@ import type { BuiltinCommandId, CustomCommand, Project } from '../types';
 /***********************项目命令运行标识*********************/
 /**
  * 运行状态和日志按项目 + 命令类型 + 命令 id 分桶，避免同名 script/custom command
- * 共用一个 runId 后互相停止或覆盖日志。
+ * 共用一个 stable commandKey 后互相停止或覆盖日志。
  */
 export type ProjectCommandType = 'script' | 'custom';
 
@@ -26,6 +26,7 @@ export function getProjectCommandRunId(
   type: ProjectCommandType,
   id: string,
 ): string {
+  // 历史函数名保留以避免全仓 churn；返回的是 stable commandKey，不是 unique sessionId。
   return `${projectId}:${getProjectCommandKey(type, id)}`;
 }
 
