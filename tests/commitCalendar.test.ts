@@ -25,10 +25,21 @@ function assertEq<T>(actual: T, expected: T, message: string) {
   }
 }
 
+/** Build a timestamp whose displayed date/time is local to the test runner. */
+function localIso(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+): string {
+  return new Date(year, month - 1, day, hour, minute, 0).toISOString();
+}
+
 /***********************当前自然月范围*********************/
 
 {
-  const range = resolveCurrentMonthRange(new Date('2026-07-09T12:30:00+08:00'));
+  const range = resolveCurrentMonthRange(new Date(localIso(2026, 7, 9, 12, 30)));
 
   assertEq(range.startDate, '2026-07-01', '本月开始日期应为自然月 1 号');
   assertEq(range.endDate, '2026-08-01', '结束日期应为下月 1 号');
@@ -52,7 +63,7 @@ function assertEq<T>(actual: T, expected: T, message: string) {
   assertEq(next.year, 2026, '12 月下翻应跨年');
   assertEq(next.month, 0, '12 月下翻应为 1 月');
 
-  const now = new Date('2026-08-12T10:00:00+08:00');
+  const now = new Date(localIso(2026, 8, 12, 10, 0));
   assert(canGoToNextCalendarMonth(2026, 6, now), '从 7 月可切到 8 月（当前月）');
   assert(!canGoToNextCalendarMonth(2026, 7, now), '已在当前月 8 月时不可再下翻');
   assert(!canGoToNextCalendarMonth(2026, 8, now), '未来月不可再下翻');
@@ -86,7 +97,7 @@ function assertEq<T>(actual: T, expected: T, message: string) {
         shortHash: 'aaa111',
         author: 'Yuchen',
         email: 'yuchen@example.com',
-        date: '2026-07-06T09:05:00+08:00',
+        date: localIso(2026, 7, 6, 9, 5),
         message: 'feat: 工作日提交',
       },
     ],
@@ -103,7 +114,7 @@ function assertEq<T>(actual: T, expected: T, message: string) {
         shortHash: 'bbb222',
         author: 'Yuchen',
         email: 'yuchen@example.com',
-        date: '2026-07-12T09:05:00+08:00',
+        date: localIso(2026, 7, 12, 9, 5),
         message: 'fix: 周末提交',
       },
     ],
@@ -123,7 +134,7 @@ function assertEq<T>(actual: T, expected: T, message: string) {
       shortHash: 'aaa111',
       author: 'Yuchen',
       email: 'yuchen@example.com',
-      date: '2026-07-09T09:05:00+08:00',
+      date: localIso(2026, 7, 9, 9, 5),
       message: 'feat: 添加提交日历',
     },
     {
@@ -134,7 +145,7 @@ function assertEq<T>(actual: T, expected: T, message: string) {
       shortHash: 'bbb222',
       author: 'Yuchen',
       email: 'yuchen@example.com',
-      date: '2026-07-09T18:30:00+08:00',
+      date: localIso(2026, 7, 9, 18, 30),
       message: 'fix: 修复统计',
     },
     {
@@ -145,7 +156,7 @@ function assertEq<T>(actual: T, expected: T, message: string) {
       shortHash: 'ccc333',
       author: 'Yuchen',
       email: 'yuchen@example.com',
-      date: '2026-08-01T00:01:00+08:00',
+      date: localIso(2026, 8, 1, 0, 1),
       message: 'chore: 跨月提交',
     },
   ];
@@ -168,7 +179,7 @@ function assertEq<T>(actual: T, expected: T, message: string) {
     shortHash: 'aaa111',
     author: 'Yuchen',
     email: 'yuchen@example.com',
-    date: '2026-07-09T09:05:00+08:00',
+    date: localIso(2026, 7, 9, 9, 5),
     message: 'feat: 添加提交日历',
   });
 

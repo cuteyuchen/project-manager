@@ -14,9 +14,9 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22.x
           cache: npm
@@ -29,8 +29,12 @@ jobs:
         run: |
           $failed = $false
           Get-ChildItem tests -Filter *.test.ts | Sort-Object Name | ForEach-Object {
+            Write-Host "==> $($_.Name)"
             npx --no-install tsx $_.FullName
-            if ($LASTEXITCODE -ne 0) { $failed = $true }
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "FAILED: $($_.Name)"
+              $failed = $true
+            }
           }
           if ($failed) { exit 1 }
       - name: Set up Rust
@@ -47,7 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Install Tauri Linux dependencies
         run: |
           sudo apt-get update
@@ -63,7 +67,7 @@ jobs:
             librsvg2-dev \
             wget
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22.x
           cache: npm
@@ -77,7 +81,11 @@ jobs:
           set -o pipefail
           failed=0
           while IFS= read -r test_file; do
-            npx --no-install tsx "$test_file" || failed=1
+            echo "==> $(basename "$test_file")"
+            if ! npx --no-install tsx "$test_file"; then
+              echo "FAILED: $(basename "$test_file")"
+              failed=1
+            fi
           done < <(find tests -maxdepth 1 -name '*.test.ts' -print | sort)
           test "$failed" -eq 0
       - name: Set up Rust
