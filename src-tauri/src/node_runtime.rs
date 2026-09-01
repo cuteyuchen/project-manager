@@ -2701,7 +2701,7 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *node-v20.11.1-
             copy_test_node_runtime(&scan_root.join("versions/node/v18.20.8"), &source);
             copy_test_node_runtime(&scan_root.join("versions/node/v20.19.0"), &source);
             let invalid = scan_root.join("versions/node/invalid");
-            fs::create_dir_all(&invalid).unwrap();
+            fs::create_dir_all(invalid.join("bin")).unwrap();
             File::create(invalid.join("bin/node")).unwrap();
         }
 

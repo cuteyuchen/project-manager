@@ -100,12 +100,12 @@ try {
   if (process.platform === 'win32') {
     const comparable = resolveComparablePath(fixture);
     assert.equal(
-      normalizeComparablePath(`\\\\?\\${fixture.replace(/\\/g, '/')}`),
+      resolveComparablePath(`\\\\?\\${fixture}`),
       comparable,
       'Windows namespace path 应与普通路径视为同一目录',
     );
     assert.equal(
-      normalizeComparablePath(fixture.replace(/\\/g, '/')),
+      resolveComparablePath(fixture.replace(/\\/g, '/')),
       comparable,
       'Windows slash 形式应与反斜杠形式视为同一目录',
     );
