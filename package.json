@@ -17,6 +17,7 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "pretauri": "node scripts/check-node.cjs",
+    "pretauri-dev": "node scripts/check-node.cjs",
     "tauri": "tauri",
     "tauri-dev": "tauri dev",
     "tauri-build": "tauri build",

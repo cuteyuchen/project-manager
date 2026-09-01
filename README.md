@@ -27,6 +27,8 @@
 - Session 显示 exit code、耗时和当前项目 Node Runtime 环境
 - 命令运行日志支持持续输出，并在高频日志场景下自动跟随到底部
 - 支持一键停止、重新运行和清空当前 Session 输出；同一命令保持一个 Console 标签
+- 已完成的运行会保留轻量 Run History，可按当前命令或项目查看最近结果、失败原因、耗时和执行环境
+- Console 日志支持 stdout、stderr、Runner 筛选，内存日志可搜索、复制全部和导出；完整日志不会写入运行历史
 - 智能排序：根据使用频率自动排列项目，新项目优先显示
 
 项目总览提供分组、标签、收藏、置顶、最近使用、运行状态、Git 改动、健康异常和路径缺失等筛选维度，并支持保存常用视图与启动组。
@@ -37,7 +39,7 @@
 
 ![多级项目工作区](docs/images/project-workspace.png)
 
-命令面板会自动识别项目脚本和内置安装依赖命令，适合统一运行开发、构建、检查与测试任务。每次执行都会创建独立的 Run Session，命令可以从 Starting 进入 Running，最终明确落在 Success、Failed 或 Stopped。
+命令面板会自动识别项目脚本和内置安装依赖命令，适合统一运行开发、构建、检查与测试任务。每次执行都会创建独立的 Run Session，命令可以从 Starting 进入 Running，最终明确落在 Success、Failed 或 Stopped；历史结果可以直接按当前项目配置重新运行。
 
 ![命令运行](docs/images/command-runner.png)
 
@@ -67,9 +69,9 @@
 
 ### 4. Node 版本管理
 
-- Project Manager Managed Node Runtime：由 Project Manager 统一管理应用使用的 Node Runtime
-- 兼容扫描已有 NVM Runtime，将 NVM 作为外部 Runtime 来源
-- 支持安装、卸载 Runtime，并设置 Project Manager 的系统 Node 切换
+- Project Manager Managed Node Runtime：由 Project Manager 统一管理应用内命令使用的 Node Runtime
+- 兼容扫描已有 NVM Runtime，NVM 作为外部 Runtime 来源，不改变 NVM 自身管理方式
+- 支持安装、卸载 Runtime，并由 Project Manager 统一管理系统 Node 切换
 - 支持识别系统已有 Node，或手动添加自定义 Node 可执行路径
 - 项目可以绑定具体 Runtime/version，运行命令时使用项目当前配置
 

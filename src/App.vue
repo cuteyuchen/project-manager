@@ -26,6 +26,7 @@ import { useSettingsStore } from './stores/settings';
 import { useNodeStore } from './stores/node';
 import { useGitStore } from './stores/git';
 import { useUsageStore } from './stores/usage';
+import { useRunHistoryStore } from './stores/runHistory';
 import type { Project } from './types';
 import { normalizeNodeVersion, projectNodeVersionHint } from './utils/nvm';
 import { getRuntimesByVersion } from './utils/nodeRuntime';
@@ -506,6 +507,10 @@ async function exitApp() {
       }
     }
 
+    // History is auxiliary data. Its flush handles failures internally and
+    // must never turn the main data.json close path into read-only mode.
+    await runHistoryStore.flush();
+
     useGitStore().setColdStorage(true);
     await destroyTray();
     await api.exitApp();
@@ -631,6 +636,7 @@ async function setupCloseRequestedHandler() {
 onMounted(async () => {
   unlistenPersistenceEvents = subscribePersistenceEvents(handlePersistenceEvent);
   await loadData();
+  await runHistoryStore.load();
   await nodeStore.loadRuntimes();
   loaded.value = true;
 
@@ -797,6 +803,7 @@ onUnmounted(() => {
   void unregisterQuickSearchGlobalShortcut();
   void destroyTray();
   void flushPendingSave().catch(() => undefined);
+  void runHistoryStore.flush();
 });
 
 // Watch stores and save
@@ -810,6 +817,11 @@ const appBackgroundStyle = computed(() => ({
 }));
 const nodeStore = useNodeStore();
 const usageStore = useUsageStore();
+const runHistoryStore = useRunHistoryStore();
+
+watch(() => runHistoryStore.lastError, (message) => {
+  if (message) ElMessage.warning({ message, duration: 4500 });
+});
 
 /***********************左侧菜单快捷键*********************/
 /** 与 Sidebar.vue 的视觉顺序保持一致：项目、Node、端口、提交日历、设置。 */

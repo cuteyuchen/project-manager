@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import { api } from '../api';
-import type { Project, ProjectGroup, RunSession, RunSessionCommandType, WorkspaceTab } from '../types';
+import type { Project, ProjectGroup, RunLogEntry, RunLogStream, RunSession, RunSessionCommandType, WorkspaceTab } from '../types';
 import type { PackageManagerResolveResult, ImportNode, ProjectExitPayload } from '../api/types';
 import { useNodeStore } from './node';
 import { useSettingsStore } from './settings';
@@ -9,6 +9,7 @@ import { useUsageStore } from './usage';
 import { useGitStore } from './git';
 import { useNavMemoryStore } from './navMemory.ts';
 import { useWorkspaceEditorStore } from './workspaceEditor';
+import { useRunHistoryStore } from './runHistory';
 import {
   getCustomCommandDisplayNameByLocale,
   getProjectCommandRunId,
@@ -22,6 +23,12 @@ import { createProjectId } from '../utils/projectId';
 import { flattenImportNodeTree } from '../utils/importProjectTree';
 import { MAX_PROJECT_DEPTH, normalizeProjectPath, assignSortOrders, aggregateRunningSubtreeCount, compareProjectsByPinnedThenOrder, computeManualOrderAssignments } from '../utils/projectTree';
 import { classifyProjectExit, createRunSessionId, formatExitSummary, isActiveRunSession, isRunSessionActive } from '../utils/runSession';
+import { MAX_SESSION_LOG_LINES, trimLogEntries } from '../utils/consoleLogs';
+import {
+  aggregateRunSummaryForSubtree,
+  getProjectRunSummary as getProjectRunSummaryFromData,
+  type ProjectRunSummary,
+} from '../utils/projectRunSummary';
 import { ElMessage } from 'element-plus';
 
 export const useProjectStore = defineStore('project', () => {
@@ -35,6 +42,7 @@ export const useProjectStore = defineStore('project', () => {
   const latestSessionIdByCommand = ref<Record<string, string>>({});
   const activeSessionIdByCommand = ref<Record<string, string>>({});
   const sessionLogs = ref<Record<string, string[]>>({});
+  const sessionLogEntries = ref<Record<string, RunLogEntry[]>>({});
   const sessionPartialOutput = ref<Record<string, string>>({});
   // activeProjectId 语义为「当前叶子/子项目」：命令运行、git、环境切换绑定它（ConsoleView/GitView 读取此值）
   const activeProjectId = ref<string | null>(null);
@@ -47,11 +55,15 @@ export const useProjectStore = defineStore('project', () => {
   const requestedRightTab = ref<WorkspaceTab | null>(null);
   const requestedRightTabProjectId = ref<string | null>(null);
   const requestedRightTabToken = ref(0);
+  const requestedConsoleHistoryProjectId = ref<string | null>(null);
+  const requestedConsoleHistoryId = ref<string | null>(null);
+  const requestedConsoleHistoryToken = ref(0);
 
   // Load from local storage removed in favor of persistence.ts
 
   // Log buffering mechanism to optimize rendering performance
-  const logBuffer: Record<string, string[]> = {};
+  const logBuffer: Record<string, RunLogEntry[]> = {};
+  const nextLogSequence: Record<string, number> = {};
   let logFlushTimer: number | null = null;
   const backendStartedSessionIds = new Set<string>();
   const MAX_RUN_SESSIONS_PER_PROJECT = 50;
@@ -88,6 +100,24 @@ export const useProjectStore = defineStore('project', () => {
     aggregateRunningSubtreeCount(projects.value, runningProjectCount.value)
   );
 
+  function getProjectRunSummary(projectId: string): ProjectRunSummary | null {
+    return getProjectRunSummaryFromData(
+      projectId,
+      projects.value,
+      runSessions.value,
+      useRunHistoryStore().entries,
+    );
+  }
+
+  function getSubtreeRunSummary(projectId: string): ProjectRunSummary | null {
+    return aggregateRunSummaryForSubtree(
+      projectId,
+      projects.value,
+      runSessions.value,
+      useRunHistoryStore().entries,
+    );
+  }
+
   function syncLegacyCommandBuckets(session: RunSession): void {
     if (latestSessionIdByCommand.value[session.commandKey] !== session.sessionId) return;
     logs.value[session.commandKey] = sessionLogs.value[session.sessionId] || [];
@@ -99,9 +129,13 @@ export const useProjectStore = defineStore('project', () => {
   }
 
   function trimSessionLogs(sessionId: string): void {
+    const entries = sessionLogEntries.value[sessionId];
+    if (entries && entries.length > MAX_SESSION_LOG_LINES) {
+      entries.splice(0, entries.length, ...trimLogEntries(entries));
+    }
     const current = sessionLogs.value[sessionId];
-    if (current && current.length > 2000) {
-      current.splice(0, current.length - 2000);
+    if (current && current.length > MAX_SESSION_LOG_LINES) {
+      current.splice(0, current.length - MAX_SESSION_LOG_LINES);
     }
   }
 
@@ -110,8 +144,10 @@ export const useProjectStore = defineStore('project', () => {
     if (!buffered?.length) return;
 
     const current = sessionLogs.value[sessionId];
-    if (current) {
-      current.push(...buffered);
+    const entries = sessionLogEntries.value[sessionId];
+    if (current && entries) {
+      entries.push(...buffered);
+      current.push(...buffered.map(entry => entry.text));
       trimSessionLogs(sessionId);
       const session = runSessions.value[sessionId];
       if (session) syncLegacyCommandBuckets(session);
@@ -126,13 +162,24 @@ export const useProjectStore = defineStore('project', () => {
     logFlushTimer = null;
   }
 
-  function appendSessionLog(sessionId: string, line: string): void {
+  function appendSessionLogEntry(sessionId: string, text: string, stream: RunLogStream): void {
+    // Runner 自身的 system 行必须排在已收到的 stdout/stderr 前面，避免
+    // requestAnimationFrame 缓冲让失败摘要插到尚未刷出的输出之前。
+    flushSessionLogBuffer(sessionId);
     const current = sessionLogs.value[sessionId];
-    if (!current) return;
-    current.push(line);
+    const entries = sessionLogEntries.value[sessionId];
+    if (!current || !entries) return;
+    const sequence = nextLogSequence[sessionId] || 0;
+    nextLogSequence[sessionId] = sequence + 1;
+    entries.push({ sequence, stream, text });
+    current.push(text);
     trimSessionLogs(sessionId);
     const session = runSessions.value[sessionId];
     if (session) syncLegacyCommandBuckets(session);
+  }
+
+  function appendSessionLog(sessionId: string, line: string, stream: RunLogStream = 'system'): void {
+    appendSessionLogEntry(sessionId, line, stream);
   }
 
   function pruneRunSessions(projectId: string): void {
@@ -148,8 +195,10 @@ export const useProjectStore = defineStore('project', () => {
     for (const session of candidates.slice(0, removeCount)) {
       delete runSessions.value[session.sessionId];
       delete sessionLogs.value[session.sessionId];
+      delete sessionLogEntries.value[session.sessionId];
       delete sessionPartialOutput.value[session.sessionId];
       delete logBuffer[session.sessionId];
+      delete nextLogSequence[session.sessionId];
       backendStartedSessionIds.delete(session.sessionId);
     }
   }
@@ -175,8 +224,10 @@ export const useProjectStore = defineStore('project', () => {
     const previousLatestId = latestSessionIdByCommand.value[commandKey];
     if (previousLatestId) {
       delete sessionLogs.value[previousLatestId];
+      delete sessionLogEntries.value[previousLatestId];
       delete sessionPartialOutput.value[previousLatestId];
       delete logBuffer[previousLatestId];
+      delete nextLogSequence[previousLatestId];
       backendStartedSessionIds.delete(previousLatestId);
     }
 
@@ -199,6 +250,8 @@ export const useProjectStore = defineStore('project', () => {
     latestSessionIdByCommand.value[commandKey] = session.sessionId;
     activeSessionIdByCommand.value[commandKey] = session.sessionId;
     sessionLogs.value[session.sessionId] = [];
+    sessionLogEntries.value[session.sessionId] = [];
+    nextLogSequence[session.sessionId] = 0;
     logs.value[commandKey] = sessionLogs.value[session.sessionId];
     delete partialOutput.value[commandKey];
 
@@ -232,6 +285,11 @@ export const useProjectStore = defineStore('project', () => {
       setRunningState(session.commandKey, false);
     }
     syncLegacyCommandBuckets(session);
+    try {
+      useRunHistoryStore().recordCompletedSession(session);
+    } catch (error) {
+      console.warn(`Failed to record run history for ${session.sessionId}`, error);
+    }
     pruneRunSessions(session.projectId);
   }
 
@@ -251,7 +309,7 @@ export const useProjectStore = defineStore('project', () => {
   }
 
   // Setup listeners. New events are routed by sessionId; an unknown/old session is ignored.
-  api.onProjectOutput(({ commandKey, sessionId, data, partial }) => {
+  api.onProjectOutput(({ commandKey, sessionId, stream, data, partial }) => {
     const session = runSessions.value[sessionId];
     if (!session || session.commandKey !== commandKey || !isRunSessionActive(session.status) || !sessionLogs.value[sessionId]) return;
     if (partial) {
@@ -262,7 +320,13 @@ export const useProjectStore = defineStore('project', () => {
     delete sessionPartialOutput.value[sessionId];
     syncLegacyCommandBuckets(session);
     if (!logBuffer[sessionId]) logBuffer[sessionId] = [];
-    logBuffer[sessionId].push(data);
+    const sequence = nextLogSequence[sessionId] || 0;
+    nextLogSequence[sessionId] = sequence + 1;
+    logBuffer[sessionId].push({
+      sequence,
+      stream: stream === 'stderr' ? 'stderr' : 'stdout',
+      text: data,
+    });
 
     if (!logFlushTimer) {
       logFlushTimer = requestAnimationFrame(flushLogs);
@@ -304,8 +368,10 @@ export const useProjectStore = defineStore('project', () => {
       }
       delete runSessions.value[session.sessionId];
       delete sessionLogs.value[session.sessionId];
+      delete sessionLogEntries.value[session.sessionId];
       delete sessionPartialOutput.value[session.sessionId];
       delete logBuffer[session.sessionId];
+      delete nextLogSequence[session.sessionId];
       backendStartedSessionIds.delete(session.sessionId);
     }
     for (const commandKey of Object.keys(latestSessionIdByCommand.value)) {
@@ -334,6 +400,7 @@ export const useProjectStore = defineStore('project', () => {
     // 工作区导航记忆同样按项目 id 存，删完项目要一并裁掉
     try { useNavMemoryStore().cleanupRemovedProjects(projects.value.map(p => p.id)); } catch {}
     try { useWorkspaceEditorStore().cleanupRemovedProjects(projects.value.map(p => p.id)); } catch {}
+    try { useRunHistoryStore().cleanupRemovedProjects(projects.value.map(p => p.id)); } catch {}
   }
 
   /***********************项目嵌套（多级）辅助*********************/
@@ -510,6 +577,23 @@ export const useProjectStore = defineStore('project', () => {
     requestedRightTab.value = tab;
     requestedRightTabProjectId.value = projectId;
     requestedRightTabToken.value += 1;
+  }
+
+  function requestConsoleHistory(projectId: string, historyId?: string): void {
+    requestedConsoleHistoryProjectId.value = projectId;
+    requestedConsoleHistoryId.value = historyId || null;
+    requestedConsoleHistoryToken.value += 1;
+    requestRightTab('console', projectId);
+  }
+
+  function consumeConsoleHistoryRequest(): { projectId: string | null; historyId: string | null } {
+    const request = {
+      projectId: requestedConsoleHistoryProjectId.value,
+      historyId: requestedConsoleHistoryId.value,
+    };
+    requestedConsoleHistoryProjectId.value = null;
+    requestedConsoleHistoryId.value = null;
+    return request;
   }
 
   /**
@@ -749,6 +833,7 @@ export const useProjectStore = defineStore('project', () => {
     const session = runSessions.value[sessionId];
     if (!session) return;
     sessionLogs.value[sessionId] = [];
+    sessionLogEntries.value[sessionId] = [];
     delete sessionPartialOutput.value[sessionId];
     delete logBuffer[sessionId];
     syncLegacyCommandBuckets(session);
@@ -1004,6 +1089,7 @@ export const useProjectStore = defineStore('project', () => {
     latestSessionIdByCommand,
     activeSessionIdByCommand,
     sessionLogs,
+    sessionLogEntries,
     sessionPartialOutput,
     activeProjectId,
     activeRootId,
@@ -1027,6 +1113,13 @@ export const useProjectStore = defineStore('project', () => {
     unfavoriteProject,
     toggleFavorite,
     requestRightTab,
+    requestedConsoleHistoryProjectId,
+    requestedConsoleHistoryId,
+    requestedConsoleHistoryToken,
+    requestConsoleHistory,
+    consumeConsoleHistoryRequest,
+    getProjectRunSummary,
+    getSubtreeRunSummary,
     runProject,
     runCustomCommand,
     stopProject,

@@ -85,6 +85,18 @@ function openProjectManagement(project: Project, initialTab: WorkspaceTab | null
     showManagementDialog.value = true;
 }
 
+/** 打开项目最近运行结果；子树摘要会定位到真正产生该 Session 的项目。 */
+function openProjectRunSummary(project: Project): void {
+    const summary = projectStore.getSubtreeRunSummary(project.id);
+    const target = summary
+        ? projectStore.projects.find(candidate => candidate.id === summary.projectId) || project
+        : project;
+    openProjectManagement(target, 'console');
+    if (summary && summary.status !== 'running' && summary.sessionId) {
+        projectStore.requestConsoleHistory(target.id, summary.sessionId);
+    }
+}
+
 /** 健康快照覆盖整棵已导入项目树，支持后代 dirty/unhealthy/missing 筛选。 */
 const healthProjects = computed(() => projectStore.projects);
 const {
@@ -159,7 +171,7 @@ function resolveElementRef(target: unknown): Element | null {
 
 function estimateProjectItemHeight(project: Project) {
     // 行高固定；含描述/标签的行略高
-    const hasMeta = !!(project.description || (project.tags && project.tags.length) || project.groupId);
+    const hasMeta = !!(project.description || (project.tags && project.tags.length) || project.groupId || projectStore.getSubtreeRunSummary(project.id));
     return (hasMeta ? 68 : 52) + PROJECT_LIST_ITEM_GAP;
 }
 
@@ -840,7 +852,7 @@ useAppShortcuts([
                          @open-management="openProjectManagement"
                          @open-workspace="openProjectWorkspace"
                          @open-git="openProjectManagement($event, 'git')"
-                         @open-running="openProjectManagement($event, 'console')"
+                         @open-running="openProjectRunSummary"
                          @toggle-select="toggleSelect"
                          @edit="openEditModal"
                          @drag-start="handleTreeDragStart"
@@ -869,7 +881,7 @@ useAppShortcuts([
                          @open-management="openProjectManagement"
                          @open-workspace="openProjectWorkspace"
                          @open-git="openProjectManagement($event, 'git')"
-                         @open-running="openProjectManagement($event, 'console')"
+                         @open-running="openProjectRunSummary"
                          @toggle-select="toggleSelect"
                          @edit="openEditModal"
                      />

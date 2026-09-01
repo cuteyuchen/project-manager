@@ -4,6 +4,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, wa
 import { useI18n } from 'vue-i18n';
 import type { Project, WorkspaceTab } from '../../types';
 import { useProjectStore } from '../../stores/project';
+import { useRunHistoryStore } from '../../stores/runHistory';
 import { useGitStore } from '../../stores/git';
 import { useNavMemoryStore } from '../../stores/navMemory.ts';
 import { resolveWorkspaceTabFallback } from '../../utils/workspaceTabFallback.ts';
@@ -34,6 +35,7 @@ const props = withDefaults(defineProps<{
 
 const { t } = useI18n();
 const projectStore = useProjectStore();
+const runHistoryStore = useRunHistoryStore();
 const gitStore = useGitStore();
 const navMemory = useNavMemoryStore();
 
@@ -51,7 +53,8 @@ const hasRunnableCommands = computed(() => {
   const project = activeProject.value;
   if (!project) return false;
   return getRunnableProjectScripts(project).length > 0
-    || (project.customCommands?.some(command => command.name && command.command) ?? false);
+    || (project.customCommands?.some(command => command.name && command.command) ?? false)
+    || runHistoryStore.projectHistory(project.id).length > 0;
 });
 const hasFrontendEnv = computed(() => (activeProject.value?.frontendEnvGroups?.length || 0) > 0);
 const leafTabsDisabled = computed(() => !activeProject.value);

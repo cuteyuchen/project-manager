@@ -52,6 +52,46 @@ export interface RunSession {
   packageManager?: string;
 }
 
+/** 已结束、可写入 run-history.json 的运行结果。 */
+export type RunHistoryStatus = 'success' | 'failed' | 'stopped';
+
+/** Console 的规范日志流；system 用于 Runner 自身产生的摘要。 */
+export type RunLogStream = 'stdout' | 'stderr' | 'system';
+
+/** 单个 Session 日志条目。sequence 在 Session 内单调递增，裁剪后不重编号。 */
+export interface RunLogEntry {
+  sequence: number;
+  stream: RunLogStream;
+  text: string;
+}
+
+/** 轻量持久化运行摘要；只保存 metadata，不保存任何完整日志。 */
+export interface RunHistoryEntry {
+  historyId: string;
+  sessionId: string;
+
+  projectId: string;
+  commandKey: string;
+  commandType: RunSessionCommandType;
+  commandId: string;
+  displayName: string;
+
+  cwd: string;
+  status: RunHistoryStatus;
+
+  startedAt: number;
+  endedAt: number;
+  durationMs: number;
+
+  exitCode: number | null;
+  errorMessage?: string;
+
+  nodeRuntimeId?: string;
+  nodeVersion?: string;
+  nodePath?: string;
+  packageManager?: string;
+}
+
 /***********************一级页快捷命令*********************/
 /** 一级项目列表展示的快捷运行命令，type 用于区分同名 script 与 custom command。 */
 export interface ProjectQuickCommand {

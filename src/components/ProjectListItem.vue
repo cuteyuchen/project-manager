@@ -11,6 +11,7 @@ import { getCustomCommandDisplayName, getProjectCommandRunId } from '../utils/pr
 import type { ProjectGitOverview } from '../utils/projectGitOverview';
 import { resolveProjectQuickCommands } from '../utils/projectQuickCommands';
 import { useProjectExternalActions } from '../composables/useProjectExternalActions';
+import { formatDuration } from '../utils/runSession';
 
 const { t } = useI18n();
 const props = defineProps<{
@@ -74,6 +75,7 @@ const selfRunningCount = computed(() => store.runningProjectCount[props.project.
 const subtreeRunningCount = computed(() => store.runningSubtreeCount[props.project.id] || 0);
 
 const isRunning = computed(() => subtreeRunningCount.value > 0);
+const runSummary = computed(() => store.getSubtreeRunSummary(props.project.id));
 
 /** 仅后代在跑：用更淡的样式区分，否则用户点进来找不到运行中的命令会困惑 */
 const isDescendantOnlyRunning = computed(() => isRunning.value && selfRunningCount.value === 0);
@@ -84,6 +86,28 @@ const runningTitle = computed(() => {
         ? t('dashboard.subProjectRunning', { count: subtreeRunningCount.value })
         : t('dashboard.running');
 });
+
+function getRunSummaryIcon(): string {
+    const status = runSummary.value?.status;
+    if (status === 'running') return 'i-mdi-circle';
+    if (status === 'success') return 'i-mdi-check-circle-outline';
+    if (status === 'failed') return 'i-mdi-alert-circle-outline';
+    if (status === 'stopped') return 'i-mdi-stop-circle-outline';
+    return 'i-mdi-circle-outline';
+}
+
+function getRunSummaryLabel(): string {
+    const summary = runSummary.value;
+    if (!summary) return '';
+    const status = t(`dashboard.runStatus${summary.status[0].toUpperCase()}${summary.status.slice(1)}`);
+    const duration = summary.durationMs === undefined ? '' : ` · ${formatDuration(summary.durationMs)}`;
+    const exit = summary.status === 'failed'
+        ? ` · ${t('dashboard.exitCodeShort', { code: summary.exitCode ?? 'null' })}`
+        : '';
+    return summary.status === 'running'
+        ? `${status} · ${summary.displayName}${summary.activeCount > 1 ? ` · ${summary.activeCount}` : ''}`
+        : `${t('dashboard.recentRun')} ${status} · ${summary.displayName}${exit}${duration}`;
+}
 
 /***********************项目附加信息*********************/
 
@@ -243,7 +267,7 @@ function handleDelete() {
                         :title="runningTitle"
                     />
                 </div>
-                <div v-if="project.description || displayTags.length > 0 || groupName" class="project-row-meta">
+                <div v-if="project.description || displayTags.length > 0 || groupName || runSummary" class="project-row-meta">
                     <span v-if="project.description" class="text-[10px] text-slate-400 dark:text-slate-500 truncate max-w-40" :title="project.description">
                         {{ project.description }}
                     </span>
@@ -259,6 +283,17 @@ function handleDelete() {
                         <div class="i-mdi-folder-network text-[8px]" />
                         {{ groupName }}
                     </span>
+                    <button
+                        v-if="runSummary"
+                        type="button"
+                        class="project-run-summary-inline"
+                        :class="`project-run-summary-inline-${runSummary.status}`"
+                        :title="getRunSummaryLabel()"
+                        @click.stop="emit('open-running', project)"
+                    >
+                        <div :class="getRunSummaryIcon()" class="text-[10px]" />
+                        <span class="truncate">{{ getRunSummaryLabel() }}</span>
+                    </button>
                 </div>
             </div>
 
@@ -585,6 +620,31 @@ function handleDelete() {
     overflow: visible;
   }
 }
+
+.project-run-summary-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: min(100%, 300px);
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: var(--app-radius-sm);
+  background: transparent;
+  color: var(--app-text-muted);
+  font-size: 10px;
+  line-height: 1.25;
+  text-align: left;
+}
+.project-run-summary-inline:hover {
+  border-color: var(--app-border);
+  background: var(--app-surface-soft);
+  color: var(--app-primary);
+}
+.project-run-summary-inline-running { color: var(--app-primary); }
+.project-run-summary-inline-success { color: var(--app-success); }
+.project-run-summary-inline-failed { color: var(--app-danger); }
+.project-run-summary-inline-stopped { color: var(--app-text-secondary); }
 
 @container (max-width: 760px) {
   .project-row-tree {
