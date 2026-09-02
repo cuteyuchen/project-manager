@@ -200,7 +200,8 @@ pub fn parse_shasums256(text: &str) -> HashMap<String, String> {
     map
 }
 
-pub fn sha256_hex(bytes: &[u8]) -> String {
+#[cfg(test)]
+fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     hasher
@@ -613,7 +614,14 @@ fn write_managed_location(
 ) -> Result<(), String> {
     let content = crate::read_config_file_contents(app, "data.json")?;
     let mut data = if content.trim().is_empty() {
-        Value::Object(serde_json::Map::new())
+        let mut object = serde_json::Map::new();
+        object.insert("projects".to_string(), Value::Array(Vec::new()));
+        object.insert(
+            "settings".to_string(),
+            Value::Object(serde_json::Map::new()),
+        );
+        object.insert("customNodes".to_string(), Value::Array(Vec::new()));
+        Value::Object(object)
     } else {
         serde_json::from_str::<Value>(&content).map_err(|error| {
             format!("Failed to parse data.json before updating Node runtime location: {error}")
@@ -633,7 +641,7 @@ fn write_managed_location(
     );
     let serialized = serde_json::to_string_pretty(&data).map_err(|error| error.to_string())?;
     let path = crate::app_config_file_path(app, "data.json")?;
-    crate::atomic_write_config(&path, &serialized)
+    crate::write_config_with_backup(&path, &serialized)
 }
 
 fn version_dir(root: &Path, version: &str) -> PathBuf {
@@ -1001,6 +1009,7 @@ fn checksum_matches(expected: &str, actual: &str) -> bool {
     expected.trim().eq_ignore_ascii_case(actual.trim())
 }
 
+#[cfg(test)]
 fn promote_downloaded_archive(part_path: &Path, archive_path: &Path) -> Result<(), String> {
     rename_with_retry(
         "archive_promotion",
@@ -1089,6 +1098,7 @@ fn cleanup_install_temp(part_path: &Path, archive_path: &Path, extract_dir: &Pat
 fn run_node_version(exe: &Path) -> Result<String, String> {
     let mut cmd = Command::new(exe);
     cmd.arg("-v");
+    cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     #[cfg(target_os = "windows")]
     {
@@ -2642,33 +2652,15 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *node-v20.11.1-
         }
     }
 
-    fn test_node_executable() -> Option<PathBuf> {
-        #[cfg(target_os = "windows")]
-        use std::os::windows::process::CommandExt;
-        #[cfg(target_os = "windows")]
-        let output = Command::new("where")
-            .arg("node")
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-            .ok()?;
-        #[cfg(not(target_os = "windows"))]
-        let output = Command::new("which").arg("node").output().ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .map(str::trim)
-            .find(|line| !line.is_empty())
-            .map(PathBuf::from)
-    }
-
     fn copy_test_node_runtime(root: &Path, source: &Path) {
         #[cfg(target_os = "windows")]
         let executable = root.join("node.exe");
         #[cfg(not(target_os = "windows"))]
         let executable = root.join("bin").join("node");
         fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        #[cfg(target_os = "windows")]
+        fs::hard_link(source, &executable).unwrap();
+        #[cfg(not(target_os = "windows"))]
         fs::copy(source, &executable).unwrap();
         #[cfg(unix)]
         {
@@ -2677,12 +2669,44 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *node-v20.11.1-
         }
     }
 
+    fn build_test_node_executable(root: &Path) -> PathBuf {
+        let source = root.join("node-fixture.rs");
+        #[cfg(target_os = "windows")]
+        let executable = root.join("node-fixture.exe");
+        #[cfg(not(target_os = "windows"))]
+        let executable = root.join("node-fixture");
+        fs::write(
+            &source,
+            r#"
+fn main() {
+    if std::env::args().nth(1).as_deref() == Some("-v") {
+        println!("v20.19.0");
+    }
+}
+"#,
+        )
+        .unwrap();
+        let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+        let output = Command::new(rustc)
+            .arg("--edition=2021")
+            .arg(&source)
+            .arg("-o")
+            .arg(&executable)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "failed to compile node fixture: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let _ = fs::remove_file(source);
+        executable
+    }
+
     #[test]
     fn nvm_scan_uses_executable_version_and_skips_invalid_candidates() {
-        let Some(source) = test_node_executable() else {
-            return;
-        };
         let temp = tempfile::tempdir().unwrap();
+        let source = build_test_node_executable(temp.path());
         #[cfg(target_os = "windows")]
         let scan_root = temp.path().to_path_buf();
         #[cfg(not(target_os = "windows"))]
@@ -2707,6 +2731,7 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *node-v20.11.1-
 
         let runtimes = scan_nvm_root(&scan_root);
         assert_eq!(runtimes.len(), 2);
+        assert!(runtimes.iter().all(|runtime| runtime.version == "v20.19.0"));
         assert!(runtimes.iter().all(|runtime| runtime.source == "nvm"));
         assert!(runtimes
             .iter()

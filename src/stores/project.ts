@@ -25,8 +25,7 @@ import { MAX_PROJECT_DEPTH, normalizeProjectPath, assignSortOrders, aggregateRun
 import { classifyProjectExit, createRunSessionId, formatExitSummary, isActiveRunSession, isRunSessionActive } from '../utils/runSession';
 import { MAX_SESSION_LOG_LINES, trimLogEntries } from '../utils/consoleLogs';
 import {
-  aggregateRunSummaryForSubtree,
-  getProjectRunSummary as getProjectRunSummaryFromData,
+  createProjectRunSummaryIndex,
   type ProjectRunSummary,
 } from '../utils/projectRunSummary';
 import { ElMessage } from 'element-plus';
@@ -58,6 +57,7 @@ export const useProjectStore = defineStore('project', () => {
   const requestedConsoleHistoryProjectId = ref<string | null>(null);
   const requestedConsoleHistoryId = ref<string | null>(null);
   const requestedConsoleHistoryToken = ref(0);
+  const runHistoryStore = useRunHistoryStore();
 
   // Load from local storage removed in favor of persistence.ts
 
@@ -100,22 +100,18 @@ export const useProjectStore = defineStore('project', () => {
     aggregateRunningSubtreeCount(projects.value, runningProjectCount.value)
   );
 
+  const runSummaryIndex = computed(() => createProjectRunSummaryIndex(
+    projects.value,
+    runSessions.value,
+    runHistoryStore.entries,
+  ));
+
   function getProjectRunSummary(projectId: string): ProjectRunSummary | null {
-    return getProjectRunSummaryFromData(
-      projectId,
-      projects.value,
-      runSessions.value,
-      useRunHistoryStore().entries,
-    );
+    return runSummaryIndex.value.getProjectSummary(projectId);
   }
 
   function getSubtreeRunSummary(projectId: string): ProjectRunSummary | null {
-    return aggregateRunSummaryForSubtree(
-      projectId,
-      projects.value,
-      runSessions.value,
-      useRunHistoryStore().entries,
-    );
+    return runSummaryIndex.value.getSubtreeSummary(projectId);
   }
 
   function syncLegacyCommandBuckets(session: RunSession): void {

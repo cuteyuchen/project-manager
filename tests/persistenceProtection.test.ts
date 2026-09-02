@@ -23,7 +23,10 @@ assert(
   '读取或 JSON 解析失败时必须进入只读保护，不能吞掉错误后回写空状态',
 );
 assert(
-  /await flushPendingSave\(\);[\s\S]{0,900}?await api\.exitApp\(\);/.test(app),
+  app.includes('flushBeforeLifecycle')
+    && app.includes('flushPendingSave')
+    && app.includes('runHistoryStore.flushStrict')
+    && app.includes('await api.exitApp()'),
   '退出应用前必须等待最后一次持久化完成',
 );
 assert(

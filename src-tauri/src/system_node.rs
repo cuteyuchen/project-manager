@@ -61,6 +61,7 @@ pub struct SystemNodeSwitchOptions {
     pub elevated: bool,
     /// Kept for API compatibility. Elevated Controller operations repair priority internally.
     #[serde(default)]
+    #[allow(dead_code)]
     pub repair_path_priority: bool,
 }
 
@@ -635,10 +636,6 @@ fn remove_owned_path_entries(entries: &mut Vec<String>, owned: &[Option<&str>]) 
     entries.len() != before
 }
 
-fn remove_owned_path_entry(entries: &mut Vec<String>, owned: Option<&str>) -> bool {
-    remove_owned_path_entries(entries, &[owned])
-}
-
 fn integrate_path_value_with_owned(
     original: &str,
     owned: &[Option<&str>],
@@ -664,15 +661,10 @@ fn integrate_path_value_with_owned(
     )
 }
 
+#[cfg(test)]
 fn integrate_path_value(original: &str, owned: Option<&str>, target: &str) -> (String, bool) {
     let (value, changed, _) = integrate_path_value_with_owned(original, &[owned], target);
     (value, changed)
-}
-
-fn remove_path_entry_value(original: &str, owned: Option<&str>) -> (String, bool) {
-    let mut entries = split_path_entries(original);
-    let changed = remove_owned_path_entry(&mut entries, owned);
-    (join_path_entries(&entries), changed)
 }
 
 fn join_registry_paths(machine: &str, user: &str) -> String {

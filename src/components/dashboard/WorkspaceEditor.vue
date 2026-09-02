@@ -162,8 +162,13 @@ function handleWindowFocus(): void {
   void checkExternalChanges();
 }
 
-function openExternal(document: WorkspaceDocument): void {
-  void api.openPath(joinAbsolutePath(props.project.path, document.relativePath));
+async function openExternal(document: WorkspaceDocument): Promise<void> {
+  try {
+    await api.openPath(joinAbsolutePath(props.project.path, document.relativePath));
+  } catch (error) {
+    console.error('Failed to open document externally', error);
+    ElMessage.error(String(error));
+  }
 }
 
 async function retryDocument(document: WorkspaceDocument): Promise<void> {

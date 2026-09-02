@@ -6,12 +6,10 @@ export interface ProjectTreeRelation {
   parentId?: string;
 }
 
-/** 返回节点到根的祖先链，不包含节点自身，最多回溯项目树允许的层级。 */
-export function collectProjectAncestorIds(
-  projects: readonly ProjectTreeRelation[],
+function collectProjectAncestorIdsFromMap(
+  byId: ReadonlyMap<string, ProjectTreeRelation>,
   projectId: string,
 ): string[] {
-  const byId = new Map(projects.map(project => [project.id, project]));
   const result: string[] = [];
   const seen = new Set<string>();
   let current = byId.get(projectId);
@@ -25,15 +23,25 @@ export function collectProjectAncestorIds(
   return result;
 }
 
+/** 返回节点到根的祖先链，不包含节点自身，最多回溯项目树允许的层级。 */
+export function collectProjectAncestorIds(
+  projects: readonly ProjectTreeRelation[],
+  projectId: string,
+): string[] {
+  const byId = new Map(projects.map(project => [project.id, project]));
+  return collectProjectAncestorIdsFromMap(byId, projectId);
+}
+
 /** 匹配任意层级时保留匹配节点及其所有祖先，为树提供完整路径上下文。 */
 export function collectVisibleProjectIds(
   projects: readonly ProjectTreeRelation[],
   matchingIds: Iterable<string>,
 ): Set<string> {
   const visible = new Set<string>();
+  const byId = new Map(projects.map(project => [project.id, project]));
   for (const id of matchingIds) {
     visible.add(id);
-    for (const ancestorId of collectProjectAncestorIds(projects, id)) {
+    for (const ancestorId of collectProjectAncestorIdsFromMap(byId, id)) {
       visible.add(ancestorId);
     }
   }
@@ -46,8 +54,9 @@ export function collectAutoExpandedProjectIds(
   matchingIds: Iterable<string>,
 ): Set<string> {
   const expanded = new Set<string>();
+  const byId = new Map(projects.map(project => [project.id, project]));
   for (const id of matchingIds) {
-    for (const ancestorId of collectProjectAncestorIds(projects, id)) {
+    for (const ancestorId of collectProjectAncestorIdsFromMap(byId, id)) {
       expanded.add(ancestorId);
     }
   }

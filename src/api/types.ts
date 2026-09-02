@@ -225,6 +225,11 @@ export interface PlatformAPI {
     // Config / FS
     readConfigFile(filename: string): Promise<string>;
     writeConfigFile(filename: string, content: string): Promise<void>;
+    hasConfigBackup(filename: string): Promise<boolean>;
+    readConfigBackup(filename: string): Promise<string>;
+    restoreConfigBackup(filename: string): Promise<string>;
+    canOpenConfigDirectory(): Promise<boolean>;
+    openConfigDirectory(): Promise<void>;
     readTextFile(path: string): Promise<string>;
     readBinaryFileBase64(path: string): Promise<string>;
     writeTextFile(path: string, content: string): Promise<void>;

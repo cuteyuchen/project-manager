@@ -883,6 +883,148 @@ function escapePowerShellSingleQuotes(value) {
 // Platform-adaptive: support both uTools and ZTools
 const platform = typeof ztools !== 'undefined' ? ztools : utools;
 
+const CONFIG_FILE_NAME = 'data.json';
+
+function assertSafeConfigFilename(filename) {
+    const value = String(filename || '');
+    if (!value || value !== path.basename(value) || /[\\/:\0]/.test(value) || value === '.' || value === '..' || /^[A-Za-z]:/.test(value)) {
+        throw new Error(`Invalid config filename: ${filename}`);
+    }
+    return value;
+}
+
+function configPath(filename) {
+    const safeFilename = assertSafeConfigFilename(filename);
+    return path.join(platform.getPath('userData'), safeFilename);
+}
+
+function syncDirectory(directory) {
+    if (process.platform === 'win32') return;
+    try {
+        const descriptor = fs.openSync(directory, 'r');
+        try {
+            fs.fsyncSync(descriptor);
+        } finally {
+            fs.closeSync(descriptor);
+        }
+    } catch (_) {
+        // Some hosts do not allow opening directories; the file fsync is still useful.
+    }
+}
+
+function uniqueSiblingPath(target, suffix) {
+    return path.join(
+        path.dirname(target),
+        `.${path.basename(target)}.${suffix}-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    );
+}
+
+function replaceFileAtomically(target, content) {
+    const directory = path.dirname(target);
+    fs.mkdirSync(directory, { recursive: true });
+    const temporary = uniqueSiblingPath(target, 'tmp');
+    let temporaryExists = false;
+    let displaced = null;
+
+    try {
+        const descriptor = fs.openSync(temporary, 'wx');
+        temporaryExists = true;
+        try {
+            fs.writeFileSync(descriptor, content);
+            fs.fsyncSync(descriptor);
+        } finally {
+            fs.closeSync(descriptor);
+        }
+
+        if (process.platform === 'win32' && fs.existsSync(target)) {
+            displaced = uniqueSiblingPath(target, 'old');
+            fs.renameSync(target, displaced);
+        }
+
+        fs.renameSync(temporary, target);
+        temporaryExists = false;
+        syncDirectory(directory);
+    } catch (error) {
+        if (displaced && !fs.existsSync(target) && fs.existsSync(displaced)) {
+            try {
+                fs.renameSync(displaced, target);
+                displaced = null;
+            } catch (_) {
+                // Keep the displaced file as evidence if rollback itself fails.
+            }
+        }
+        throw error;
+    } finally {
+        if (temporaryExists) {
+            try { fs.unlinkSync(temporary); } catch (_) {}
+        }
+        if (displaced && fs.existsSync(target)) {
+            try { fs.unlinkSync(displaced); } catch (_) {}
+        }
+    }
+}
+
+function backupPath(primaryPath) {
+    return `${primaryPath}.bak`;
+}
+
+function corruptSnapshotPath(primaryPath) {
+    const prefix = `${primaryPath}.corrupt-${Date.now()}-${process.pid}`;
+    let candidate = prefix;
+    while (fs.existsSync(candidate)) candidate = `${prefix}-${Math.random().toString(16).slice(2)}`;
+    return candidate;
+}
+
+function validateConfigContent(filename, content) {
+    let value;
+    try {
+        value = JSON.parse(content);
+    } catch (error) {
+        throw new Error(`Invalid JSON in ${filename}: ${error.message}`);
+    }
+    if (filename === CONFIG_FILE_NAME && (!value || Array.isArray(value) || typeof value !== 'object'
+        || !Array.isArray(value.projects) || !value.settings || typeof value.settings !== 'object' || Array.isArray(value.settings))) {
+        throw new Error('Config does not have the expected persisted data shape');
+    }
+}
+
+function writeConfigSafely(filename, content) {
+    const safeFilename = assertSafeConfigFilename(filename);
+    validateConfigContent(safeFilename, content);
+    const primaryPath = configPath(safeFilename);
+    fs.mkdirSync(path.dirname(primaryPath), { recursive: true });
+    if (safeFilename === CONFIG_FILE_NAME && fs.existsSync(primaryPath)) {
+        const previous = fs.readFileSync(primaryPath, 'utf8');
+        validateConfigContent(safeFilename, previous);
+        replaceFileAtomically(backupPath(primaryPath), Buffer.from(previous, 'utf8'));
+    }
+    replaceFileAtomically(primaryPath, Buffer.from(content, 'utf8'));
+}
+
+function restoreConfigSafely(filename) {
+    const safeFilename = assertSafeConfigFilename(filename);
+    const primaryPath = configPath(safeFilename);
+    const backup = backupPath(primaryPath);
+    const content = fs.readFileSync(backup, 'utf8');
+    validateConfigContent(safeFilename, content);
+    if (fs.existsSync(primaryPath)) {
+        replaceFileAtomically(corruptSnapshotPath(primaryPath), fs.readFileSync(primaryPath));
+    }
+    replaceFileAtomically(primaryPath, Buffer.from(content, 'utf8'));
+    return content;
+}
+
+function assertSafeExternalUrl(url) {
+    const value = String(url || '').trim();
+    try {
+        const parsed = new URL(value);
+        if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || !parsed.hostname) throw new Error('unsafe protocol');
+    } catch (_) {
+        throw new Error('Only http and https URLs can be opened externally.');
+    }
+    return value;
+}
+
 // Editor detection helpers
 const PLUGIN_EDITOR_DEFINITIONS = [
     { name: 'Visual Studio Code', matches: ['visual studio code'], commands: ['code'], relativePaths: [['bin', 'code.cmd'], ['bin', 'code'], ['Code.exe']] },
@@ -1755,9 +1897,7 @@ window.services = {
     },
 
     readConfigFile: async (filename) => {
-        // Use userData path
-        const userPath = platform.getPath('userData');
-        const filePath = path.join(userPath, filename);
+        const filePath = configPath(filename);
         if (fs.existsSync(filePath)) {
             return fs.readFileSync(filePath, 'utf-8');
         }
@@ -1765,9 +1905,37 @@ window.services = {
     },
 
     writeConfigFile: async (filename, content) => {
+        writeConfigSafely(filename, content);
+    },
+
+    hasConfigBackup: async (filename) => {
+        return fs.existsSync(backupPath(configPath(filename)));
+    },
+
+    readConfigBackup: async (filename) => {
+        const filePath = backupPath(configPath(filename));
+        return fs.readFileSync(filePath, 'utf-8');
+    },
+
+    restoreConfigBackup: async (filename) => {
+        return restoreConfigSafely(filename);
+    },
+
+    canOpenConfigDirectory: async () => {
+        return typeof platform.shellOpenPath === 'function' || typeof platform.openFolder === 'function';
+    },
+
+    openConfigDirectory: async () => {
         const userPath = platform.getPath('userData');
-        const filePath = path.join(userPath, filename);
-        fs.writeFileSync(filePath, content, 'utf-8');
+        if (typeof platform.shellOpenPath === 'function') {
+            await platform.shellOpenPath(userPath);
+            return;
+        }
+        if (typeof platform.openFolder === 'function') {
+            await platform.openFolder(userPath);
+            return;
+        }
+        throw new Error('Opening the config directory is unavailable in this host.');
     },
 
     readTextFile: async (path) => {
@@ -1820,7 +1988,7 @@ window.services = {
     },
 
     openUrl: async (url) => {
-        platform.shellOpenExternal(url);
+        platform.shellOpenExternal(assertSafeExternalUrl(url));
     },
 
     openFolder: async (folderPath) => {
@@ -1950,11 +2118,11 @@ window.services = {
     },
 
     getAppVersion: async () => {
-        return "1.6.0";
+        return "1.6.2";
     },
 
     installUpdate: async (url) => {
-        platform.shellOpenExternal(url);
+        platform.shellOpenExternal(assertSafeExternalUrl(url));
     },
 
     onDownloadProgress: async (cb) => {

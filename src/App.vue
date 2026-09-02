@@ -15,8 +15,12 @@ import CommitCalendar from './views/CommitCalendar.vue';
 import TitleBar from './components/TitleBar.vue';
 import UpdateProgress from './components/UpdateProgress.vue';
 import {
+  canOpenConfigDirectory,
   flushPendingSave,
   loadData,
+  openConfigDirectory,
+  persistenceRecovery,
+  restoreConfigBackup,
   scheduleSaveData,
   subscribePersistenceEvents,
   type PersistenceEvent,
@@ -45,6 +49,8 @@ import {
   normalizeShortcut,
 } from './utils/shortcut';
 import { useAppShortcuts } from './composables/useAppShortcuts.ts';
+import { formatErrorDetails, getLatestCapturedError } from './utils/errorDetails';
+import { createLifecycleGuard, flushBeforeLifecycle } from './utils/lifecycle';
 
 const target = import.meta.env.VITE_TARGET;
 const isPlugin = target === 'utools' || target === 'ztools';
@@ -72,6 +78,7 @@ const rememberCloseAction = ref(false);
 let trayIcon: { close?: () => Promise<void> } | null = null;
 let pendingCloseResolver: ((action: 'tray' | 'exit' | 'cancel') => void) | null = null;
 let unlistenCloseRequested: UnlistenFn | null = null;
+let unlistenNativeExitRequested: UnlistenFn | null = null;
 let unlistenPersistenceEvents: (() => void) | null = null;
 let persistenceErrorMessage: ReturnType<typeof ElMessage> | null = null;
 let registeredQuickSearchGlobalShortcut = '';
@@ -79,7 +86,13 @@ let quickSearchShortcutRecording = false;
 let quickSearchShortcutRecordingListener: ((event: Event) => void) | null = null;
 let allowWindowClose = false;
 let traySetupToken = 0;
+const exitGuard = createLifecycleGuard();
 let exiting = false;
+let nativeExitRequestedBeforeLoad = false;
+const persistenceReadOnly = ref(false);
+const recoveryBusy = ref(false);
+const configDirectoryAvailable = ref(false);
+const lastPersistenceError = ref<Error | null>(null);
 
 
 async function handleImportProject(path: string) {
@@ -284,11 +297,10 @@ function resetUpdateProgress() {
 }
 
 async function waitForUpdateSave() {
-  while (true) {
-    try {
-      await flushPendingSave();
-      return true;
-    } catch (error) {
+  const result = await flushBeforeLifecycle(
+    flushPendingSave,
+    () => runHistoryStore.flushStrict(),
+    async (error) => {
       try {
         await ElMessageBox.confirm(
           t('update.saveFailedMessage', { error: String(error) }),
@@ -300,11 +312,13 @@ async function waitForUpdateSave() {
             closeOnClickModal: false,
           },
         );
+        return 'retry';
       } catch {
-        return false;
+        return 'cancel';
       }
-    }
-  }
+    },
+  );
+  return result === 'saved';
 }
 
 async function resolveUpdateFailure(error: unknown): Promise<'retry' | 'download' | 'close'> {
@@ -455,11 +469,17 @@ async function destroyTray() {
 
 function handlePersistenceEvent(event: PersistenceEvent) {
   if (event.type === 'recovered') {
+    if (event.operation === 'load') persistenceReadOnly.value = false;
+    lastPersistenceError.value = null;
     persistenceErrorMessage?.close();
     persistenceErrorMessage = null;
     return;
   }
 
+  if (event.operation === 'load') {
+    persistenceReadOnly.value = true;
+    lastPersistenceError.value = event.error;
+  }
   persistenceErrorMessage?.close();
   persistenceErrorMessage = ElMessage({
     type: 'error',
@@ -471,7 +491,7 @@ function handlePersistenceEvent(event: PersistenceEvent) {
   });
 }
 
-async function resolveExitSaveFailure(error: unknown): Promise<'retry' | 'exit' | 'cancel'> {
+async function resolveExitSaveFailure(error: unknown): Promise<'retry' | 'continue' | 'cancel'> {
   try {
     await ElMessageBox.confirm(
       t('persistence.exitSaveFailedMessage', { error: String(error) }),
@@ -486,36 +506,28 @@ async function resolveExitSaveFailure(error: unknown): Promise<'retry' | 'exit' 
     );
     return 'retry';
   } catch (action) {
-    return action === 'cancel' ? 'exit' : 'cancel';
+    return action === 'cancel' ? 'continue' : 'cancel';
   }
 }
 
 async function exitApp() {
-  if (exiting) return;
+  if (!exitGuard.tryEnter()) return;
   exiting = true;
 
   try {
-    while (true) {
-      try {
-        await flushPendingSave();
-        break;
-      } catch (error) {
-        const action = await resolveExitSaveFailure(error);
-        if (action === 'retry') continue;
-        if (action === 'cancel') return;
-        break;
-      }
-    }
-
-    // History is auxiliary data. Its flush handles failures internally and
-    // must never turn the main data.json close path into read-only mode.
-    await runHistoryStore.flush();
+    const flushResult = await flushBeforeLifecycle(
+      flushPendingSave,
+      () => runHistoryStore.flushStrict(),
+      resolveExitSaveFailure,
+    );
+    if (flushResult === 'cancel') return;
 
     useGitStore().setColdStorage(true);
     await destroyTray();
     await api.exitApp();
   } finally {
     exiting = false;
+    exitGuard.leave();
   }
 }
 
@@ -610,7 +622,11 @@ async function setupCloseRequestedHandler() {
 
   const { getCurrentWindow } = await import('@tauri-apps/api/window');
   unlistenCloseRequested = await getCurrentWindow().onCloseRequested(async (event) => {
-    if (allowWindowClose || exiting) return;
+    if (allowWindowClose) return;
+    if (exiting) {
+      event.preventDefault();
+      return;
+    }
 
     const closeAction = getCloseAction();
     if (closeAction === 'exit') {
@@ -635,10 +651,33 @@ async function setupCloseRequestedHandler() {
 
 onMounted(async () => {
   unlistenPersistenceEvents = subscribePersistenceEvents(handlePersistenceEvent);
-  await loadData();
+  if (!isPlugin) {
+    try {
+      const { listen } = await import('@tauri-apps/api/event');
+      unlistenNativeExitRequested = await listen('native-exit-requested', () => {
+        if (!loaded.value) {
+          nativeExitRequestedBeforeLoad = true;
+          return;
+        }
+        void exitApp();
+      });
+    } catch (error) {
+      console.error('Failed to setup native exit listener', error);
+    }
+  }
+  const loadResult = await loadData();
+  persistenceReadOnly.value = loadResult.state === 'read-only';
+  if (loadResult.state === 'read-only') {
+    lastPersistenceError.value = loadResult.error;
+    configDirectoryAvailable.value = await canOpenConfigDirectory().catch(() => false);
+  }
   await runHistoryStore.load();
   await nodeStore.loadRuntimes();
   loaded.value = true;
+  if (nativeExitRequestedBeforeLoad) {
+    nativeExitRequestedBeforeLoad = false;
+    void exitApp();
+  }
 
   const handleShortcutRecording = (event: Event) => {
     quickSearchShortcutRecording = (event as CustomEvent<boolean>).detail === true;
@@ -797,6 +836,7 @@ onUnmounted(() => {
     window.removeEventListener('quick-search-shortcut-recording', quickSearchShortcutRecordingListener);
   }
   if (unlistenCloseRequested) unlistenCloseRequested();
+  if (unlistenNativeExitRequested) unlistenNativeExitRequested();
   if (unlistenPersistenceEvents) unlistenPersistenceEvents();
   persistenceErrorMessage?.close();
   document.removeEventListener('keydown', handleGlobalKeydown);
@@ -805,6 +845,95 @@ onUnmounted(() => {
   void flushPendingSave().catch(() => undefined);
   void runHistoryStore.flush();
 });
+
+async function handleRestoreBackup(): Promise<void> {
+  if (recoveryBusy.value || !persistenceRecovery.value.backupValid) return;
+  try {
+    await ElMessageBox.confirm(
+      t('persistence.restoreBackupMessage'),
+      t('persistence.restoreBackupTitle'),
+      {
+        type: 'warning',
+        confirmButtonText: t('persistence.restoreBackup'),
+        cancelButtonText: t('common.cancel'),
+        closeOnClickModal: false,
+      },
+    );
+  } catch {
+    return;
+  }
+
+  recoveryBusy.value = true;
+  try {
+    const result = await restoreConfigBackup();
+    if (result.state === 'ready') {
+      persistenceReadOnly.value = false;
+      lastPersistenceError.value = null;
+      ElMessage.success(t('persistence.restoreSuccess'));
+    } else {
+      persistenceReadOnly.value = true;
+      lastPersistenceError.value = result.error;
+      ElMessage.error(t('persistence.restoreFailed', { error: result.error.message }));
+    }
+  } finally {
+    recoveryBusy.value = false;
+  }
+}
+
+async function handleOpenConfigDirectory(): Promise<void> {
+  try {
+    await openConfigDirectory();
+  } catch (error) {
+    ElMessage.error(t('persistence.openDirectoryFailed', { error: String(error) }));
+  }
+}
+
+async function copyText(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand('copy');
+  textarea.remove();
+  if (!copied) throw new Error('Clipboard is unavailable');
+}
+
+async function handleCopyErrorDetails(): Promise<void> {
+  const captured = getLatestCapturedError();
+  const error = lastPersistenceError.value || captured?.error || new Error('Unknown application error');
+  let appVersion = 'unknown';
+  let platform = navigator.platform || 'unknown';
+  try {
+    appVersion = await api.getAppVersion();
+  } catch {
+    // Keep the local fallback when the host is unavailable during startup.
+  }
+  try {
+    const platformInfo = await api.getPlatformInfo();
+    platform = `${platformInfo.os}/${platformInfo.arch}`;
+  } catch {
+    // Keep the browser platform fallback.
+  }
+
+  try {
+    await copyText(formatErrorDetails(error, {
+      appVersion,
+      target: target || 'unknown',
+      platform,
+      currentView: currentView.value,
+      timestamp: captured?.timestamp,
+    }));
+    ElMessage.success(t('persistence.copyErrorDetailsSuccess'));
+  } catch (copyError) {
+    ElMessage.error(t('persistence.copyErrorDetailsFailed', { error: String(copyError) }));
+  }
+}
 
 // Watch stores and save
 const projectStore = useProjectStore();
@@ -880,6 +1009,33 @@ watch(
   <div class="app-shell" :class="{ 'app-shell-with-titlebar': !isPlugin }">
     <div class="app-background-layer" :style="appBackgroundStyle" aria-hidden="true" />
     <TitleBar v-if="!isPlugin" />
+
+    <section
+      v-if="persistenceReadOnly"
+      class="mx-4 mt-3 border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-200"
+      role="alert"
+    >
+      <p class="font-semibold">{{ t('persistence.corruptedMessage') }}</p>
+      <p v-if="persistenceRecovery.backupAvailable && !persistenceRecovery.backupValid" class="mt-1">
+        {{ t('persistence.backupInvalid') }}
+      </p>
+      <div class="mt-3 flex flex-wrap gap-2">
+        <el-button
+          v-if="persistenceRecovery.backupAvailable && persistenceRecovery.backupValid"
+          type="danger"
+          :loading="recoveryBusy"
+          @click="handleRestoreBackup"
+        >
+          {{ t('persistence.restoreBackup') }}
+        </el-button>
+        <el-button v-if="configDirectoryAvailable" @click="handleOpenConfigDirectory">
+          {{ t('persistence.openDataDirectory') }}
+        </el-button>
+        <el-button @click="handleCopyErrorDetails">
+          {{ t('persistence.copyErrorDetails') }}
+        </el-button>
+      </div>
+    </section>
 
     <div class="app-layout">
       <Sidebar :active="currentView" @navigate="v => currentView = v" />

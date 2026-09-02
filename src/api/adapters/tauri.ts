@@ -44,6 +44,7 @@ import type {
 } from '../../types';
 
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { assertSafeExternalUrl } from '../../utils/externalUrl';
 
 export class TauriAdapter implements PlatformAPI {
     private appWindow = getCurrentWindow();
@@ -228,15 +229,16 @@ export class TauriAdapter implements PlatformAPI {
     }
 
     async openUrl(url: string): Promise<void> {
+        const safeUrl = assertSafeExternalUrl(url);
         // Prefer plugin if available, or backend if needed.
         // The project has both. Let's use the backend one if it does custom logic,
         // or the plugin one if it's standard.
         // Settings.vue uses plugin.
         try {
-            await openUrlFn(url);
+            await openUrlFn(safeUrl);
         } catch (e) {
             // Fallback to invoke if plugin fails or if we prefer invoke
-            return invoke('open_url', { url });
+            return invoke('open_url', { url: safeUrl });
         }
     }
 
@@ -247,6 +249,26 @@ export class TauriAdapter implements PlatformAPI {
 
     async writeConfigFile(filename: string, content: string): Promise<void> {
         return invoke('write_config_file', { filename, content });
+    }
+
+    async hasConfigBackup(filename: string): Promise<boolean> {
+        return invoke('has_config_backup', { filename });
+    }
+
+    async readConfigBackup(filename: string): Promise<string> {
+        return invoke('read_config_backup', { filename });
+    }
+
+    async restoreConfigBackup(filename: string): Promise<string> {
+        return invoke('restore_config_backup', { filename });
+    }
+
+    async canOpenConfigDirectory(): Promise<boolean> {
+        return true;
+    }
+
+    async openConfigDirectory(): Promise<void> {
+        return invoke('open_config_directory');
     }
 
     async readTextFile(path: string): Promise<string> {

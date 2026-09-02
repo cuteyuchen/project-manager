@@ -5,6 +5,7 @@ import { useProjectStore } from '../stores/project';
 import { useI18n } from 'vue-i18n';
 import { marked } from 'marked';
 import { api } from '../api';
+import { isSafeExternalUrl } from '../utils/externalUrl';
 
 const { t } = useI18n();
 const props = defineProps<{ project: Project }>();
@@ -101,11 +102,10 @@ function handleMarkdownClick(e: MouseEvent) {
     const anchor = (e.target as HTMLElement).closest('a');
     if (!anchor) return;
     const href = anchor.getAttribute('href');
-    if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
-        e.preventDefault();
-        e.stopPropagation();
-        api.openUrl(href);
-    }
+    if (!href) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (isSafeExternalUrl(href)) void api.openUrl(href);
 }
 </script>
 

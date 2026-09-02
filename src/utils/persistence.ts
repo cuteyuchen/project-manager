@@ -1,3 +1,4 @@
+import { ref } from 'vue';
 import { api } from '../api';
 import { useProjectStore } from '../stores/project';
 import { useSettingsStore } from '../stores/settings';
@@ -8,6 +9,7 @@ import { ensureNodeInstallCommand } from './projectCommands';
 import { createPersistenceSaveQueue } from './persistenceQueue';
 import { clampWorkspaceExplorerWidth } from './workspaceExplorerLayout';
 import { normalizeUiSize } from './uiSize';
+import { isPersistedDataShape, parsePersistedData } from './configSafety';
 
 const FILE_NAME = 'data.json';
 const SAVE_DEBOUNCE_MS = 800;
@@ -34,6 +36,12 @@ export type PersistenceLoadResult =
   | { state: 'ready' }
   | { state: 'read-only'; error: Error };
 
+export interface PersistenceRecoveryState {
+  backupAvailable: boolean;
+  backupValid: boolean;
+  backupError: string | null;
+}
+
 let saveTimer: number | null = null;
 let saveIdleHandle: IdleCallbackHandle | null = null;
 let persistenceState: PersistenceState = 'loading';
@@ -41,6 +49,11 @@ let readOnlyError: Error | null = null;
 let lastFailure: PersistenceOperation | null = null;
 const listeners = new Set<(event: PersistenceEvent) => void>();
 const saveQueue = createPersistenceSaveQueue((serialized) => api.writeConfigFile(FILE_NAME, serialized));
+export const persistenceRecovery = ref<PersistenceRecoveryState>({
+  backupAvailable: false,
+  backupValid: false,
+  backupError: null,
+});
 
 function buildPersistedData(): PersistedData {
   const projectStore = useProjectStore();
@@ -64,6 +77,33 @@ function serializePersistedData(): string {
 
 function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
+}
+
+function resetRecoveryState(): void {
+  persistenceRecovery.value = {
+    backupAvailable: false,
+    backupValid: false,
+    backupError: null,
+  };
+}
+
+async function inspectBackup(): Promise<void> {
+  let backupAvailable = false;
+  let backupValid = false;
+  let backupError: string | null = null;
+
+  try {
+    backupAvailable = await api.hasConfigBackup(FILE_NAME);
+    if (backupAvailable) {
+      const content = await api.readConfigBackup(FILE_NAME);
+      parsePersistedData(content);
+      backupValid = true;
+    }
+  } catch (error) {
+    backupError = toError(error).message;
+  }
+
+  persistenceRecovery.value = { backupAvailable, backupValid, backupError };
 }
 
 function emit(event: PersistenceEvent) {
@@ -164,13 +204,40 @@ export async function flushPendingSave() {
   await saveData();
 }
 
+export async function restoreConfigBackup(): Promise<PersistenceLoadResult> {
+  try {
+    const content = await api.readConfigBackup(FILE_NAME);
+    if (!isPersistedDataShape(parsePersistedData(content))) {
+      throw new Error('Config backup does not have the expected persisted data shape');
+    }
+    const restored = await api.restoreConfigBackup(FILE_NAME);
+    parsePersistedData(restored);
+    return await loadData();
+  } catch (error) {
+    await inspectBackup();
+    return { state: 'read-only', error: enterReadOnly('load', error) };
+  }
+}
+
+export async function canOpenConfigDirectory(): Promise<boolean> {
+  return api.canOpenConfigDirectory();
+}
+
+export async function openConfigDirectory(): Promise<void> {
+  await api.openConfigDirectory();
+}
+
 export async function loadData(): Promise<PersistenceLoadResult> {
   persistenceState = 'loading';
   readOnlyError = null;
+  resetRecoveryState();
 
   try {
     const content = await api.readConfigFile(FILE_NAME);
     if (!content) {
+      if (await api.hasConfigBackup(FILE_NAME)) {
+        throw new Error('Primary config file is missing while a backup exists');
+      }
       const nodeStore = useNodeStore();
       const legacyMigrated = nodeStore.migrateLegacyStorage();
       saveQueue.markPersisted(serializePersistedData());
@@ -190,7 +257,7 @@ export async function loadData(): Promise<PersistenceLoadResult> {
 
     let data: any;
     try {
-      data = JSON.parse(content);
+      data = parsePersistedData(content);
     } catch (error) {
       throw new Error(`Failed to parse config file: ${toError(error).message}`);
     }
@@ -251,20 +318,31 @@ export async function loadData(): Promise<PersistenceLoadResult> {
         merged.uiSize = normalizeUiSize(undefined);
         normalizedDataChanged = true;
       }
-      if (!Array.isArray(merged.projectViewPresets)) merged.projectViewPresets = [];
-      if (!Array.isArray(merged.workspaceProfiles)) merged.workspaceProfiles = [];
-      merged.workspaceExplorerWidth = clampWorkspaceExplorerWidth(merged.workspaceExplorerWidth);
-      const managedLocation = merged.managedNodeRuntimeLocation;
+      if (!Array.isArray(data.settings.projectViewPresets)) {
+        merged.projectViewPresets = [];
+        normalizedDataChanged = true;
+      }
+      if (!Array.isArray(data.settings.workspaceProfiles)) {
+        merged.workspaceProfiles = [];
+        normalizedDataChanged = true;
+      }
+      const normalizedExplorerWidth = clampWorkspaceExplorerWidth(data.settings.workspaceExplorerWidth);
+      normalizedDataChanged ||= data.settings.workspaceExplorerWidth !== normalizedExplorerWidth;
+      merged.workspaceExplorerWidth = normalizedExplorerWidth;
+      const managedLocation = data.settings.managedNodeRuntimeLocation;
+      let normalizedManagedLocation: Settings['managedNodeRuntimeLocation'];
       if (managedLocation?.mode === 'custom' && typeof managedLocation.customPath === 'string' && managedLocation.customPath.trim()) {
-        merged.managedNodeRuntimeLocation = {
+        normalizedManagedLocation = {
           mode: 'custom',
           customPath: managedLocation.customPath.trim(),
         };
       } else if (managedLocation?.mode === 'portable') {
-        merged.managedNodeRuntimeLocation = { mode: 'portable' };
+        normalizedManagedLocation = { mode: 'portable' };
       } else {
-        merged.managedNodeRuntimeLocation = { mode: 'app-data' };
+        normalizedManagedLocation = { mode: 'app-data' };
       }
+      normalizedDataChanged ||= JSON.stringify(managedLocation) !== JSON.stringify(normalizedManagedLocation);
+      merged.managedNodeRuntimeLocation = normalizedManagedLocation;
       settingsStore.settings = merged;
     }
     const normalizeNodeSource = (source: unknown): NodeVersion['source'] =>
@@ -334,6 +412,7 @@ export async function loadData(): Promise<PersistenceLoadResult> {
     reportRecovery('load');
     return { state: 'ready' };
   } catch (error) {
+    await inspectBackup();
     return { state: 'read-only', error: enterReadOnly('load', error) };
   }
 }

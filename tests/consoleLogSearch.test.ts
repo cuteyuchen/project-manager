@@ -13,7 +13,7 @@ import {
 } from '../src/utils/consoleLogs.ts';
 import type { RunLogEntry } from '../src/types.ts';
 
-const entries: RunLogEntry[] = Array.from({ length: 800 }, (_, index) => ({
+const entries: RunLogEntry[] = Array.from({ length: 2_000 }, (_, index) => ({
   sequence: index,
   stream: index % 3 === 0 ? 'stderr' : index % 3 === 1 ? 'system' : 'stdout',
   text: index === 3
@@ -36,7 +36,7 @@ assert.equal(filterLogEntries(entries, 'system').every(entry => entry.stream ===
 assert.equal(filterLogEntries(entries, 'all').length, entries.length);
 
 assert.deepEqual(searchLogEntries(entries, ''), []);
-assert.equal(searchLogEntries(entries, 'NEEDLE').length, 80);
+assert.equal(searchLogEntries(entries, 'NEEDLE').length, 200);
 assert.equal(searchLogEntries(entries, '中文')[0].sequence, 3);
 assert.equal(searchLogEntries(entries, 'failed')[0].sequence, 3);
 assert.equal(searchLogEntries(entries, 'needle', 'stdout').every(match => entries[match.entryIndex].stream === 'stdout'), true);
@@ -52,8 +52,8 @@ assert.equal(nextMatchIndex(0, 0, 'next'), -1);
 /*********************** render window and stable sequence ***********************/
 const latestWindow = getRenderWindow(entries);
 assert.equal(latestWindow.items.length, CONSOLE_RENDER_WINDOW_SIZE);
-assert.equal(latestWindow.start, 300);
-assert.equal(latestWindow.items[0].sequence, 300);
+assert.equal(latestWindow.start, 1_500);
+assert.equal(latestWindow.items[0].sequence, 1_500);
 
 const topWindow = getRenderWindow(entries, CONSOLE_RENDER_WINDOW_SIZE, 0);
 assert.equal(topWindow.start, 0);
@@ -78,7 +78,7 @@ assert.equal(overCap[overCap.length - 1].sequence, 2_399);
 /*********************** copy/export covers all retained entries ***********************/
 const copied = formatLogEntriesPlainText(entries);
 assert(copied.includes('line 0 Needle'));
-assert(copied.includes('line 799 ordinary'));
+assert(copied.includes('line 1,999 ordinary') || copied.includes('line 1999 ordinary'));
 assert(!copied.includes('\u001b['));
 
 const exported = buildSessionLogExportText({
@@ -97,7 +97,7 @@ const exported = buildSessionLogExportText({
 assert(exported.includes('Status: Failed'));
 assert(exported.includes('--- Output ---'));
 assert(exported.includes('line 0 Needle'));
-assert(exported.includes('line 799 ordinary'));
+assert(exported.includes('line 1,999 ordinary') || exported.includes('line 1999 ordinary'));
 assert(!exported.includes('\u001b['));
 assert(exported.includes('active partial'));
 

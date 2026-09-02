@@ -1,6 +1,6 @@
 import { createApp } from "vue";
 import { createPinia } from "pinia";
-import ElementPlus from 'element-plus';
+import ElementPlus, { ElMessage } from 'element-plus';
 import 'element-plus/dist/index.css';
 import 'element-plus/theme-chalk/dark/css-vars.css';
 import App from "./App.vue";
@@ -10,6 +10,8 @@ import "./styles/git-ui.css";
 import "virtual:uno.css";
 import i18n from "./i18n";
 import { applyUiSizeToRoot, normalizeUiSize } from './utils/uiSize';
+import { getSafeErrorMessage } from './utils/errorDetails';
+import { installGlobalErrorCapture } from './utils/globalErrorCapture';
 
 function applyInitialUiSize(): void {
   let storedUiSize: unknown;
@@ -36,4 +38,14 @@ const app = createApp(isQuickSearchWindow ? QuickSearchWindow : App);
 app.use(createPinia());
 app.use(ElementPlus);
 app.use(i18n);
+const globalErrorCapture = installGlobalErrorCapture((error, source) => {
+  ElMessage.warning({
+    message: `应用遇到非阻塞错误（${source}）：${getSafeErrorMessage(error)}`,
+    duration: 4500,
+  });
+});
+app.config.errorHandler = (error, _instance, info) => {
+  void info;
+  globalErrorCapture.capture(error, 'vue');
+};
 app.mount("#app");

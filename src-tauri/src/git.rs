@@ -1113,117 +1113,6 @@ pub async fn git_fetch(
 }
 
 #[tauri::command]
-pub fn git_branches(path: String) -> Result<Vec<GitBranch>, String> {
-    let mut branches = Vec::new();
-
-    // Get current branch
-    let current = run_git(&path, &["branch", "--show-current"])
-        .unwrap_or_default()
-        .trim()
-        .to_string();
-
-    // Get all local branches
-    let local_output = run_git(
-        &path,
-        &[
-            "branch",
-            "--format=%(refname:short)\t%(upstream:short)\t%(upstream:track)",
-        ],
-    )?;
-    for line in local_output.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let parts: Vec<&str> = line.split('\t').collect();
-        let name = parts.get(0).unwrap_or(&"").to_string();
-        let upstream = parts.get(1).and_then(|s| {
-            if s.is_empty() {
-                None
-            } else {
-                Some(s.to_string())
-            }
-        });
-        let track = parts.get(2).unwrap_or(&"").to_string();
-
-        let (ahead, behind) = parse_track_info(&track);
-
-        branches.push(GitBranch {
-            is_current: name == current,
-            name,
-            is_remote: false,
-            upstream,
-            ahead,
-            behind,
-        });
-    }
-
-    // Get remote branches
-    let remote_output = run_git(&path, &["branch", "-r", "--format=%(refname:short)"])?;
-    for line in remote_output.lines() {
-        let name = line.trim().to_string();
-        if name.is_empty() || name.contains("HEAD") {
-            continue;
-        }
-        branches.push(GitBranch {
-            name,
-            is_remote: true,
-            is_current: false,
-            upstream: None,
-            ahead: 0,
-            behind: 0,
-        });
-    }
-
-    Ok(branches)
-}
-
-fn parse_track_info(track: &str) -> (i32, i32) {
-    // Format: [ahead 3, behind 2] or [ahead 3] or [behind 2] or empty
-    let mut ahead = 0;
-    let mut behind = 0;
-
-    if track.is_empty() {
-        return (ahead, behind);
-    }
-
-    // Remove brackets
-    let inner = track.trim_start_matches('[').trim_end_matches(']');
-
-    for part in inner.split(',') {
-        let part = part.trim();
-        if part.starts_with("ahead ") {
-            if let Ok(n) = part[6..].trim().parse::<i32>() {
-                ahead = n;
-            }
-        } else if part.starts_with("behind ") {
-            if let Ok(n) = part[7..].trim().parse::<i32>() {
-                behind = n;
-            }
-        }
-    }
-
-    (ahead, behind)
-}
-
-#[tauri::command]
-pub fn git_checkout(path: String, branch: String) -> Result<String, String> {
-    run_git(&path, &["checkout", &branch])
-}
-
-#[tauri::command]
-pub fn git_create_branch(
-    path: String,
-    name: String,
-    start_point: Option<String>,
-) -> Result<String, String> {
-    let mut args = vec!["branch", &name];
-    if let Some(ref sp) = start_point {
-        args.push(sp.as_str());
-    }
-    run_git(&path, &args)
-}
-
-#[tauri::command]
 pub fn git_delete_branch(
     path: String,
     name: String,
@@ -1250,14 +1139,6 @@ pub fn git_merge(path: String, branch: String) -> Result<String, String> {
 #[tauri::command]
 pub fn git_rebase(path: String, branch: String) -> Result<String, String> {
     run_git(&path, &["rebase", &branch])
-}
-
-#[tauri::command]
-pub fn git_rm_cached(path: String, files: Vec<String>) -> Result<String, String> {
-    let mut args = vec!["rm", "--cached", "--"];
-    let file_refs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
-    args.extend(file_refs);
-    run_git(&path, &args)
 }
 
 #[tauri::command]
@@ -1409,113 +1290,6 @@ fn apply_patch_from_stdin(path: &str, patch: &str, mode: &str) -> Result<String,
 #[tauri::command]
 pub async fn git_apply_hunk(path: String, patch: String, mode: String) -> Result<String, String> {
     run_git_task(move || apply_patch_from_stdin(&path, &patch, &mode)).await
-}
-
-#[tauri::command]
-pub fn git_apply_patch(
-    path: String,
-    patch: String,
-    cached: Option<bool>,
-    reverse: Option<bool>,
-) -> Result<String, String> {
-    use std::io::Write;
-    let mut args = vec!["apply"];
-    if cached.unwrap_or(false) {
-        args.push("--cached");
-    }
-    if reverse.unwrap_or(false) {
-        args.push("--reverse");
-    }
-    args.push("-");
-
-    let mut child = std::process::Command::new("git")
-        .args(&args)
-        .current_dir(&path)
-        .env("LANG", "en_US.UTF-8")
-        .env("LC_ALL", "en_US.UTF-8")
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| e.to_string())?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(patch.as_bytes())
-            .map_err(|e| e.to_string())?;
-    }
-
-    let output = child.wait_with_output().map_err(|e| e.to_string())?;
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).to_string())
-    }
-}
-
-#[tauri::command]
-pub fn git_log(
-    path: String,
-    max_count: Option<i32>,
-    all: Option<bool>,
-) -> Result<Vec<GitCommit>, String> {
-    let count_str = max_count.unwrap_or(200).to_string();
-    let max_count_arg = format!("--max-count={}", count_str);
-    let mut args = vec![
-        "log",
-        max_count_arg.as_str(),
-        "--format=%H%n%h%n%an%n%ae%n%aI%n%s%n%P%n%D%n---END---",
-    ];
-
-    if all.unwrap_or(true) {
-        args.push("--all");
-    }
-
-    let output = run_git(&path, &args)?;
-    let mut commits = Vec::new();
-
-    let mut lines: Vec<&str> = Vec::new();
-    for line in output.lines() {
-        if line == "---END---" {
-            if lines.len() >= 7 {
-                let hash = lines[0].to_string();
-                let short_hash = lines[1].to_string();
-                let author = lines[2].to_string();
-                let email = lines[3].to_string();
-                let committer = author.clone();
-                let date = lines[4].to_string();
-                let message = lines[5].to_string();
-                let parents: Vec<String> = if lines[6].is_empty() {
-                    vec![]
-                } else {
-                    lines[6].split(' ').map(|s| s.to_string()).collect()
-                };
-                let refs: Vec<String> = if lines.len() > 7 && !lines[7].is_empty() {
-                    lines[7].split(", ").map(|s| s.trim().to_string()).collect()
-                } else {
-                    vec![]
-                };
-
-                commits.push(GitCommit {
-                    hash,
-                    short_hash,
-                    author,
-                    email,
-                    committer,
-                    date,
-                    message,
-                    parents,
-                    refs,
-                    graph_prefix: None,
-                });
-            }
-            lines.clear();
-        } else {
-            lines.push(line);
-        }
-    }
-
-    Ok(commits)
 }
 
 const DIFF_BINARY_MARKER: &str = "__BINARY_FILE__";
@@ -2292,6 +2066,30 @@ pub async fn git_list_branches(path: String) -> Result<Vec<GitBranch>, String> {
         Ok(branches)
     })
     .await
+}
+
+fn parse_track_info(track: &str) -> (i32, i32) {
+    let mut ahead = 0;
+    let mut behind = 0;
+
+    for part in track
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .split(',')
+    {
+        let part = part.trim();
+        if let Some(value) = part.strip_prefix("ahead ") {
+            if let Ok(value) = value.trim().parse::<i32>() {
+                ahead = value;
+            }
+        } else if let Some(value) = part.strip_prefix("behind ") {
+            if let Ok(value) = value.trim().parse::<i32>() {
+                behind = value;
+            }
+        }
+    }
+
+    (ahead, behind)
 }
 
 #[tauri::command]

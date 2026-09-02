@@ -66,23 +66,24 @@ const effectiveExpandedProjectIds = computed(() => new Set([
   ...searchAutoExpandedProjectIds.value,
 ]));
 
-const childrenByParentId = computed(() => {
-  const result = new Map<string, Project[]>();
+const sortedChildrenByParentId = computed(() => {
+  const result = new Map<string | undefined, Project[]>();
   for (const project of props.projects) {
-    if (!project.parentId) continue;
     const children = result.get(project.parentId) || [];
     children.push(project);
     result.set(project.parentId, children);
+  }
+  for (const children of result.values()) {
+    children.sort(compareProjectsByPinnedThenOrder);
   }
   return result;
 });
 
 const rows = computed<ProjectSwitcherRow[]>(() => {
   const result: ProjectSwitcherRow[] = [];
-  const sorted = (projects: readonly Project[]) => [...projects].sort(compareProjectsByPinnedThenOrder);
 
   const visit = (parentId: string | undefined, depth: number): void => {
-    const children = sorted(props.projects.filter(project => project.parentId === parentId));
+    const children = sortedChildrenByParentId.value.get(parentId) || [];
     for (const project of children) {
       if (!visibleProjectIds.value.has(project.id)) continue;
       result.push({ project, depth });
@@ -97,7 +98,7 @@ const rows = computed<ProjectSwitcherRow[]>(() => {
   // Keep malformed/orphaned records selectable without flattening valid branches.
   const renderedIds = new Set(result.map(row => row.project.id));
   const projectIds = new Set(props.projects.map(project => project.id));
-  for (const project of sorted(props.projects)) {
+  for (const project of [...props.projects].sort(compareProjectsByPinnedThenOrder)) {
     if (
       !renderedIds.has(project.id)
       && visibleProjectIds.value.has(project.id)
@@ -110,7 +111,7 @@ const rows = computed<ProjectSwitcherRow[]>(() => {
 });
 
 function hasChildren(projectId: string): boolean {
-  return (childrenByParentId.value.get(projectId)?.length || 0) > 0;
+  return (sortedChildrenByParentId.value.get(projectId)?.length || 0) > 0;
 }
 
 function isExpanded(projectId: string): boolean {

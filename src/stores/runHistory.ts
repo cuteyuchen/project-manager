@@ -38,7 +38,7 @@ export const useRunHistoryStore = defineStore('runHistory', () => {
     }
   }
 
-  async function saveNow(): Promise<void> {
+  async function saveNow(strict = false): Promise<void> {
     if (!dirty) return;
     const serialized = serializeRunHistory(entries.value);
     try {
@@ -51,6 +51,7 @@ export const useRunHistoryStore = defineStore('runHistory', () => {
       // History is auxiliary data. Keep dirty=true so a later flush can retry,
       // but never propagate this failure into the main data.json persistence.
       reportWarning('保存运行历史失败，主配置仍可正常使用。', error);
+      if (strict) throw error;
     }
   }
 
@@ -113,6 +114,11 @@ export const useRunHistoryStore = defineStore('runHistory', () => {
     await saveNow();
   }
 
+  async function flushStrict(): Promise<void> {
+    clearSaveTimer();
+    await saveNow(true);
+  }
+
   const projectHistory = computed(() => (projectId: string) =>
     getProjectHistory(entries.value, projectId),
   );
@@ -135,5 +141,6 @@ export const useRunHistoryStore = defineStore('runHistory', () => {
     cleanupRemovedProjects,
     clearProjectHistory,
     flush,
+    flushStrict,
   };
 });

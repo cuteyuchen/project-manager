@@ -2105,10 +2105,11 @@ pub fn reveal_in_folder(path: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn open_url(url: String) -> Result<(), String> {
+    let url = validate_external_url(&url)?;
     #[cfg(target_os = "windows")]
     {
         Command::new("rundll32")
-            .args(&["url.dll,FileProtocolHandler", &url])
+            .args(["url.dll,FileProtocolHandler", &url])
             .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map_err(|e| e.to_string())?;
@@ -2127,6 +2128,32 @@ pub fn open_url(url: String) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+fn validate_external_url(raw: &str) -> Result<String, String> {
+    let value = raw.trim();
+    let lower = value.to_ascii_lowercase();
+    let scheme_len = if lower.starts_with("http://") {
+        7
+    } else if lower.starts_with("https://") {
+        8
+    } else {
+        return Err("Only http and https URLs can be opened externally".to_string());
+    };
+
+    let authority = value[scheme_len..]
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or_default();
+    if authority.is_empty()
+        || authority
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
+    {
+        return Err("External URL must include a valid host".to_string());
+    }
+
+    Ok(value.to_string())
 }
 
 #[tauri::command]
@@ -2470,6 +2497,30 @@ mod tests {
             windows_reveal_args(&target),
             vec![directory.as_os_str().to_os_string()]
         );
+    }
+
+    #[test]
+    fn external_url_validation_allows_only_http_and_https() {
+        assert_eq!(
+            validate_external_url(" https://example.com/a ").unwrap(),
+            "https://example.com/a"
+        );
+        assert_eq!(
+            validate_external_url("http://localhost:1420").unwrap(),
+            "http://localhost:1420"
+        );
+        for unsafe_url in [
+            "javascript:alert(1)",
+            "file:///tmp/a",
+            "shell:open",
+            "https://",
+            "http:// a",
+        ] {
+            assert!(
+                validate_external_url(unsafe_url).is_err(),
+                "unexpectedly accepted {unsafe_url}"
+            );
+        }
     }
 
     /***********************node 项目仍注入版本*********************/

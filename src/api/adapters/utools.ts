@@ -37,6 +37,7 @@ import type {
   ManagedRuntimeLocationInfo,
   ManagedRuntimeSizeInfo,
 } from '../../types';
+import { assertSafeExternalUrl } from '../../utils/externalUrl';
 
 // Declare global interface for uTools services
 declare global {
@@ -248,10 +249,36 @@ export class UToolsAdapter implements PlatformAPI {
     const parent = separatorIndex > 0 ? path.slice(0, separatorIndex) : path;
     return this.service.openFolder(parent);
   }
-  openUrl(url: string): Promise<void> { return this.service.openUrl(url); }
+  openUrl(url: string): Promise<void> { return this.service.openUrl(assertSafeExternalUrl(url)); }
 
   readConfigFile(filename: string): Promise<string> { return this.service.readConfigFile(filename); }
   writeConfigFile(filename: string, content: string): Promise<void> { return this.service.writeConfigFile(filename, content); }
+  hasConfigBackup(filename: string): Promise<boolean> {
+    const service = this.service as PlatformAPI & { hasConfigBackup?: (filename: string) => Promise<boolean> };
+    return typeof service.hasConfigBackup === 'function' ? service.hasConfigBackup(filename) : Promise.resolve(false);
+  }
+  readConfigBackup(filename: string): Promise<string> {
+    const service = this.service as PlatformAPI & { readConfigBackup?: (filename: string) => Promise<string> };
+    return typeof service.readConfigBackup === 'function'
+      ? service.readConfigBackup(filename)
+      : Promise.reject(new Error('Config backup recovery is unavailable in this host.'));
+  }
+  restoreConfigBackup(filename: string): Promise<string> {
+    const service = this.service as PlatformAPI & { restoreConfigBackup?: (filename: string) => Promise<string> };
+    return typeof service.restoreConfigBackup === 'function'
+      ? service.restoreConfigBackup(filename)
+      : Promise.reject(new Error('Config backup recovery is unavailable in this host.'));
+  }
+  canOpenConfigDirectory(): Promise<boolean> {
+    const service = this.service as PlatformAPI & { canOpenConfigDirectory?: () => Promise<boolean> };
+    return typeof service.canOpenConfigDirectory === 'function' ? service.canOpenConfigDirectory() : Promise.resolve(false);
+  }
+  openConfigDirectory(): Promise<void> {
+    const service = this.service as PlatformAPI & { openConfigDirectory?: () => Promise<void> };
+    return typeof service.openConfigDirectory === 'function'
+      ? service.openConfigDirectory()
+      : Promise.reject(new Error('Opening the config directory is unavailable in this host.'));
+  }
   readTextFile(path: string): Promise<string> { return this.service.readTextFile(path); }
   readBinaryFileBase64(path: string): Promise<string> { return this.service.readBinaryFileBase64(path); }
   writeTextFile(path: string, content: string): Promise<void> { return this.service.writeTextFile(path, content); }

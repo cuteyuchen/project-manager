@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { EditorState } from '@codemirror/state';
-import { highlightingFor, syntaxTree } from '@codemirror/language';
+import { ensureSyntaxTree, highlightingFor, syntaxTree } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 import { editorHighlightExtension } from '../src/utils/editorHighlight';
 import { editorLanguageExtension, editorLanguageForPath } from '../src/utils/editorLanguage';
@@ -35,6 +35,7 @@ for (const dark of [true, false]) {
     doc: 'const value = 42;\n// comment\nconst text = "ok";\n',
     extensions: [editorLanguageExtension('typescript'), editorHighlightExtension(dark)],
   });
+  ensureSyntaxTree(state, state.doc.length, 1000);
   const tree = syntaxTree(state).toString();
   assert.match(tree, /LineComment/, 'TypeScript 应解析注释节点');
   assert.ok(highlightingFor(state, [tags.keyword]), 'TypeScript keyword 应产生高亮 token');
