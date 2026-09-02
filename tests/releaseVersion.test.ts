@@ -58,7 +58,8 @@ assert.equal(readReadmeVersion('当前版本：`v1.6.2`\n\n### v1.5.0'), '1.6.2'
 assert.equal(readReadmeVersion('### v1.6.2\n'), null);
 
 const root = process.cwd();
-assertVersionConsistency(root, '1.6.2');
+const currentVersion = (JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { version: string }).version;
+assertVersionConsistency(root, currentVersion);
 
 const mismatchRoot = mkdtempSync(join(tmpdir(), 'project-manager-version-'));
 try {
@@ -83,7 +84,8 @@ try {
   packageJson.version = '9.9.9';
   writeFileSync(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
   assert.throws(() => assertVersionConsistency(mismatchRoot), /inconsistent/);
-  assert.throws(() => assertVersionConsistency(root, '1.7.0'), /inconsistent/);
+  const mismatchedExpectedVersion = currentVersion === '1.7.0' ? '1.6.2' : '1.7.0';
+  assert.throws(() => assertVersionConsistency(root, mismatchedExpectedVersion), /inconsistent/);
 
   packageJson.version = '1.7';
   writeFileSync(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);

@@ -128,6 +128,7 @@ try {
     mkdirSync(dirname(target), { recursive: true });
     copyFileSync(join(process.cwd(), relativePath), target);
   }
+  writeFileSync(join(rollbackRoot, 'CHANGELOG.md'), '# Changelog\n\n## Unreleased\n\n- Fixture release note.\n');
 
   execFileSync('git', ['add', '.'], { cwd: rollbackRoot });
   execFileSync('git', ['commit', '-qm', 'fixture'], { cwd: rollbackRoot });
