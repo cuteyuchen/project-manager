@@ -1,6 +1,6 @@
 # Project Manager
 
-当前版本：`v1.6.2`
+当前版本：`v1.7.0`
 
 一个现代化的跨平台项目管理工具，聚合了项目运行、Git 管理、Node 版本管理、项目文件整理与系统集成功能。  
 桌面端基于 `Tauri v2 + Vue 3 + TypeScript` 构建，同时提供 `uTools` / `ZTools` 插件版本。
@@ -182,7 +182,7 @@ npm run release:prepare -- 1.7.0
 npm run release:publish -- 1.7.0
 ```
 
-发布前请按 [`docs/release-checklist.md`](docs/release-checklist.md) 执行自动检查与各平台手工 QA。`release:prepare` 和 `release:publish` 均支持 `--dry-run`；本轮不会创建正式 tag、GitHub Release 或发布插件。
+发布前请按 [`docs/release-checklist.md`](docs/release-checklist.md) 执行自动检查与各平台手工 QA。`release:prepare` 和 `release:publish` 均支持 `--dry-run`；dry-run 不会创建 tag、GitHub Release 或发布插件。
 
 ---
 
@@ -199,6 +199,24 @@ ztools/              ZTools 插件相关文件
 ---
 
 ## 更新日志
+
+### v1.7.0
+
+**新功能与优化**
+
+- **Project Explorer 与编辑器体验**：支持多级项目工作区、父子项目钻取、独立排序 / 收藏 / 置顶，以及项目文件和 Markdown 备忘录的连续管理。
+- **Git 增强**：仓库中心统一管理贮藏、标签、远程和分支；支持文件级 / hunk 级操作、提交历史搜索及常用历史操作。
+- **Node Runtime Center**：统一管理应用内 Node Runtime，兼容扫描 NVM，支持系统 Node 切换、项目 Runtime 绑定和自定义路径。
+- **Run Session 与 Run History**：运行状态、exit code、耗时、停止 / 重跑和当前 Runtime 更清晰；历史结果可检索并按当前配置重新运行。
+- **Console 工具**：支持 stdout、stderr、Runner 筛选、搜索、复制和导出，并限制内存日志规模以保持长日志场景流畅。
+- **界面可读性与尺寸**：统一字号、间距和控件尺寸，优化设置分区导航、工作区布局记忆与亮暗色体验。
+
+**数据安全与发布工程**
+
+- 配置文件继续采用原子写入，并增加 `data.json.bak` 上一次已知成功备份；主配置损坏时进入只读保护，用户可显式验证并恢复备份。
+- uTools / ZTools 配置写入与 Tauri 对齐，支持安全替换、回滚、损坏快照和配置路径校验；运行历史损坏时独立回退为空，不影响项目数据。
+- 发布流程拆分为 `release:preflight`、`release:prepare` 和 `release:publish`，构建、测试、版本一致性或发布任一步失败都会返回失败状态，不产生伪成功结果。
+- CI 增加 macOS smoke、uTools / ZTools plugin build 与统一 TypeScript 测试入口，持续覆盖 Windows、Ubuntu 和 macOS。
 
 ### v1.6.2
 

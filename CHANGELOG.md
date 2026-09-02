@@ -2,13 +2,34 @@
 
 ## Unreleased
 
-### R4.0 发布准备
+## v1.7.0
 
-- Project Explorer 与编辑器体验持续收紧。
-- Git enhancements、Node Runtime Center 与 System Node Controller 持续稳定化。
-- Run Session、Run History 与 Console 工具完成发布前收口。
-- UI 可读性与界面尺寸调整完成跨平台验证准备。
-- CI、版本一致性、发布前置检查与数据安全防护强化。
+### 新功能与优化
+
+- Project Explorer 支持多级项目工作区、父子项目钻取，以及独立的排序、置顶和收藏；项目文件与 Markdown 备忘录可以在同一工作区连续管理。
+- Git 管理增加仓库中心，统一覆盖贮藏、标签、远程与分支，并完善文件级 / hunk 级操作、提交历史搜索和历史操作。
+- Node Runtime Center 统一管理应用内 Node Runtime，兼容扫描 NVM Runtime，支持系统 Node 切换、项目 Runtime 绑定和自定义 Node 路径。
+- Run Session 明确呈现 Starting、Running、Success、Failed、Stopped，补充 exit code、耗时、停止、重新运行和当前 Runtime 信息。
+- Run History 保留轻量运行结果，可按项目或命令检索失败原因、耗时和执行环境，并按当前配置重新运行。
+- Console 支持 stdout、stderr、Runner 筛选、搜索、复制和导出；长日志使用容量限制与渲染缓冲，保持交互响应。
+- 统一界面字号、间距和控件尺寸，优化设置分区导航、Git 布局记忆、亮暗色主题和自定义背景体验。
+
+### 数据安全与生命周期
+
+- Tauri 配置继续使用同目录临时文件、写入同步和替换的原子写入模型。
+- `data.json` 增加单份 `data.json.bak` Last Known Good 备份；每次成功保存后滚动为“主文件 + 上一次成功备份”，迁移或规范化重写前先保护旧数据。
+- uTools / ZTools 改用同目录临时文件、安全替换、失败回滚和临时文件清理，不再直接覆盖主配置；配置文件名统一限制为 basename，阻止路径穿越。
+- 主配置损坏时进入只读保护；存在有效备份时支持用户确认后保留损坏快照、恢复备份并重新加载，主文件和备份都损坏时不影响应用进入只读模式。
+- `run-history.json` 使用独立安全写入，损坏时回退为空，不影响 `data.json`。
+- 退出、关闭到托盘和更新安装流程统一先 flush 项目数据与运行历史；只有真正退出且保存完成或用户明确选择继续退出后才清理运行中的进程。
+
+### 发布工程与跨平台
+
+- 发布流程拆分为 `release:preflight`、`release:prepare` 和 `release:publish`；版本更新、Cargo.lock、构建、测试、commit、tag、push、GitHub Release 或插件发布任一步失败都会以非零状态退出。
+- 增加版本源一致性、tag 匹配、CHANGELOG release notes 提取、现有 tag 检查和 `--dry-run` 验证，避免构建失败后仍推送 tag 或伪造发布成功。
+- Release notes 从 `CHANGELOG.md` 对应版本段落生成，避免 release workflow 使用过期的硬编码版本正文。
+- uTools 构建改用跨平台 Node 文件复制脚本；统一 TypeScript 测试入口，并将 uTools / ZTools plugin build 纳入 CI gate。
+- 普通 CI 增加 macOS smoke，持续覆盖 Windows、Ubuntu、macOS、前端构建、TypeScript 测试和 Rust 测试；正式发布仍保留 macOS Intel 与 Apple Silicon 构建矩阵。
 
 ## v1.6.2
 
