@@ -25,18 +25,7 @@ jobs:
       - name: Build frontend
         run: npm run build
       - name: Run TypeScript tests
-        shell: pwsh
-        run: |
-          $failed = $false
-          Get-ChildItem tests -Filter *.test.ts | Sort-Object Name | ForEach-Object {
-            Write-Host "==> $($_.Name)"
-            npx --no-install tsx $_.FullName
-            if ($LASTEXITCODE -ne 0) {
-              Write-Host "FAILED: $($_.Name)"
-              $failed = $true
-            }
-          }
-          if ($failed) { exit 1 }
+        run: npm run test:ts
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -76,18 +65,7 @@ jobs:
       - name: Build frontend
         run: npm run build
       - name: Run TypeScript tests
-        shell: bash
-        run: |
-          set -o pipefail
-          failed=0
-          while IFS= read -r test_file; do
-            echo "==> $(basename "$test_file")"
-            if ! npx --no-install tsx "$test_file"; then
-              echo "FAILED: $(basename "$test_file")"
-              failed=1
-            fi
-          done < <(find tests -maxdepth 1 -name '*.test.ts' -print | sort)
-          test "$failed" -eq 0
+        run: npm run test:ts
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -97,3 +75,46 @@ jobs:
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
       - name: Run Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22.x
+          cache: npm
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Build frontend
+        run: npm run build
+      - name: Run TypeScript tests
+        run: npm run test:ts
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+      - name: Run Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  plugins:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22.x
+          cache: npm
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Build uTools plugin
+        run: npm run build:utools
+      - name: Build ZTools plugin
+        run: npm run build:ztools
