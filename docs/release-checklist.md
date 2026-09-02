@@ -4,30 +4,30 @@
 
 ## 自动化 Gate
 
-- [ ] Windows CI：`npm ci`
-- [ ] Windows CI：`npm run build`
-- [ ] Windows CI：`npm run test:ts`
-- [ ] Windows CI：`cargo fmt --manifest-path src-tauri/Cargo.toml --check`
-- [ ] Windows CI：`cargo test --manifest-path src-tauri/Cargo.toml`
-- [ ] Ubuntu CI：`npm ci`
-- [ ] Ubuntu CI：`npm run build`
-- [ ] Ubuntu CI：`npm run test:ts`
-- [ ] Ubuntu CI：`cargo fmt --manifest-path src-tauri/Cargo.toml --check`
-- [ ] Ubuntu CI：`cargo test --manifest-path src-tauri/Cargo.toml`
-- [ ] macOS CI：`npm ci`
-- [ ] macOS CI：`npm run build`
-- [ ] macOS CI：`npm run test:ts`
-- [ ] macOS CI：`cargo fmt --manifest-path src-tauri/Cargo.toml --check`
-- [ ] macOS CI：`cargo test --manifest-path src-tauri/Cargo.toml`
-- [ ] Plugin CI：`npm run build:utools`
-- [ ] Plugin CI：`npm run build:ztools`
-- [ ] 本地：`npm run release:preflight`
+- [x] Windows CI：`npm ci`
+- [x] Windows CI：`npm run build`
+- [x] Windows CI：`npm run test:ts`
+- [x] Windows CI：`cargo fmt --manifest-path src-tauri/Cargo.toml --check`
+- [x] Windows CI：`cargo test --manifest-path src-tauri/Cargo.toml`
+- [x] Ubuntu CI：`npm ci`
+- [x] Ubuntu CI：`npm run build`
+- [x] Ubuntu CI：`npm run test:ts`
+- [x] Ubuntu CI：`cargo fmt --manifest-path src-tauri/Cargo.toml --check`
+- [x] Ubuntu CI：`cargo test --manifest-path src-tauri/Cargo.toml`
+- [x] macOS CI：`npm ci`
+- [x] macOS CI：`npm run build`
+- [x] macOS CI：`npm run test:ts`
+- [x] macOS CI：`cargo fmt --manifest-path src-tauri/Cargo.toml --check`
+- [x] macOS CI：`cargo test --manifest-path src-tauri/Cargo.toml`
+- [x] Plugin CI：`npm run build:utools`
+- [x] Plugin CI：`npm run build:ztools`
+- [x] 本地：`npm run release:preflight`
 - [ ] 本地发布上下文：`npm run release:preflight -- --strict-local --tag <目标版本>`（仅在干净 `main` 且 `origin/main` 已同步时执行）
-- [ ] 版本源全部一致，当前版本为 `1.6.2`
-- [ ] `CHANGELOG.md` 含非空 `## Unreleased` 或目标版本 section
-- [ ] `npm audit --json` 已按 direct/transitive、runtime/dev、severity、fixAvailable 分级
-- [ ] 未执行 `npm audit fix --force`
-- [ ] `git diff --check` 通过
+- [x] 版本源全部一致，当前版本为 `1.6.2`
+- [x] `CHANGELOG.md` 含非空 `## Unreleased` 或目标版本 section
+- [x] `npm audit --json` 已按 direct/transitive、runtime/dev、severity、fixAvailable 分级
+- [x] 未执行 `npm audit fix --force`
+- [x] `git diff --check` 通过
 
 ## Windows 手工 QA
 
