@@ -171,7 +171,18 @@ npm run build:utools
 
 # 构建 ZTools 插件
 npm run build:ztools
+
+# 发布前检查（不修改版本、不创建 tag、不推送）
+npm run release:preflight
+
+# 准备本地版本提交和 tag（不推送）
+npm run release:prepare -- 1.7.0
+
+# 发布已准备好的提交和 tag
+npm run release:publish -- 1.7.0
 ```
+
+发布前请按 [`docs/release-checklist.md`](docs/release-checklist.md) 执行自动检查与各平台手工 QA。`release:prepare` 和 `release:publish` 均支持 `--dry-run`；本轮不会创建正式 tag、GitHub Release 或发布插件。
 
 ---
 

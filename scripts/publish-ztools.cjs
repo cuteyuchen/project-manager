@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
+const { assertReleaseVersion, extractReleaseNotes } = require('./release-utils.cjs');
 
 const rootDir = path.resolve(__dirname, '..');
 const ztoolsPublishRepoDir = path.join(rootDir, '.ztools-publish-repo');
@@ -34,26 +35,9 @@ function writeJson(filePath, value, indent = 2) {
     fs.writeFileSync(filePath, JSON.stringify(value, null, indent) + '\n');
 }
 
-function escapeRegExp(value) {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function extractVersionChangelog(readmeContent, version) {
-    const changelogIndex = readmeContent.indexOf('## 更新日志');
-    if (changelogIndex === -1) return '';
-
-    const changelogContent = readmeContent.slice(changelogIndex);
-    const versionPattern = new RegExp(`###\\s+v${escapeRegExp(version)}\\s*\\n([\\s\\S]*?)(?=\\n###\\s+v\\d+\\.\\d+\\.\\d+|\\n##\\s+|$)`);
-    const match = changelogContent.match(versionPattern);
-
-    if (!match) return '';
-
-    return `### v${version}\n\n${match[1].trim()}\n`;
-}
-
 function normalizeChangelogForCommit(changelog) {
     return changelog
-        .replace(/^###\s+/gm, '')
+        .replace(/^##\s+/gm, '')
         .replace(/\*\*/g, '')
         .trim();
 }
@@ -61,11 +45,13 @@ function normalizeChangelogForCommit(changelog) {
 const isDryRun = process.argv.includes('--dry-run');
 if (isDryRun) console.log('\n🧪 DRY RUN MODE — will not actually publish\n');
 
-const version = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8')).version;
-const readmePath = path.join(rootDir, 'README.md');
-const readmeContent = fs.existsSync(readmePath) ? fs.readFileSync(readmePath, 'utf8') : '';
-const extractedChangelog = extractVersionChangelog(readmeContent, version);
-const changelogContent = extractedChangelog || `### v${version}\n\n- 本次发布未在 README 中找到对应版本的更新日志，请在发布后补充说明。\n`;
+const version = assertReleaseVersion(JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8')).version);
+const changelogSource = fs.readFileSync(path.join(rootDir, 'CHANGELOG.md'), 'utf8');
+const changelogContent = extractReleaseNotes(changelogSource, version);
+if (!changelogContent) {
+    console.error(`❌ CHANGELOG.md 中找不到 v${version} 的发布说明。`);
+    process.exit(1);
+}
 const commitMessage = [
     `chore(release): ztools source v${version}`,
     '',
@@ -76,6 +62,12 @@ const commitMessage = [
 ].join('\n');
 
 console.log(`\n Publishing ZTools plugin (v${version})...\n`);
+
+if (isDryRun) {
+    console.log('\n🧪 Dry run: source, version, and release notes validated.');
+    console.log('   Skipping publish workspace creation and plugin-cli publish.\n');
+    process.exit(0);
+}
 
 try {
     ensureCleanDir(ztoolsPublishRepoDir);
@@ -129,16 +121,9 @@ try {
     run('git add .', { cwd: ztoolsPublishRepoDir });
     run('git commit -F .release-commit-message.txt', { cwd: ztoolsPublishRepoDir });
 
-    if (isDryRun) {
-        console.log('\n🧪 Dry run: skipping publish step.');
-        console.log(`   Would run: npx @ztools-center/plugin-cli@latest publish`);
-        console.log(`   In:        ${ztoolsPublishRepoDir}`);
-        console.log(`\n✅ Dry run complete — publish workspace ready at .ztools-publish-repo/\n`);
-    } else {
-        // plugin-cli reads plugin.json from cwd; plugin.json is at repo root
-        run('npx @ztools-center/plugin-cli@latest publish', { cwd: ztoolsPublishRepoDir });
-        console.log(`\n✅ ZTools plugin v${version} published successfully\n`);
-    }
+    // plugin-cli reads plugin.json from cwd; plugin.json is at repo root
+    run('npx @ztools-center/plugin-cli@latest publish', { cwd: ztoolsPublishRepoDir });
+    console.log(`\n✅ ZTools plugin v${version} published successfully\n`);
 } catch (e) {
     console.error('❌ ZTools publish failed:', e.message);
     console.log('💡 You can retry manually:');

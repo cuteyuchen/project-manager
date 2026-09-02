@@ -1,5 +1,15 @@
 # 更新日志
 
+## Unreleased
+
+### R4.0 发布准备
+
+- Project Explorer 与编辑器体验持续收紧。
+- Git enhancements、Node Runtime Center 与 System Node Controller 持续稳定化。
+- Run Session、Run History 与 Console 工具完成发布前收口。
+- UI 可读性与界面尺寸调整完成跨平台验证准备。
+- CI、版本一致性、发布前置检查与数据安全防护强化。
+
 ## v1.6.2
 
 ### 新功能与优化
