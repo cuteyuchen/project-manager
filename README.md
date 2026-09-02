@@ -1,6 +1,6 @@
 # Project Manager
 
-当前版本：`v1.6.2`
+当前版本：`v1.7.0`
 
 一个现代化的跨平台项目管理工具，聚合了项目运行、Git 管理、Node 版本管理、项目文件整理与系统集成功能。  
 桌面端基于 `Tauri v2 + Vue 3 + TypeScript` 构建，同时提供 `uTools` / `ZTools` 插件版本。

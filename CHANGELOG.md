@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.7.0 - 2026-09-02
+
 ### R4.0 发布准备
 
 - Project Explorer 与编辑器体验持续收紧。
