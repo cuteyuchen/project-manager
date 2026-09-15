@@ -228,7 +228,7 @@ sudo apt install ./Project.Manager_1.6.2_amd64.deb
 
 后续版本可直接在应用内完成更新，无需通过 Ubuntu 软件中心打开本地 deb。
 
-### v1.8.0
+### v1.7.1
 
 **新功能**
 

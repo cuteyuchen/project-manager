@@ -2506,6 +2506,7 @@ mod tests {
     use super::IMAGE_SIDE_MAX_SIZE;
     use std::fs;
     use std::path::{Path, PathBuf};
+    use std::process::{Command, Stdio};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     /***********************测试仓库辅助函数*********************/
@@ -3003,6 +3004,35 @@ mod tests {
 
     /***********************自己的提交按身份与日期过滤*********************/
 
+    /// 用环境变量固定 author/committer，避免本机全局 git 身份或 `-c` 解析差异干扰测试。
+    fn run_git_with_identity(
+        path: &str,
+        args: &[&str],
+        name: &str,
+        email: &str,
+    ) -> Result<String, String> {
+        let output = Command::new("git")
+            .current_dir(path)
+            .arg("-c")
+            .arg("core.quotePath=false")
+            .args(args)
+            .env("GIT_AUTHOR_NAME", name)
+            .env("GIT_AUTHOR_EMAIL", email)
+            .env("GIT_COMMITTER_NAME", name)
+            .env("GIT_COMMITTER_EMAIL", email)
+            .env("LANG", "en_US.UTF-8")
+            .env("LC_ALL", "en_US.UTF-8")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| format!("Failed to execute git: {}", e))?;
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr).to_string())
+        }
+    }
+
     #[test]
     fn git_own_commits_filters_author_and_date_range() {
         let repo_dir = create_temp_repo_dir();
@@ -3012,52 +3042,46 @@ mod tests {
 
         write_file(&repo_dir, "mine.txt", "mine\n");
         run_git(&repo_path, &["add", "."]).expect("git add should succeed");
-        run_git(
+        run_git_with_identity(
             &repo_path,
             &[
-                "-c",
-                "user.name=Project Manager Test",
-                "-c",
-                "user.email=test@example.com",
                 "commit",
                 "--date=2026-07-09T09:05:00+08:00",
                 "-m",
                 "mine in range",
             ],
+            "Project Manager Test",
+            "test@example.com",
         )
         .expect("own commit should succeed");
 
         write_file(&repo_dir, "other.txt", "other\n");
         run_git(&repo_path, &["add", "."]).expect("git add should succeed");
-        run_git(
+        run_git_with_identity(
             &repo_path,
             &[
-                "-c",
-                "user.name=Other Author",
-                "-c",
-                "user.email=other@example.com",
                 "commit",
                 "--date=2026-07-10T09:05:00+08:00",
                 "-m",
                 "other author",
             ],
+            "Other Author",
+            "other@example.com",
         )
         .expect("other author commit should succeed");
 
         write_file(&repo_dir, "old.txt", "old\n");
         run_git(&repo_path, &["add", "."]).expect("git add should succeed");
-        run_git(
+        run_git_with_identity(
             &repo_path,
             &[
-                "-c",
-                "user.name=Project Manager Test",
-                "-c",
-                "user.email=test@example.com",
                 "commit",
                 "--date=2026-06-30T23:59:00+08:00",
                 "-m",
                 "mine out of range",
             ],
+            "Project Manager Test",
+            "test@example.com",
         )
         .expect("out of range commit should succeed");
 
