@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onActivated, onBeforeUnmount, onDeactivated, ref } from 'vue';
+import { computed, onActivated, onBeforeUnmount, onDeactivated, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import type { Project } from '../../types';
 import { api } from '../../api';
@@ -7,10 +7,21 @@ import { useGitStore } from '../../stores/git';
 import { useSettingsStore } from '../../stores/settings';
 import { useWorkspaceEditorStore, type WorkspaceDocument } from '../../stores/workspaceEditor';
 import { joinAbsolutePath } from '../../utils/workspacePath';
+import {
+  isEmptyLineMarkers,
+  mergeLineMarkers,
+  parseUnifiedDiffLineMarkers,
+  toDisplayLineMarkers,
+  type EditorLineMarkers,
+} from '../../utils/editorGitMarkers';
 import LightweightEditor from './LightweightEditor.vue';
 import ImageDocumentView from './ImageDocumentView.vue';
+import WorkspaceSearchModal, { type WorkspaceSearchMode } from './WorkspaceSearchModal.vue';
+import { useI18n } from 'vue-i18n';
+import { fileKind } from '../../utils/fileTypes';
 
 const props = defineProps<{ project: Project }>();
+const { t } = useI18n();
 const editorStore = useWorkspaceEditorStore();
 const gitStore = useGitStore();
 const settingsStore = useSettingsStore();
@@ -73,6 +84,7 @@ function queueGitRefresh(): void {
     if (await gitStore.checkGitRepo(props.project.id, props.project.path, { force: true })) {
       await gitStore.ensureSummaryAndStatus(props.project.id, props.project.path, { force: true });
     }
+    queueGitLineMarkers(0);
   }, 400);
 }
 
@@ -200,16 +212,116 @@ function unbindFocusListener(): void {
 
 onActivated(() => {
   bindFocusListener();
+  window.addEventListener('keydown', handleEditorKeydown, true);
+  queueGitLineMarkers(120);
 });
 
 onDeactivated(() => {
   unbindFocusListener();
+  window.removeEventListener('keydown', handleEditorKeydown, true);
+  searchOpen.value = false;
 });
 
 onBeforeUnmount(() => {
   unbindFocusListener();
+  window.removeEventListener('keydown', handleEditorKeydown, true);
   if (gitRefreshTimer) clearTimeout(gitRefreshTimer);
+  if (gitMarkersTimer) clearTimeout(gitMarkersTimer);
 });
+
+/***********************Git 修改行标记*********************/
+const gitLineMarkers = ref<EditorLineMarkers | null>(null);
+let gitMarkersTimer: ReturnType<typeof setTimeout> | null = null;
+let gitMarkersToken = 0;
+
+async function refreshGitLineMarkers(): Promise<void> {
+  const document = activeDocument.value;
+  gitLineMarkers.value = null;
+  if (!document || document.kind !== 'text' || document.loading || document.error || document.largeFile) return;
+
+  const isRepo = await gitStore.checkGitRepo(props.project.id, props.project.path);
+  if (!isRepo) return;
+
+  const token = ++gitMarkersToken;
+  try {
+    // 直接读 diff，不写入 git 选中桶，避免污染 Diff 页状态
+    const [unstaged, staged] = await Promise.all([
+      api.gitDiff(props.project.path, document.relativePath, false).catch(() => ''),
+      api.gitDiff(props.project.path, document.relativePath, true).catch(() => ''),
+    ]);
+    if (token !== gitMarkersToken) return;
+    // unstaged 与 staged 行号坐标系不完全一致，合并结果为近似显示
+    // deleted 存「删除块前一行」，编辑器画在两行之间
+    const display = toDisplayLineMarkers(mergeLineMarkers(
+      parseUnifiedDiffLineMarkers(unstaged),
+      parseUnifiedDiffLineMarkers(staged),
+    ));
+    gitLineMarkers.value = isEmptyLineMarkers(display) ? null : display;
+  } catch {
+    if (token === gitMarkersToken) gitLineMarkers.value = null;
+  }
+}
+
+function queueGitLineMarkers(delay = 350): void {
+  if (gitMarkersTimer) clearTimeout(gitMarkersTimer);
+  gitMarkersTimer = setTimeout(() => {
+    gitMarkersTimer = null;
+    void refreshGitLineMarkers();
+  }, delay);
+}
+
+watch(
+  () => [props.project.id, activeDocument.value?.relativePath, activeDocument.value?.loading, activeDocument.value?.dirty],
+  () => queueGitLineMarkers(80),
+  { immediate: true },
+);
+
+/***********************快捷搜索（文件 / 全文）*********************/
+const searchOpen = ref(false);
+const searchMode = ref<WorkspaceSearchMode>('files');
+const revealLine = ref<number | undefined>(undefined);
+
+function openSearch(mode: WorkspaceSearchMode): void {
+  searchMode.value = mode;
+  searchOpen.value = true;
+}
+
+function closeSearch(): void {
+  searchOpen.value = false;
+}
+
+async function openSearchResult(relativePath: string, line?: number): Promise<void> {
+  try {
+    if (fileKind(relativePath) === 'binary') {
+      await api.openPath(joinAbsolutePath(props.project.path, relativePath));
+      return;
+    }
+    revealLine.value = line;
+    await editorStore.openFile(props.project, relativePath);
+  } catch (error) {
+    ElMessage.error(String(error));
+  }
+}
+
+function handleEditorKeydown(event: KeyboardEvent): void {
+  const mod = event.ctrlKey || event.metaKey;
+  if (!mod) return;
+  // 在可编辑控件里不抢快捷键，避免覆盖资源管理器重命名等输入
+  const target = event.target as HTMLElement | null;
+  if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+    return;
+  }
+  // CodeMirror 内也会收到；在 capture 阶段抢先，避免与 CM 搜索冲突
+  if (event.key.toLowerCase() === 'p' && !event.shiftKey) {
+    event.preventDefault();
+    event.stopPropagation();
+    openSearch('files');
+  } else if (event.key.toLowerCase() === 'f' && event.shiftKey) {
+    event.preventDefault();
+    event.stopPropagation();
+    openSearch('content');
+  }
+}
 </script>
 
 <template>
@@ -229,6 +341,12 @@ onBeforeUnmount(() => {
           <span class="workspace-editor-close" title="关闭" @click.stop="documentForKey(key) && closeTab(documentForKey(key)!)">×</span>
         </button>
       </div>
+      <button type="button" class="editor-action-btn" :title="t('editor.searchFilesTitle')" @click="openSearch('files')">
+        <div class="i-mdi-file-find-outline" />
+      </button>
+      <button type="button" class="editor-action-btn" :title="t('editor.searchContentTitle')" @click="openSearch('content')">
+        <div class="i-mdi-text-search" />
+      </button>
       <button type="button" class="editor-action-btn" :disabled="saveBusy" title="保存当前文件" @click="saveCurrent">
         <div class="i-mdi-content-save-outline" />
       </button>
@@ -282,10 +400,20 @@ onBeforeUnmount(() => {
         :language="activeDocument.language"
         :read-only="activeDocument.readOnly || !!activeDocument.missing"
         :dark="isDark"
+        :line-markers="gitLineMarkers"
+        :initial-line="revealLine"
         @update:model-value="editorStore.updateContent(props.project.id, activeDocument.relativePath, $event)"
         @save="saveCurrent"
       />
     </template>
+    <WorkspaceSearchModal
+      :project="project"
+      :mode="searchMode"
+      :open="searchOpen"
+      @close="closeSearch"
+      @open-file="openSearchResult"
+      @replaced="queueGitLineMarkers(0)"
+    />
   </div>
 </template>
 

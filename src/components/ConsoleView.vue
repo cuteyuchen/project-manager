@@ -555,8 +555,9 @@ function handleStop(): void {
 
 function handleRerun(): void {
     const command = activeScript.value ? parseProjectCommandKey(activeScript.value) : null;
-    const session = currentSession.value;
-    if (!command || !session || isRunSessionActive(session.status)) return;
+    if (!command) return;
+    // 会话可能已被清理；只要命令仍在，就允许重新运行
+    if (currentSession.value && isRunSessionActive(currentSession.value.status)) return;
     if (command.type === 'custom') void projectStore.runCustomCommand(activeProject.value, command.id);
     else void projectStore.runProject(activeProject.value, command.id);
 }
@@ -677,8 +678,13 @@ onBeforeUnmount(() => {
                     </button>
                 </div>
             </div>
-            <div v-if="!currentSession" class="flex items-center justify-end px-3 py-1.5">
-                <button class="console-header-command" type="button" :title="t('dashboard.runHistory')" @click="openHistory()"><div class="i-mdi-history text-sm" />{{ t('dashboard.runHistory') }}</button>
+            <div v-if="!currentSession" class="flex items-center justify-between gap-2 px-3 py-1.5">
+                <span v-if="activeScript" class="app-text-meta text-slate-400 dark:text-slate-500 truncate min-w-0">{{ getTabLabel(activeScript) }}</span>
+                <span v-else />
+                <div class="flex items-center gap-1.5 shrink-0">
+                    <button v-if="activeScript" class="console-rerun-command" type="button" :title="t('dashboard.rerun')" @click="handleRerun"><div class="i-mdi-restart text-xs" /><span class="hidden sm:inline">{{ t('dashboard.rerun') }}</span></button>
+                    <button class="console-header-command" type="button" :title="t('dashboard.runHistory')" @click="openHistory()"><div class="i-mdi-history text-sm" />{{ t('dashboard.runHistory') }}</button>
+                </div>
             </div>
         </div>
 
@@ -694,9 +700,9 @@ onBeforeUnmount(() => {
             <div class="console-header-actions shrink-0">
                 <button class="app-icon-btn !h-6 !min-w-6 !rounded" :title="t('dashboard.searchLogs')" @click="openSearch"><div class="i-mdi-magnify text-sm" /></button>
                 <button class="console-header-command" type="button" :title="t('dashboard.runHistory')" @click="openHistory()"><div class="i-mdi-history text-sm" /><span class="hidden sm:inline">{{ t('dashboard.runHistory') }}</span></button>
-                <button v-if="currentSession.status === 'starting' || currentSession.status === 'running'" class="console-stop-command" type="button" @click="handleStop"><div class="i-mdi-stop text-xs" /><span class="hidden sm:inline">{{ t('dashboard.stop') }}</span></button>
-                <button v-else-if="currentSession.status === 'stopping'" class="console-status-command" type="button" disabled><div class="i-mdi-loading animate-spin text-xs" /><span class="hidden sm:inline">{{ t('dashboard.runStatusStopping') }}</span></button>
-                <button v-else class="console-rerun-command" type="button" @click="handleRerun"><div class="i-mdi-restart text-xs" /><span class="hidden sm:inline">{{ t('dashboard.rerun') }}</span></button>
+                <button v-if="currentSession && (currentSession.status === 'starting' || currentSession.status === 'running')" class="console-stop-command" type="button" @click="handleStop"><div class="i-mdi-stop text-xs" /><span class="hidden sm:inline">{{ t('dashboard.stop') }}</span></button>
+                <button v-else-if="currentSession && currentSession.status === 'stopping'" class="console-status-command" type="button" disabled><div class="i-mdi-loading animate-spin text-xs" /><span class="hidden sm:inline">{{ t('dashboard.runStatusStopping') }}</span></button>
+                <button v-else class="console-rerun-command" type="button" :disabled="!activeScript" :title="t('dashboard.rerun')" @click="handleRerun"><div class="i-mdi-restart text-xs" /><span class="hidden sm:inline">{{ t('dashboard.rerun') }}</span></button>
                 <el-dropdown trigger="click" @command="handleMoreCommand">
                     <button class="app-icon-btn !h-6 !min-w-6 !rounded" :title="t('dashboard.moreActions')" type="button"><div class="i-mdi-dots-horizontal text-sm" /></button>
                     <template #dropdown>

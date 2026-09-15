@@ -625,9 +625,8 @@ onUnmounted(() => {
 <style scoped>
 .workspace-project-explorer {
   container-type: inline-size;
-  background: color-mix(in srgb, var(--app-surface-sidebar) 78%, transparent);
-  backdrop-filter: blur(14px) saturate(115%);
-  -webkit-backdrop-filter: blur(14px) saturate(115%);
+  /* 与右侧编辑区同为实色 surface，避免半透明玻璃造成左右割裂 */
+  background: var(--app-surface);
   color: var(--app-text-secondary);
   user-select: none;
   -webkit-user-select: none;
@@ -663,9 +662,7 @@ onUnmounted(() => {
 }
 .explorer-header {
   min-height: 38px;
-  background: color-mix(in srgb, var(--app-surface-soft) 86%, transparent);
-  backdrop-filter: blur(14px) saturate(115%);
-  -webkit-backdrop-filter: blur(14px) saturate(115%);
+  background: var(--app-surface-soft);
 }
 .explorer-title {
   flex: 1 1 auto;

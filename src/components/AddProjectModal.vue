@@ -151,14 +151,6 @@ function toggleQuickCommand(command: ProjectQuickCommand): void {
   form.value.quickCommands = [...form.value.quickCommands, command];
 }
 
-function moveQuickCommand(index: number, direction: -1 | 1): void {
-  const nextIndex = index + direction;
-  if (nextIndex < 0 || nextIndex >= form.value.quickCommands.length) return;
-  const commands = [...form.value.quickCommands];
-  [commands[index], commands[nextIndex]] = [commands[nextIndex], commands[index]];
-  form.value.quickCommands = commands;
-}
-
 function syncQuickCommands(useDefault = false): void {
   const current = form.value.quickCommands;
   form.value.quickCommands = normalizeProjectQuickCommands(
@@ -818,6 +810,7 @@ async function cancelClone() {
     :show-close="!loading"
     destroy-on-close
     align-center
+    append-to-body
     class="project-modal"
   >
     <el-form label-position="top" :model="form" class="project-form">
@@ -1047,35 +1040,22 @@ async function cancelClone() {
 
       <el-form-item v-if="availableQuickCommands.length > 0" :label="t('project.quickCommandsTitle')">
         <div class="quick-command-config w-full">
-          <p class="app-text-meta text-slate-500 dark:text-slate-400 mb-3">{{ t('project.quickCommandsHint') }}</p>
+          <p class="app-text-meta text-slate-500 dark:text-slate-400 mb-2">{{ t('project.quickCommandsHint') }}</p>
           <div v-if="selectedQuickCommands.length > 0" class="quick-command-selected">
             <div
-              v-for="(command, index) in selectedQuickCommands"
+              v-for="command in selectedQuickCommands"
               :key="`${command.type}:${command.id}`"
               class="quick-command-selected-item"
             >
-              <div class="flex min-w-0 items-center gap-2">
-                <div class="i-mdi-play-circle-outline text-blue-500 text-sm" />
-                <span class="truncate">{{ getQuickCommandLabel(command) }}</span>
-              </div>
-              <div class="flex items-center gap-1 shrink-0">
-                <button
-                  class="quick-command-order-btn"
-                  :disabled="index === 0"
-                  :title="t('project.moveQuickCommandUp')"
-                  @click="moveQuickCommand(index, -1)"
-                >
-                  <div class="i-mdi-chevron-up" />
-                </button>
-                <button
-                  class="quick-command-order-btn"
-                  :disabled="index === selectedQuickCommands.length - 1"
-                  :title="t('project.moveQuickCommandDown')"
-                  @click="moveQuickCommand(index, 1)"
-                >
-                  <div class="i-mdi-chevron-down" />
-                </button>
-              </div>
+              <span class="i-mdi-play-circle-outline text-blue-500 text-xs shrink-0" />
+              <span class="truncate max-w-[160px]">{{ getQuickCommandLabel(command) }}</span>
+              <button
+                class="quick-command-order-btn is-remove"
+                :title="t('common.delete')"
+                @click="toggleQuickCommand(command)"
+              >
+                <div class="i-mdi-close" />
+              </button>
             </div>
           </div>
           <div class="quick-command-options">
@@ -1088,9 +1068,8 @@ async function cancelClone() {
               @click="toggleQuickCommand(command)"
             >
               <span class="truncate">{{ getQuickCommandLabel(command) }}</span>
-              <span class="quick-command-type">{{ command.type === 'script' ? t('project.quickCommandScript') : t('project.quickCommandCustom') }}</span>
               <div
-                class="text-sm"
+                class="text-sm shrink-0"
                 :class="isQuickCommandSelected(command) ? 'i-mdi-checkbox-marked-circle text-blue-500' : 'i-mdi-checkbox-blank-circle-outline text-slate-300 dark:text-slate-500'"
               />
             </button>
@@ -1211,20 +1190,39 @@ async function cancelClone() {
   border-radius: var(--app-radius-md);
   background: var(--app-surface-soft);
 }
-.quick-command-selected,
-.quick-command-options {
-  display: grid;
-  gap: 6px;
-}
+/* 已选命令：横向标签流，不再一行一条 */
 .quick-command-selected {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   margin-bottom: 10px;
 }
-.quick-command-selected-item,
+.quick-command-selected-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-height: 30px;
+  padding: 3px 6px 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--app-primary) 28%, transparent);
+  border-radius: 999px;
+  background: var(--app-surface);
+  color: var(--app-text);
+  font-size: var(--app-font-control);
+  line-height: var(--app-line-height-control);
+}
+/* 可选命令：多列网格，与 scripts 可见性一致 */
+.quick-command-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 6px;
+}
 .quick-command-option {
   display: flex;
+  width: 100%;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   min-height: 32px;
   padding: 5px 8px;
   border: 1px solid var(--app-border);
@@ -1232,13 +1230,6 @@ async function cancelClone() {
   font-size: var(--app-font-control);
   line-height: var(--app-line-height-control);
   text-align: left;
-}
-.quick-command-selected-item {
-  background: var(--app-surface);
-  color: var(--app-text);
-}
-.quick-command-option {
-  width: 100%;
   transition: background-color var(--app-duration-fast) var(--app-ease), border-color var(--app-duration-fast) var(--app-ease), color var(--app-duration-fast) var(--app-ease);
 }
 .quick-command-option-active {
@@ -1253,17 +1244,12 @@ async function cancelClone() {
 .quick-command-option:hover {
   border-color: color-mix(in srgb, var(--app-primary) 35%, transparent);
 }
-.quick-command-type {
-  flex-shrink: 0;
-  color: var(--app-text-muted);
-  font-size: var(--app-font-meta);
-}
 .quick-command-order-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   border: none;
   border-radius: var(--app-radius-sm);
   background: transparent;
@@ -1273,11 +1259,18 @@ async function cancelClone() {
   background: var(--app-primary-soft);
   color: var(--app-primary);
 }
+.quick-command-order-btn.is-remove:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--app-danger) 12%, transparent);
+  color: var(--app-danger);
+}
 .quick-command-order-btn:disabled {
   cursor: not-allowed;
   opacity: 0.35;
 }
+</style>
 
+<!-- append-to-body 后弹层挂到 body，对话框本体样式需使用非 scoped 选择器 -->
+<style>
 .project-modal {
   display: flex;
   width: min(700px, calc(100vw - 32px));
@@ -1286,7 +1279,7 @@ async function cancelClone() {
   overflow: hidden;
 }
 
-:deep(.project-modal .el-dialog__body) {
+.project-modal .el-dialog__body {
   flex: 1;
   min-height: 0;
   max-height: calc(90vh - 120px);
@@ -1294,7 +1287,7 @@ async function cancelClone() {
   padding-top: 12px;
 }
 
-:deep(.project-modal .el-dialog__footer) {
+.project-modal .el-dialog__footer {
   flex-shrink: 0;
   padding-top: 12px;
 }

@@ -78,8 +78,8 @@ function selectProject(project: Project): void {
 
 function editProject(): void {
   if (!props.project) return;
+  // 只打开编辑弹窗，不关闭快速管理弹窗，便于改完继续操作
   emit('edit', props.project);
-  visible.value = false;
 }
 </script>
 

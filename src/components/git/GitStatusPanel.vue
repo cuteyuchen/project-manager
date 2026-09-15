@@ -7,6 +7,10 @@ import type { Project, GitFileStatus } from '../../types';
 import { showPersistentGitError } from './message';
 import { api } from '../../api';
 import { useProjectExternalActions } from '../../composables/useProjectExternalActions';
+import { useProjectStore } from '../../stores/project';
+import { useWorkspaceEditorStore } from '../../stores/workspaceEditor';
+import { fileKind } from '../../utils/fileTypes';
+import { joinAbsolutePath } from '../../utils/workspacePath';
 import GitFileContextMenu from './GitFileContextMenu.vue';
 import {
   gitStatusSelectionKey,
@@ -27,6 +31,8 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const gitStore = useGitStore();
+const projectStore = useProjectStore();
+const editorStore = useWorkspaceEditorStore();
 const { resolveEditorPath } = useProjectExternalActions(() => props.project);
 
 const statusResult = computed(() => gitStore.getStatus(props.project.id));
@@ -165,6 +171,21 @@ async function viewDiff(file: GitFileStatus) {
     await gitStore.getDiff(props.project.id, props.project.path, file.path, file.staged, file.old_path);
   } catch (e) {
     showPersistentGitError(t('git.diffLoadFailed', { error: String(e) }));
+  }
+}
+
+/** 双击文件跳到应用内编辑器；与资源管理器打开行为对齐 */
+async function openInEditor(file: GitFileStatus) {
+  try {
+    if (fileKind(file.path) === 'binary') {
+      await api.openPath(joinAbsolutePath(props.project.path, file.path));
+      return;
+    }
+    const opening = editorStore.openFile(props.project, file.path);
+    projectStore.requestRightTab('editor', props.project.id);
+    await opening;
+  } catch (e) {
+    showPersistentGitError(String(e));
   }
 }
 
@@ -548,6 +569,7 @@ async function handleBatchDiscard() {
             class="git-scm-file-row"
             :class="{ 'is-selected': isFileSelected(file, 'staged') }"
             @click="handleFileClick($event, file, 'staged')"
+            @dblclick="openInEditor(file)"
             @contextmenu="handleFileContextMenu($event, file, 'staged')"
           >
             <span class="git-scm-file-status" :class="`is-${file.status}`">{{ statusIcon(file.status) }}</span>
@@ -586,6 +608,7 @@ async function handleBatchDiscard() {
               class="git-scm-file-row"
               :class="{ 'is-selected': isFileSelected(file, 'conflicted') }"
               @click="handleFileClick($event, file, 'conflicted')"
+              @dblclick="openInEditor(file)"
               @contextmenu="handleFileContextMenu($event, file, 'conflicted')"
             >
               <span class="git-scm-file-status is-conflicted">C</span>
@@ -642,6 +665,7 @@ async function handleBatchDiscard() {
             class="git-scm-file-row"
             :class="{ 'is-selected': isFileSelected(file, 'unstaged') }"
             @click="handleFileClick($event, file, 'unstaged')"
+            @dblclick="openInEditor(file)"
             @contextmenu="handleFileContextMenu($event, file, 'unstaged')"
           >
             <span class="git-scm-file-status" :class="`is-${file.status}`">{{ statusIcon(file.status) }}</span>

@@ -1,4 +1,4 @@
-﻿export default {
+export default {
   common: {
     title: '项目管理器',
     add: '添加',
@@ -786,7 +786,7 @@
     },
     customCommands: '自定义命令',
     quickCommandsTitle: '一级页快捷运行',
-    quickCommandsHint: '选择并排序一级项目页显示的快捷命令，最多选择 3 个。',
+    quickCommandsHint: '选择一级项目页显示的快捷命令，最多选择 3 个。',
     quickCommandsMax: '一级页快捷命令最多选择 3 个',
     quickCommandScript: '脚本',
     quickCommandCustom: '自定义',
@@ -1162,5 +1162,26 @@
     batchUnstage: '批量取消暂存',
     batchDiscard: '批量丢弃',
     clearSelection: '清除选择',
+  },
+  editor: {
+    search: '搜索',
+    searchFiles: '快速打开文件',
+    searchContent: '全局搜索内容',
+    searchFilesPlaceholder: '输入文件名或路径…',
+    searchContentPlaceholder: '输入要搜索的字符串…',
+    searchIndexing: '索引中…',
+    searchTypeToStart: '输入关键字开始搜索',
+    searchNoResults: '无匹配结果',
+    searchTruncated: '结果已截断，可输入更精确的关键字',
+    searchNavigate: '上下选择',
+    searchOpen: '打开',
+    searchClose: '关闭',
+    searchFilesTitle: '快速打开文件 (Ctrl+P)',
+    searchContentTitle: '全局搜索 (Ctrl+Shift+F)',
+    replacePlaceholder: '替换为…',
+    replaceAll: '全部替换',
+    replaceAllConfirm: '将在 {files} 个文件中替换 {count} 处匹配，确定继续？',
+    replaceAllDone: '已在 {files} 个文件中替换 {count} 处',
+    matchCount: '{matches} 处匹配 · {files} 个文件',
   }
 }
