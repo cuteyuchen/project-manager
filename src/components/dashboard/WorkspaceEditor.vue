@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import type { Project } from '../../types';
 import { api } from '../../api';
 import { useGitStore } from '../../stores/git';
+import { useProjectStore } from '../../stores/project';
 import { useSettingsStore } from '../../stores/settings';
 import { useWorkspaceEditorStore, type WorkspaceDocument } from '../../stores/workspaceEditor';
 import { joinAbsolutePath } from '../../utils/workspacePath';
@@ -22,6 +23,7 @@ import { fileKind } from '../../utils/fileTypes';
 
 const props = defineProps<{ project: Project }>();
 const { t } = useI18n();
+const projectStore = useProjectStore();
 const editorStore = useWorkspaceEditorStore();
 const gitStore = useGitStore();
 const settingsStore = useSettingsStore();
@@ -297,7 +299,10 @@ async function openSearchResult(relativePath: string, line?: number): Promise<vo
       return;
     }
     revealLine.value = line;
-    await editorStore.openFile(props.project, relativePath);
+    const opening = editorStore.openFile(props.project, relativePath);
+    projectStore.requestRightTab('editor', props.project.id);
+    projectStore.requestExplorerReveal(props.project.id, relativePath);
+    await opening;
   } catch (error) {
     ElMessage.error(String(error));
   }

@@ -440,6 +440,7 @@ function onWindowKeydown(event: KeyboardEvent): void {
                 :class="{ 'is-active': index === selectedIndex }"
                 @mouseenter="selectRow(index)"
                 @click="openRow(index)"
+                @dblclick="openSelectedInEditor"
               >
                 <div class="i-mdi-file-search-outline ws-search-row-icon" />
                 <div class="ws-search-row-main">

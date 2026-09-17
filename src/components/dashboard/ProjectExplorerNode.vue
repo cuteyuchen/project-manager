@@ -165,6 +165,11 @@ async function toggle(): Promise<void> {
   if (next) await loadEntries();
 }
 
+// reveal 时可能对已挂载但未展开过的节点直接 setExplorerExpanded
+watch(expanded, (open) => {
+  if (open) void loadEntries();
+});
+
 function selectProject(): void {
   emit('selectProject', props.project);
 }

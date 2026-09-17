@@ -189,6 +189,53 @@ function selectFile(project: Project, relativePath: string): void {
   selectedFileKey.value = `${project.id}:${relativePath}`;
 }
 
+/** 沿路径展开项目与目录节点，便于 reveal 选中 */
+function expandPathForReveal(projectId: string, relativePath: string): void {
+  const rootKey = workspaceRootKey.value;
+  // 展开从根到目标项目的祖先链
+  let current: Project | undefined = projectById(projectId) || undefined;
+  const chain: Project[] = [];
+  while (current && chain.length < 16) {
+    chain.unshift(current);
+    current = current.parentId ? projectById(current.parentId) || undefined : undefined;
+  }
+  for (const node of chain) {
+    setExplorerExpanded(rootKey, `project:${node.id}`, true);
+  }
+  // 展开目标文件所在目录前缀
+  const parts = relativePath.replace(/\\/g, '/').split('/').filter(Boolean);
+  let acc = '';
+  for (let i = 0; i < parts.length - 1; i += 1) {
+    acc = acc ? `${acc}/${parts[i]}` : parts[i];
+    setExplorerExpanded(rootKey, `dir:${projectId}:${acc}`, true);
+  }
+}
+
+async function applyExplorerReveal(projectId: string, relativePath: string): Promise<void> {
+  const target = projectById(projectId);
+  if (!target) return;
+  if (target.id !== props.selectedProjectId) emit('selectProject', target);
+  expandPathForReveal(projectId, relativePath);
+  selectFile(target, relativePath);
+  // 展开会触发多层异步 readDir，多等几帧再滚入视野
+  for (let i = 0; i < 6; i += 1) {
+    await nextTick();
+    await new Promise(resolve => setTimeout(resolve, 30));
+    const tree = document.querySelector('.workspace-project-explorer .explorer-tree');
+    const row = tree?.querySelector<HTMLElement>('.explorer-row.is-selected');
+    if (row) {
+      row.scrollIntoView({ block: 'nearest' });
+      return;
+    }
+  }
+}
+
+watch(() => projectStore.requestedRevealToken, () => {
+  const request = projectStore.consumeExplorerReveal();
+  if (!request) return;
+  void applyExplorerReveal(request.projectId, request.relativePath);
+});
+
 async function openFile(project: Project, relativePath: string): Promise<void> {
   selectProject(project);
   selectFile(project, relativePath);

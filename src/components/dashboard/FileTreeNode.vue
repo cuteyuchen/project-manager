@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import type { GitFileStatus, Project } from '../../types';
 import { api } from '../../api';
@@ -99,6 +99,11 @@ async function loadChildren(): Promise<void> {
     loading.value = false;
   }
 }
+
+// reveal 展开时节点可能已挂载但未加载过子目录
+watch(expanded, (open) => {
+  if (open) void loadChildren();
+});
 
 async function toggle(): Promise<void> {
   if (!props.entry.isDirectory) return;

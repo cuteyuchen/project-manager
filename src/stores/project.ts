@@ -54,6 +54,10 @@ export const useProjectStore = defineStore('project', () => {
   const requestedRightTab = ref<WorkspaceTab | null>(null);
   const requestedRightTabProjectId = ref<string | null>(null);
   const requestedRightTabToken = ref(0);
+  /** 资源管理器定位请求：展开目录并选中文件 */
+  const requestedRevealProjectId = ref<string | null>(null);
+  const requestedRevealRelativePath = ref<string | null>(null);
+  const requestedRevealToken = ref(0);
   const requestedConsoleHistoryProjectId = ref<string | null>(null);
   const requestedConsoleHistoryId = ref<string | null>(null);
   const requestedConsoleHistoryToken = ref(0);
@@ -575,6 +579,22 @@ export const useProjectStore = defineStore('project', () => {
     requestedRightTabToken.value += 1;
   }
 
+  /** 请求左侧资源管理器定位并选中文件（用于搜索结果打开等） */
+  function requestExplorerReveal(projectId: string, relativePath: string): void {
+    requestedRevealProjectId.value = projectId;
+    requestedRevealRelativePath.value = relativePath;
+    requestedRevealToken.value += 1;
+  }
+
+  function consumeExplorerReveal(): { projectId: string; relativePath: string } | null {
+    const projectId = requestedRevealProjectId.value;
+    const relativePath = requestedRevealRelativePath.value;
+    if (!projectId || !relativePath) return null;
+    requestedRevealProjectId.value = null;
+    requestedRevealRelativePath.value = null;
+    return { projectId, relativePath };
+  }
+
   function requestConsoleHistory(projectId: string, historyId?: string): void {
     requestedConsoleHistoryProjectId.value = projectId;
     requestedConsoleHistoryId.value = historyId || null;
@@ -1094,6 +1114,9 @@ export const useProjectStore = defineStore('project', () => {
     requestedRightTab,
     requestedRightTabProjectId,
     requestedRightTabToken,
+    requestedRevealToken,
+    requestExplorerReveal,
+    consumeExplorerReveal,
     addProject,
     updateProject,
     removeProject,
