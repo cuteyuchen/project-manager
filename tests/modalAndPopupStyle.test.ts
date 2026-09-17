@@ -15,5 +15,13 @@ assert(/<div class="flex h-full">/.test(titleBar), '窗口控制按钮组应始�
 assert(/app-shell-with-titlebar/.test(read('src/App.vue')), '桌面应用壳层应标记自定义标题栏');
 assert(/body:has\(\.app-shell-with-titlebar\) \.el-overlay\s*\{[\s\S]*top:\s*var\(--app-titlebar-height\)[\s\S]*height:\s*calc\(100% - var\(--app-titlebar-height\)\)/.test(theme), 'Dialog overlay 应从标题栏底部开始铺设');
 assert(/body:has\(\.app-shell-with-titlebar\) \.el-overlay-dialog\s*\{[\s\S]*position:\s*absolute[\s\S]*padding-top:\s*0/.test(theme), 'Dialog 应在 overlay 剩余区域内居中');
+assert(
+  /body:has\(\.project-management-dialog\) \.el-overlay:has\(\.project-modal\)\s*\{[\s\S]*z-index:\s*3000\s*!important/.test(theme),
+  '管理弹窗叠编辑项目弹窗时应抬高编辑弹窗 overlay',
+);
+assert(
+  /body:has\(\.project-management-dialog\) \.el-select__popper\.el-popper\s*\{[\s\S]*z-index:\s*3001\s*!important/.test(theme),
+  '编辑项目弹窗抬高后内部 select 下拉必须盖过弹窗本体',
+);
 
 console.log('modal and popup style tests passed');

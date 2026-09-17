@@ -908,6 +908,15 @@ body:has(.project-management-dialog) .el-overlay:has(.project-modal) {
   z-index: 3000 !important;
 }
 
+/*
+ * 编辑项目弹窗被抬到 3000 后，内部 el-select 的 popper 仍是 Element Plus
+ * 打开时动态分配的更低 z-index，下拉列表会被弹窗本体盖住。
+ * 在叠层场景把 select 弹层一并抬到编辑弹窗之上。
+ */
+body:has(.project-management-dialog) .el-select__popper.el-popper {
+  z-index: 3001 !important;
+}
+
 .install-node-dialog {
   width: min(600px, calc(100vw - 32px)) !important;
   max-height: 90vh;
