@@ -15,6 +15,7 @@ import ProjectMemo from '../ProjectMemo.vue';
 import FrontendEnvPanel from '../FrontendEnvPanel.vue';
 import WorkspaceEditor from './WorkspaceEditor.vue';
 import { getRunnableProjectScripts } from '../../utils/projectCommands';
+import { createFrameScheduler } from '../../utils/frameScheduler.ts';
 
 const KEEP_ALIVE_MAX = 15;
 
@@ -174,13 +175,27 @@ const gitChangesCount = computed(() => {
 const tabScrollContainer = useTemplateRef<HTMLElement>('tabScrollContainer');
 const canScrollLeft = ref(false);
 const canScrollRight = ref(false);
+let tabResizeObserver: ResizeObserver | null = null;
 
 function checkTabOverflow(): void {
   const element = tabScrollContainer.value;
   if (!element) return;
-  canScrollLeft.value = element.scrollLeft > 0;
-  canScrollRight.value = element.scrollLeft + element.clientWidth < element.scrollWidth - 1;
+  // 比较后再写，避免无意义的 reactive 触发
+  const nextCanScrollLeft = element.scrollLeft > 0;
+  const nextCanScrollRight = element.scrollLeft + element.clientWidth < element.scrollWidth - 1;
+  if (nextCanScrollLeft !== canScrollLeft.value) canScrollLeft.value = nextCanScrollLeft;
+  if (nextCanScrollRight !== canScrollRight.value) canScrollRight.value = nextCanScrollRight;
 }
+
+/**
+ * 左右按钮 v-show 会挤占 tab 容器可用宽度；若在 ResizeObserver 回调内同步改按钮显隐，
+ * 可能与容器宽度形成同帧反馈。因此 RO 路径的测量结果延迟到下一 frame 再应用。
+ */
+const tabOverflowScheduler = createFrameScheduler<void>(
+  () => checkTabOverflow(),
+  (cb) => requestAnimationFrame(cb),
+  (id) => cancelAnimationFrame(id),
+);
 
 function scrollTabs(direction: 'left' | 'right'): void {
   const element = tabScrollContainer.value;
@@ -191,14 +206,17 @@ function scrollTabs(direction: 'left' | 'right'): void {
 onMounted(() => {
   void nextTick(checkTabOverflow);
   if (tabScrollContainer.value) {
-    const observer = new ResizeObserver(checkTabOverflow);
+    const observer = new ResizeObserver(() => tabOverflowScheduler.schedule());
     observer.observe(tabScrollContainer.value);
     tabResizeObserver = observer;
   }
 });
 
-let tabResizeObserver: ResizeObserver | null = null;
-onBeforeUnmount(() => tabResizeObserver?.disconnect());
+onBeforeUnmount(() => {
+  tabOverflowScheduler.cancel();
+  tabResizeObserver?.disconnect();
+  tabResizeObserver = null;
+});
 
 watch([activeProject, hasRunnableCommands, hasGitRepo, hasFrontendEnv, () => props.editorEnabled], () => {
   void nextTick(checkTabOverflow);

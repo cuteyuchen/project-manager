@@ -9,7 +9,8 @@ import { useProjectStore } from '../stores/project';
 import { useSettingsStore } from '../stores/settings';
 import { getNodeRuntimeId } from '../utils/nodeRuntime';
 import { groupNodeRuntimesByVersion, type NodeRuntimeGroup } from '../utils/nodeRuntimeGrouping';
-import { getRuntimeListMode, type NodeRuntimeListMode } from '../utils/nodeRuntimeLayout';
+import { resolveRuntimeListModeChange, type NodeRuntimeListMode } from '../utils/nodeRuntimeLayout.ts';
+import { createFrameScheduler } from '../utils/frameScheduler.ts';
 import { getProjectsUsingRuntime, type ProjectRuntimeUsage, type RuntimeUsageReason } from '../utils/nodeRuntimeUsage';
 import AddNodeModal from '../components/AddNodeModal.vue';
 import InstallNodeModal from '../components/InstallNodeModal.vue';
@@ -43,6 +44,20 @@ type RuntimeAction = 'project-manager-default' | 'system-node';
 const runtimeListPanel = ref<HTMLElement | null>(null);
 const runtimeListMode = ref<NodeRuntimeListMode>('table');
 let runtimeListResizeObserver: ResizeObserver | null = null;
+
+/**
+ * 模式切换会挂载/卸载 el-table 并改列宽，若在 ResizeObserver 回调内同步写入，
+ * 同一轮 delivery 中 Element Plus 内部 RO 可能再次触发布局，形成 undelivered notifications。
+ * 因此把「真正改布局」的 reactive 更新合并到下一 animation frame。
+ */
+const runtimeListModeScheduler = createFrameScheduler<number>(
+  (width) => {
+    const nextMode = resolveRuntimeListModeChange(width, runtimeListMode.value);
+    if (nextMode) runtimeListMode.value = nextMode;
+  },
+  (cb) => requestAnimationFrame(cb),
+  (id) => cancelAnimationFrame(id),
+);
 
 const sourceOrder: Array<'managed' | 'nvm' | 'custom'> = ['managed', 'nvm', 'custom'];
 
@@ -545,11 +560,17 @@ function handleRuntimeCommand(command: string, runtime: NodeVersion, group: Node
 }
 
 function updateRuntimeListMode(width = runtimeListPanel.value?.clientWidth || 0): void {
-  runtimeListMode.value = getRuntimeListMode(width);
+  runtimeListModeScheduler.schedule(width);
 }
 
 onMounted(() => {
-  updateRuntimeListMode();
+  // 首帧直接量宽并同步设置，避免列表初次渲染闪一下错误模式
+  const initialMode = resolveRuntimeListModeChange(
+    runtimeListPanel.value?.clientWidth || 0,
+    runtimeListMode.value,
+  );
+  if (initialMode) runtimeListMode.value = initialMode;
+
   if (runtimeListPanel.value && typeof ResizeObserver !== 'undefined') {
     runtimeListResizeObserver = new ResizeObserver(entries => {
       updateRuntimeListMode(entries[0]?.contentRect.width || runtimeListPanel.value?.clientWidth || 0);
@@ -560,6 +581,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  runtimeListModeScheduler.cancel();
   runtimeListResizeObserver?.disconnect();
   runtimeListResizeObserver = null;
 });
