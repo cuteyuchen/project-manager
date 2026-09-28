@@ -49,10 +49,9 @@ export function installGlobalErrorCapture(
   const limiter = createErrorRateLimiter();
 
   function capture(error: unknown, source: GlobalErrorSource): void {
-    // 浏览器 RO delivery 通知：不上报 UI、不占限流、不覆盖 latestCapturedError。
-    // 开发期仅留 debug 日志，便于排查布局反馈，但不打扰用户。
+    // 浏览器 RO delivery notification 不是应用异常：静默丢弃。
+    // 不上报 UI、不占限流、不覆盖 latestCapturedError、不写日志（含生产环境）。
     if (isResizeObserverDeliveryError(error, source)) {
-      console.debug(`[GlobalError:${source}]`, error);
       return;
     }
     if (!limiter.shouldReport(errorFingerprint(error))) return;
