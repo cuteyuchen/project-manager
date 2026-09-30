@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.7.3 - 2026-09-30
+
 ### 修复
 
 - 浏览器 ResizeObserver delivery notification 不再被当作应用异常弹出提示；Node Runtime 列表模式切换与项目管理页签溢出检测改为下一帧应用，避免同轮布局反馈。
