@@ -61,7 +61,11 @@ const phaseLabel = computed(() => t(`update.${props.phase || 'downloading'}`));
   position: fixed;
   right: 16px;
   bottom: 16px;
-  z-index: 3000;
+  /*
+   * 全局下载进度条 Teleport 到 body，必须高于项目弹窗叠层（3000/3001），
+   * 否则用户在弹窗内操作时看不到更新进度。
+   */
+  z-index: 4500;
   width: min(360px, calc(100vw - 32px));
 }
 

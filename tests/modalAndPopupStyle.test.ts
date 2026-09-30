@@ -24,4 +24,34 @@ assert(
   '编辑项目弹窗抬高后内部 select 下拉必须盖过弹窗本体',
 );
 
+const fileManager = read('src/components/FileManager.vue');
+assert(
+  /\.file-preview-overlay\s*\{[\s\S]*z-index:\s*4000/.test(fileManager),
+  '关联文件预览弹窗必须高于项目弹窗（叠层 3000）',
+);
+assert(
+  /\.file-context-menu\s*\{[\s\S]*z-index:\s*4000/.test(fileManager),
+  '文件右键菜单必须高于项目弹窗，避免被遮挡',
+);
+assert(
+  !/z-999/.test(fileManager),
+  '文件右键菜单不应再使用 z-999（低于项目弹窗 overlay）',
+);
+
+const gitHistory = read('src/components/git/GitHistory.vue');
+assert(
+  /\.git-history-ctx\s*\{[\s\S]*z-index:\s*4000/.test(gitHistory),
+  'Git 提交右键菜单必须高于项目弹窗 overlay',
+);
+assert(
+  !/z-50/.test(gitHistory),
+  'Git 提交右键菜单不应再使用 z-50（会被项目弹窗遮挡）',
+);
+
+const updateProgress = read('src/components/UpdateProgress.vue');
+assert(
+  /\.update-progress-panel\s*\{[\s\S]*z-index:\s*4500/.test(updateProgress),
+  '更新进度条必须高于项目弹窗叠层（3000/3001）',
+);
+
 console.log('modal and popup style tests passed');

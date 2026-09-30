@@ -799,7 +799,7 @@ function getFileIcon(entry: { name: string; isDirectory: boolean }) {
         <Teleport to="body">
             <div v-if="contextMenuVisible"
                 ref="contextMenuRef"
-                class="file-context-menu fixed z-999 min-w-[166px] overflow-hidden rounded-[13px] p-[4px] text-sm"
+                class="file-context-menu fixed min-w-[166px] overflow-hidden rounded-[13px] p-[4px] text-sm"
                 :style="contextMenuStyle">
                 <button @click="contextOpen"
                     class="menu-item w-full">
@@ -911,7 +911,11 @@ function getFileIcon(entry: { name: string; isDirectory: boolean }) {
 .file-preview-overlay {
   position: fixed;
   inset: 0;
-  z-index: 998;
+  /*
+   * 必须高于项目管理/编辑项目弹窗的 el-overlay（叠层时为 3000）。
+   * 与 GitFileContextMenu / WorkspaceSearchModal 的 body 顶层弹层同级。
+   */
+  z-index: 4000;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -943,6 +947,8 @@ function getFileIcon(entry: { name: string; isDirectory: boolean }) {
 }
 
 .file-context-menu {
+  /* 同样需要盖过项目弹窗，避免在管理弹窗内右键时菜单被遮住 */
+  z-index: 4000;
   border: 1px solid var(--app-border);
   background: var(--app-surface-raised);
   transform-origin: top left;

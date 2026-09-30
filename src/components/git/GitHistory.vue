@@ -634,7 +634,7 @@ watch(() => props.filePath, () => {
     <Teleport to="body">
       <div
         v-if="ctxMenu"
-        class="git-history-ctx app-text-control fixed z-50 min-w-44 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg py-1"
+        class="git-history-ctx app-text-control fixed min-w-44 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg py-1"
         ref="ctxMenuRef"
         :style="ctxMenuStyle"
         @mousedown.stop
@@ -689,6 +689,8 @@ watch(() => props.filePath, () => {
   text-overflow: ellipsis;
 }
 .git-history-ctx {
+  /* 提交右键菜单 Teleport 到 body，须盖过项目管理弹窗 overlay（~2000/叠层 3000） */
+  z-index: 4000;
   width: max-content;
   min-width: 220px;
   max-width: min(320px, calc(100vw - 16px));
