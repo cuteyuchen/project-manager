@@ -6,6 +6,7 @@ import { api } from '../api';
 import { useI18n } from 'vue-i18n';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { pinyin } from 'pinyin-pro';
+import { useOverlayZIndex } from '../composables/useOverlayZIndex';
 
 const { t, locale } = useI18n();
 const props = defineProps<{ project: Project }>();
@@ -36,6 +37,10 @@ const contextMenuRef = useTemplateRef<HTMLElement>('contextMenuRef');
 
 // File preview
 const previewVisible = ref(false);
+/***********************浮层层级*********************/
+const contextMenuZIndex = useOverlayZIndex(() => contextMenuVisible.value);
+const previewZIndex = useOverlayZIndex(() => previewVisible.value);
+
 const previewFile = ref<{ name: string; path: string; content: string; type: 'image' | 'text' | 'unsupported' } | null>(null);
 const fileListContainerRef = useTemplateRef<HTMLElement>('fileListContainerRef');
 const showBackToTop = ref(false);
@@ -800,7 +805,7 @@ function getFileIcon(entry: { name: string; isDirectory: boolean }) {
             <div v-if="contextMenuVisible"
                 ref="contextMenuRef"
                 class="file-context-menu fixed min-w-[166px] overflow-hidden rounded-[13px] p-[4px] text-sm"
-                :style="contextMenuStyle">
+                :style="[contextMenuStyle, { zIndex: contextMenuZIndex }]">
                 <button @click="contextOpen"
                     class="menu-item w-full">
                     <span class="menu-item__icon">
@@ -837,7 +842,7 @@ function getFileIcon(entry: { name: string; isDirectory: boolean }) {
 
         <!-- File Preview Dialog -->
         <Teleport to="body">
-            <div v-if="previewVisible" class="file-preview-overlay" @click.self="previewVisible = false">
+            <div v-if="previewVisible" class="file-preview-overlay" :style="{ zIndex: previewZIndex }" @click.self="previewVisible = false">
                 <div class="file-preview-dialog">
                     <div class="file-preview-header">
                         <div class="flex items-center gap-2 min-w-0">
@@ -911,11 +916,7 @@ function getFileIcon(entry: { name: string; isDirectory: boolean }) {
 .file-preview-overlay {
   position: fixed;
   inset: 0;
-  /*
-   * 必须高于项目管理/编辑项目弹窗的 el-overlay（叠层时为 3000）。
-   * 与 GitFileContextMenu / WorkspaceSearchModal 的 body 顶层弹层同级。
-   */
-  z-index: 4000;
+  /* 打开时通过共享计数器置顶，后续确认框仍可获得更高层级。 */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -948,7 +949,6 @@ function getFileIcon(entry: { name: string; isDirectory: boolean }) {
 
 .file-context-menu {
   /* 同样需要盖过项目弹窗，避免在管理弹窗内右键时菜单被遮住 */
-  z-index: 4000;
   border: 1px solid var(--app-border);
   background: var(--app-surface-raised);
   transform-origin: top left;

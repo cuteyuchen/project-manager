@@ -249,6 +249,7 @@ function handleClosed() {
     :title="t('dashboard.manageSubProjects')"
     width="600px"
     align-center
+    append-to-body
     class="app-centered-dialog"
     @closed="handleClosed"
   >

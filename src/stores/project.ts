@@ -639,6 +639,98 @@ export const useProjectStore = defineStore('project', () => {
     }
   }
 
+  /***********************命令运行环境*********************/
+  /** 脚本和自定义命令使用相同的 Runtime 解析、安装与包管理器校验。 */
+  async function prepareProjectCommand(project: Project, sessionId: string): Promise<{
+    nodePath: string;
+    pmCommandPath?: string;
+    pmNodePath?: string;
+  } | null> {
+    if (project.type !== 'node') return { nodePath: '' };
+
+    const nodeStore = useNodeStore();
+    await nodeStore.loadRuntimes();
+    if (runSessions.value[sessionId]?.status !== 'starting') return null;
+
+    const initialResolution = resolveProjectRuntime(project, nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime);
+    let nodePath = initialResolution.runtime?.path || '';
+
+    if (initialResolution.unavailable && project.nodeRuntimeId) {
+      const message = '项目绑定的 Node Runtime 不可用，请重新选择 Runtime 后再运行。';
+      ElMessage.error(message);
+      failRunSession(sessionId, message);
+      return null;
+    }
+
+    // If a specific version is configured but not installed, auto-install managed runtime
+    if (!nodePath && isExplicitNodeVersion(project.nodeVersion) && nodeStore.managedSupported) {
+      const version = normalizeNodeVersion(project.nodeVersion!)!;
+      try {
+        ElMessage.info({ message: `正在自动安装 Node ${version}...`, duration: 3000 });
+        await nodeStore.installManagedNode(version);
+        ElMessage.success({ message: `Node ${version} 自动安装完成`, duration: 3000 });
+        nodePath = resolveProjectNodePath(project, nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime);
+      } catch (installError) {
+        ElMessage.error(`Node ${version} 自动安装失败: ${String(installError)}`);
+        console.error('Failed to auto-install node version for project run', installError);
+      }
+    }
+
+    if (runSessions.value[sessionId]?.status !== 'starting') return null;
+
+    if (!nodePath) {
+      try {
+        const info = await api.scanProject(project.path);
+        const hint = projectNodeVersionHint(info);
+        nodePath = resolveNodePathFromVersion(hint, nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime);
+        if (nodePath && hint) {
+          const runtime = nodeStore.versions.find(item => item.path === nodePath);
+          project.nodeVersion = runtime?.version || hint;
+          if (runtime) project.nodeRuntimeId = runtime.runtimeId;
+        }
+      } catch (error) {
+        console.warn('Failed to rescan project node version before running project', error);
+      }
+    }
+
+    if (runSessions.value[sessionId]?.status !== 'starting') return null;
+    if (!nodePath) {
+      const message = '项目 Node 环境不可用，请选择可用的 Runtime 后再运行。';
+      ElMessage.error(message);
+      failRunSession(sessionId, message);
+      return null;
+    }
+
+    let pmCommandPath: string | undefined;
+    let pmNodePath: string | undefined;
+    if (project.packageManager) {
+      const pmResult = await resolvePmForProject(project);
+      if (runSessions.value[sessionId]?.status !== 'starting') return null;
+      if (!pmResult.available) {
+        const message = `命令不可用：${pmResult.reason || '包管理器不可用'}`;
+        ElMessage.error(message);
+        failRunSession(sessionId, message);
+        return null;
+      }
+      pmCommandPath = pmResult.commandPath;
+
+      // 显式借用默认 Node 的包管理器时，将其目录一起传给后端。
+      if (project.packageManagerSource === 'default') {
+        pmNodePath = resolveAppDefaultNodePath(nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime) || undefined;
+      }
+    }
+
+    if (runSessions.value[sessionId]?.status !== 'starting') return null;
+    const runtime = nodeStore.versions.find(item => item.path === nodePath || item.runtimeId === project.nodeRuntimeId);
+    updateRunSession(sessionId, {
+      nodePath,
+      nodeRuntimeId: runtime?.runtimeId || project.nodeRuntimeId,
+      nodeVersion: runtime?.version || project.nodeVersion,
+      packageManager: project.packageManager,
+    });
+    return { nodePath, pmCommandPath, pmNodePath };
+  }
+
   async function runProject(project: Project, script: string) {
     const commandKey = getProjectCommandRunId(project.id, 'script', script);
     if (runningStatus.value[commandKey]) return;
@@ -648,85 +740,9 @@ export const useProjectStore = defineStore('project', () => {
     const sessionId = session.sessionId;
 
     try {
-      const nodeStore = useNodeStore();
-
-      if (project.type === 'node') {
-        await nodeStore.loadRuntimes();
-      }
-      if (runSessions.value[sessionId]?.status !== 'starting') return;
-
-      const initialResolution = resolveProjectRuntime(project, nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime);
-      let nodePath = initialResolution.runtime?.path || '';
-
-      if (initialResolution.unavailable && project.nodeRuntimeId) {
-        const message = '项目绑定的 Node Runtime 不可用，请重新选择 Runtime 后再运行。';
-        ElMessage.error(message);
-        failRunSession(sessionId, message);
-        return;
-      }
-
-      // If a specific version is configured but not installed, auto-install managed runtime
-      if (!nodePath && isExplicitNodeVersion(project.nodeVersion) && nodeStore.managedSupported) {
-        const version = normalizeNodeVersion(project.nodeVersion!)!;
-        try {
-          ElMessage.info({ message: `正在自动安装 Node ${version}...`, duration: 3000 });
-          await nodeStore.installManagedNode(version);
-          ElMessage.success({ message: `Node ${version} 自动安装完成`, duration: 3000 });
-          nodePath = resolveProjectNodePath(project, nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime);
-        } catch (installError) {
-          ElMessage.error(`Node ${version} 自动安装失败: ${String(installError)}`);
-          console.error('Failed to auto-install node version for project run', installError);
-        }
-      }
-
-      if (runSessions.value[sessionId]?.status !== 'starting') return;
-
-      if (!nodePath && project.type === 'node') {
-        try {
-          const info = await api.scanProject(project.path);
-          const hint = projectNodeVersionHint(info);
-          nodePath = resolveNodePathFromVersion(hint, nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime);
-          if (nodePath && hint) {
-            const runtime = nodeStore.versions.find(item => item.path === nodePath);
-            project.nodeVersion = runtime?.version || hint;
-            if (runtime) project.nodeRuntimeId = runtime.runtimeId;
-          }
-        } catch (error) {
-          console.warn('Failed to rescan project node version before running project', error);
-        }
-      }
-
-      if (runSessions.value[sessionId]?.status !== 'starting') return;
-
-      // 解析包管理器可用性
-      let pmCommandPath: string | undefined;
-      let pmNodePath: string | undefined;
-      if (project.type === 'node' && project.packageManager) {
-        const pmResult = await resolvePmForProject(project);
-        if (!pmResult.available) {
-          const message = `命令不可用：${pmResult.reason || '包管理器不可用'}`;
-          ElMessage.error(message);
-          failRunSession(sessionId, message);
-          return;
-        }
-        pmCommandPath = pmResult.commandPath;
-
-        // 当来源为 default 时，需要将默认 Node 目录传给后端加入 PATH
-        const source = project.packageManagerSource || 'project';
-        if (source === 'default') {
-          pmNodePath = resolveAppDefaultNodePath(nodeStore.versions, nodeStore.appDefault, nodeStore.systemNodeRuntime) || undefined;
-        }
-      }
-
-      if (runSessions.value[sessionId]?.status !== 'starting') return;
-
-      const runtime = nodeStore.versions.find(item => item.path === nodePath || item.runtimeId === project.nodeRuntimeId);
-      updateRunSession(sessionId, {
-        nodePath: nodePath || undefined,
-        nodeRuntimeId: runtime?.runtimeId || project.nodeRuntimeId,
-        nodeVersion: runtime?.version || project.nodeVersion,
-        packageManager: project.packageManager,
-      });
+      const environment = await prepareProjectCommand(project, sessionId);
+      if (!environment || runSessions.value[sessionId]?.status !== 'starting') return;
+      const { nodePath, pmCommandPath, pmNodePath } = environment;
       appendSessionLog(sessionId, `[Runner] Starting script: ${script}`);
       appendSessionLog(sessionId, `[Runner] Project: ${project.name}`);
       appendSessionLog(sessionId, `[Runner] Package Manager: ${project.packageManager || 'npm'}`);
@@ -772,24 +788,25 @@ export const useProjectStore = defineStore('project', () => {
     const sessionId = session.sessionId;
 
     try {
-      // Node 项目只要 PM 不可用，项目内所有命令都禁用
-      if (project.type === 'node' && project.packageManager) {
-        const pmResult = await resolvePmForProject(project);
-        if (!pmResult.available) {
-          const message = `命令不可用：${pmResult.reason || '包管理器不可用'}`;
-          ElMessage.error(message);
-          failRunSession(sessionId, message);
-          return;
-        }
-      }
-      if (runSessions.value[sessionId]?.status !== 'starting') return;
+      const environment = await prepareProjectCommand(project, sessionId);
+      if (!environment || runSessions.value[sessionId]?.status !== 'starting') return;
+      const { nodePath, pmCommandPath, pmNodePath } = environment;
+      // 内置安装命令使用已验证的 PM 入口，绕过指向旧版本 Corepack 的残留 shim。
+      const command = cmd.builtinId === 'install_dependencies' && pmCommandPath
+        ? `${pmCommandPath} install`
+        : cmd.command;
 
       appendSessionLog(sessionId, `[Runner] Starting custom command: ${displayName}`);
       appendSessionLog(sessionId, `[Runner] Command: ${cmd.command}`);
       appendSessionLog(sessionId, `[Runner] Project: ${project.name}`);
+      if (project.type === 'node') {
+        appendSessionLog(sessionId, `[Runner] Node Version: ${runSessions.value[sessionId]?.nodeVersion || 'Default'}`);
+        appendSessionLog(sessionId, `[Runner] Node Path: ${nodePath}`);
+        if (pmNodePath) appendSessionLog(sessionId, `[Runner] PM Node Path: ${pmNodePath}`);
+      }
 
       backendStartedSessionIds.add(sessionId);
-      await api.runCustomCommand(commandKey, sessionId, project.path, cmd.command);
+      await api.runCustomCommand(commandKey, sessionId, project.path, command, nodePath, pmNodePath);
       if (runSessions.value[sessionId]?.status === 'starting') {
         updateRunSession(sessionId, { status: 'running' });
       }

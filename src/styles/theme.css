@@ -900,22 +900,7 @@ body:has(.app-shell-with-titlebar) .el-overlay-dialog {
   max-height: 90vh;
 }
 
-/*
- * 快速管理弹窗与编辑项目弹窗同时打开时，保证编辑弹窗在上层。
- * 两者均 append-to-body；Element Plus 内联 z-index 在叠层场景偶发低于先开的管理弹窗。
- */
-body:has(.project-management-dialog) .el-overlay:has(.project-modal) {
-  z-index: 3000 !important;
-}
-
-/*
- * 编辑项目弹窗被抬到 3000 后，内部 el-select 的 popper 仍是 Element Plus
- * 打开时动态分配的更低 z-index，下拉列表会被弹窗本体盖住。
- * 在叠层场景把 select 弹层一并抬到编辑弹窗之上。
- */
-body:has(.project-management-dialog) .el-select__popper.el-popper {
-  z-index: 3001 !important;
-}
+/* 浮层层级由 Element Plus 按打开顺序统一分配，不能用 !important 固定父弹窗层级。 */
 
 .install-node-dialog {
   width: min(600px, calc(100vw - 32px)) !important;

@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { useProjectStore } from '../stores/project';
 import { useUsageStore } from '../stores/usage';
 import { pinyin } from 'pinyin-pro';
+import { useOverlayZIndex } from '../composables/useOverlayZIndex';
 
 const props = withDefaults(defineProps<{
   standalone?: boolean;
@@ -41,6 +42,9 @@ const emit = defineEmits<{
 const searchQuery = ref('');
 const selectedIndex = ref(0);
 const searchInputRef = useTemplateRef<HTMLInputElement>('searchInputRef');
+
+/***********************浮层层级*********************/
+const overlayZIndex = useOverlayZIndex(() => !props.standalone);
 
 /***********************拼音搜索工具*********************/
 function buildPinyinSearchText(text: string): string {
@@ -275,9 +279,11 @@ function getTypeLabel(type: SearchResultType): string {
 </script>
 
 <template>
+  <Teleport to="body" :disabled="standalone">
     <div
         class="quick-search-overlay"
         :class="{ 'quick-search-overlay-standalone': standalone }"
+        :style="standalone ? undefined : { zIndex: overlayZIndex }"
         @click="handleOverlayClick"
     >
         <div class="quick-search-container" :class="{ 'quick-search-container-standalone': standalone }">
@@ -399,13 +405,13 @@ function getTypeLabel(type: SearchResultType): string {
             </div>
         </div>
     </div>
+  </Teleport>
 </template>
 
 <style scoped>
 .quick-search-overlay {
   position: fixed;
   inset: 0;
-  z-index: 9999;
   display: flex;
   align-items: flex-start;
   justify-content: center;

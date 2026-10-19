@@ -109,6 +109,7 @@ function getGroupProjectCount(groupId: string): number {
     :close-on-click-modal="false"
     destroy-on-close
     align-center
+    append-to-body
     class="app-dialog"
   >
     <div class="space-y-2">

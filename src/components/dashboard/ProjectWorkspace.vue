@@ -185,7 +185,6 @@ useAppShortcuts([
             v-model:visible="switcherVisible"
             placement="bottom-start"
             :width="360"
-            :teleported="false"
             :disabled="!rootProject"
             popper-class="project-switcher-popper"
           >

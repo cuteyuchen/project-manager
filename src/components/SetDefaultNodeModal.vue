@@ -55,6 +55,7 @@ async function submit() {
     destroy-on-close
     class="rounded-xl app-dialog"
     align-center
+    append-to-body
   >
     <div class="mb-4">
         <p class="text-sm text-slate-500 mb-2">{{ t('nodes.setDefaultHint') }}</p>

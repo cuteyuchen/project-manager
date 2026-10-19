@@ -101,7 +101,6 @@ function editProject(): void {
             v-model:visible="switcherVisible"
             placement="bottom-start"
             :width="360"
-            :teleported="false"
             :disabled="!project"
             popper-class="project-switcher-popper"
           >

@@ -967,6 +967,8 @@ pub fn run_custom_command(
     session_id: String,
     path: String,
     command: String,
+    node_path: Option<String>,
+    pm_node_path: Option<String>,
 ) -> Result<(), String> {
     let processes = state.processes.clone();
     let mut processes_lock = processes.lock().map_err(|e| e.to_string())?;
@@ -1032,6 +1034,15 @@ pub fn run_custom_command(
     {
         command_builder = Command::new("sh");
         command_builder.arg("-c").arg(&command);
+    }
+
+    // 自定义命令不能直接继承启动应用时的旧 NVM PATH。
+    if let Some(path_env) = build_command_path_env(
+        node_path.as_deref().unwrap_or_default(),
+        pm_node_path.as_deref(),
+        &system_node::latest_effective_path(),
+    ) {
+        command_builder.env("PATH", path_env);
     }
 
     command_builder
@@ -1355,6 +1366,34 @@ fn normalize_path_str(s: &str) -> String {
     {
         s.trim_end_matches('/').to_string()
     }
+}
+
+/// 只注入选定的 Node 和显式 PM 来源，过滤其它版本残留的工具入口。
+fn build_command_path_env(
+    node_path: &str,
+    pm_node_path: Option<&str>,
+    current_path: &str,
+) -> Option<String> {
+    let Some(node_dir) = resolve_terminal_node_dir(node_path) else {
+        return (!current_path.trim().is_empty()).then(|| current_path.to_string());
+    };
+    let mut entries = vec![node_dir.clone()];
+    if let Some(pm_dir) = pm_node_path.and_then(resolve_terminal_node_dir) {
+        if normalize_path_str(&pm_dir) != normalize_path_str(&node_dir) {
+            entries.push(pm_dir);
+        }
+    }
+    let filtered = filter_path_entries(&node_dir, current_path);
+    if !filtered.is_empty() {
+        entries.push(filtered);
+    }
+
+    #[cfg(target_os = "windows")]
+    let separator = ";";
+    #[cfg(not(target_os = "windows"))]
+    let separator = ":";
+
+    Some(entries.join(separator))
 }
 
 fn build_terminal_path_env(node_path: &str) -> Option<String> {
@@ -2232,12 +2271,68 @@ pub fn install_pm(node_path: String, pm_name: String) -> Result<(), String> {
     }
 }
 
+/// 从包自身的 bin 元数据定位真实入口，不信任可能跨版本残留的启动脚本。
+fn resolve_pm_cli(node_dir: &std::path::Path, pm: &str) -> Option<std::path::PathBuf> {
+    let mut roots = vec![node_dir.join("node_modules")];
+    if let Some(parent) = node_dir.parent() {
+        roots.push(parent.join("lib").join("node_modules"));
+    }
+    let packages = if matches!(pm, "pnpm" | "yarn") {
+        vec![pm, "corepack"]
+    } else {
+        vec![pm]
+    };
+    for root in roots {
+        for package in &packages {
+            let package_dir = root.join(package);
+            let manifest = fs::read_to_string(package_dir.join("package.json"))
+                .ok()
+                .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok());
+            let Some(manifest) = manifest else { continue };
+            let Some(bin) = manifest.get("bin") else {
+                continue;
+            };
+            let entry = bin
+                .as_str()
+                .or_else(|| bin.get(pm).and_then(|value| value.as_str()));
+            if let Some(entry) = entry {
+                let cli = package_dir.join(entry);
+                if cli.is_file() {
+                    return Some(cli);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// 检查指定 Node 目录下是否安装了指定包管理器。
 /// 返回 (found, command_path)。
-fn check_pm_in_node_dir(node_dir: &str, pm: &str) -> (bool, Option<String>) {
+fn check_pm_in_node_dir(
+    node_dir: &str,
+    pm: &str,
+    execution_node_dir: &str,
+) -> (bool, Option<String>) {
     let dir = std::path::Path::new(node_dir);
     if !dir.exists() || !dir.is_dir() {
         return (false, None);
+    }
+
+    // 默认来源只借用 PM，执行入口时仍使用项目选择的 Node。
+    if let Some(cli) = resolve_pm_cli(dir, pm) {
+        #[cfg(target_os = "windows")]
+        let node_name = "node.exe";
+        #[cfg(not(target_os = "windows"))]
+        let node_name = "node";
+        let node = std::path::Path::new(execution_node_dir).join(node_name);
+        return (
+            true,
+            Some(format!(
+                "\"{}\" \"{}\"",
+                node.to_string_lossy(),
+                cli.to_string_lossy()
+            )),
+        );
     }
 
     #[cfg(target_os = "windows")]
@@ -2336,7 +2431,10 @@ pub fn resolve_pm(
         });
     }
 
-    let (found, cmd_path) = check_pm_in_node_dir(check_path, &package_manager);
+    let check_dir = resolve_terminal_node_dir(check_path).unwrap_or_else(|| check_path.clone());
+    let execution_node_dir =
+        resolve_terminal_node_dir(&node_path).unwrap_or_else(|| check_dir.clone());
+    let (found, cmd_path) = check_pm_in_node_dir(&check_dir, &package_manager, &execution_node_dir);
 
     if found {
         return Ok(PmResolveResult {
@@ -2362,6 +2460,103 @@ pub fn resolve_pm(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /***********************自定义命令运行环境*********************/
+    #[test]
+    fn custom_command_path_ignores_stale_node_and_corepack_entries() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project node");
+        let stale = temp.path().join("old-node20");
+        let pm = temp.path().join("default node");
+        let tools = temp.path().join("tools");
+        for directory in [&project, &stale, &pm, &tools] {
+            fs::create_dir(directory).unwrap();
+        }
+        #[cfg(target_os = "windows")]
+        let node_name = "node.exe";
+        #[cfg(not(target_os = "windows"))]
+        let node_name = "node";
+        for directory in [&project, &stale, &pm] {
+            fs::write(directory.join(node_name), b"").unwrap();
+        }
+        let original = std::env::join_paths([&stale, &project, &pm, &tools]).unwrap();
+        let result = build_command_path_env(
+            &project.join(node_name).to_string_lossy(),
+            Some(&pm.to_string_lossy()),
+            &original.to_string_lossy(),
+        )
+        .unwrap();
+        assert_eq!(
+            std::env::split_paths(&result).collect::<Vec<_>>(),
+            vec![project.clone(), pm, tools.clone()]
+        );
+        let result = build_command_path_env(
+            &project.to_string_lossy(),
+            Some(&project.to_string_lossy()),
+            &original.to_string_lossy(),
+        )
+        .unwrap();
+        assert_eq!(
+            std::env::split_paths(&result).collect::<Vec<_>>(),
+            vec![project, tools]
+        );
+        assert_eq!(
+            build_command_path_env("", None, &original.to_string_lossy()).unwrap(),
+            original.to_string_lossy()
+        );
+        assert!(build_command_path_env("", None, "").is_none());
+    }
+
+    #[test]
+    fn pm_resolution_bypasses_stale_shim_and_uses_project_node() {
+        let temp = tempfile::tempdir().unwrap();
+        let pm_dir = temp.path().join("default node");
+        let project = temp.path().join("project node");
+        let corepack = pm_dir.join("node_modules").join("corepack");
+        fs::create_dir_all(corepack.join("dist")).unwrap();
+        fs::write(
+            corepack.join("package.json"),
+            br#"{"bin":{"pnpm":"dist/pnpm.js"}}"#,
+        )
+        .unwrap();
+        let cli = corepack.join("dist/pnpm.js");
+        fs::write(&cli, b"").unwrap();
+        fs::write(
+            pm_dir.join("pnpm.cmd"),
+            b"missing old-node20/corepack/dist/pnpm.js",
+        )
+        .unwrap();
+        let (found, command) = check_pm_in_node_dir(
+            &pm_dir.to_string_lossy(),
+            "pnpm",
+            &project.to_string_lossy(),
+        );
+        assert!(found);
+        #[cfg(target_os = "windows")]
+        let node_name = "node.exe";
+        #[cfg(not(target_os = "windows"))]
+        let node_name = "node";
+        assert_eq!(
+            command.unwrap(),
+            format!(
+                "\"{}\" \"{}\"",
+                project.join(node_name).to_string_lossy(),
+                cli.to_string_lossy()
+            )
+        );
+        let pnpm = pm_dir.join("node_modules").join("pnpm");
+        fs::create_dir_all(pnpm.join("bin")).unwrap();
+        fs::write(
+            pnpm.join("package.json"),
+            br#"{"bin":{"pnpm":"bin/pnpm.cjs"}}"#,
+        )
+        .unwrap();
+        let direct_cli = pnpm.join("bin/pnpm.cjs");
+        fs::write(&direct_cli, b"").unwrap();
+        assert_eq!(resolve_pm_cli(&pm_dir, "pnpm"), Some(direct_cli.clone()));
+        fs::remove_file(direct_cli).unwrap();
+        assert_eq!(resolve_pm_cli(&pm_dir, "pnpm"), Some(cli));
+    }
 
     /***********************shell 片段拼接*********************/
 

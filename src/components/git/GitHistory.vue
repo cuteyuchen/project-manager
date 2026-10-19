@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch, onUnmounted, onMounted } from 'vue';
+import { computed, nextTick, ref, watch, onUnmounted, onMounted, useTemplateRef } from 'vue';
 import { useGitStore } from '../../stores/git';
 import { useSettingsStore } from '../../stores/settings';
 import { useI18n } from 'vue-i18n';
@@ -7,6 +7,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import type { Project, GitCommit } from '../../types';
 import { showPersistentGitError } from './message';
 import { clampContextMenuPosition } from '../../utils/contextMenuPosition';
+import { useOverlayZIndex } from '../../composables/useOverlayZIndex';
 
 const props = defineProps<{
   project: Project;
@@ -26,8 +27,8 @@ const selectedHash = computed(() => gitStore.selectedCommitHash[props.project.id
 const allCommits = computed(() => props.filePath
   ? gitStore.getFileHistory(props.project.id, props.filePath)
   : (gitStore.history[props.project.id] || []));
-const headerRef = ref<HTMLElement | null>(null);
-const listRef = ref<HTMLElement | null>(null);
+const headerRef = useTemplateRef<HTMLElement>('headerRef');
+const listRef = useTemplateRef<HTMLElement>('listRef');
 const loadingMore = ref(false);
 const hasMore = ref(true);
 const requestedCount = ref(100);
@@ -45,8 +46,9 @@ const commits = computed(() => {
 
 /***********************右键菜单*********************/
 const ctxMenu = ref<{ x: number; y: number; commit: GitCommit } | null>(null);
-const ctxMenuRef = ref<HTMLElement | null>(null);
+const ctxMenuRef = useTemplateRef<HTMLElement>('ctxMenuRef');
 const ctxMenuStyle = ref({ left: '0px', top: '0px' });
+const contextMenuZIndex = useOverlayZIndex(() => ctxMenu.value !== null);
 
 function openContextMenu(e: MouseEvent, commit: GitCommit) {
   e.preventDefault();
@@ -636,7 +638,7 @@ watch(() => props.filePath, () => {
         v-if="ctxMenu"
         class="git-history-ctx app-text-control fixed min-w-44 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg py-1"
         ref="ctxMenuRef"
-        :style="ctxMenuStyle"
+        :style="[ctxMenuStyle, { zIndex: contextMenuZIndex }]"
         @mousedown.stop
         @click.stop
       >
@@ -689,8 +691,7 @@ watch(() => props.filePath, () => {
   text-overflow: ellipsis;
 }
 .git-history-ctx {
-  /* 提交右键菜单 Teleport 到 body，须盖过项目管理弹窗 overlay（~2000/叠层 3000） */
-  z-index: 4000;
+  /* 菜单挂载到 body，并在打开时使用共享层级计数器置顶。 */
   width: max-content;
   min-width: 220px;
   max-width: min(320px, calc(100vw - 16px));

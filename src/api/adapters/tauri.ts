@@ -179,8 +179,8 @@ export class TauriAdapter implements PlatformAPI {
         return invoke('run_project_command', { commandKey, sessionId, path, script, packageManager, nodePath, commandPath: commandPath || null, pmNodePath: pmNodePath || null });
     }
 
-    async runCustomCommand(commandKey: string, sessionId: string, path: string, command: string): Promise<void> {
-        return invoke('run_custom_command', { commandKey, sessionId, path, command });
+    async runCustomCommand(commandKey: string, sessionId: string, path: string, command: string, nodePath?: string, pmNodePath?: string): Promise<void> {
+        return invoke('run_custom_command', { commandKey, sessionId, path, command, nodePath: nodePath || null, pmNodePath: pmNodePath || null });
     }
 
     async stopProjectCommand(commandKey: string): Promise<void> {

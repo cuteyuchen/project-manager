@@ -164,7 +164,7 @@ async function cancelInstall() {
 </script>
 
 <template>
-  <el-dialog v-model="visible" :title="t('nodes.installNode')" width="600px" destroy-on-close class="rounded-xl install-node-dialog" align-center>
+  <el-dialog v-model="visible" :title="t('nodes.installNode')" width="600px" destroy-on-close class="rounded-xl install-node-dialog" align-center append-to-body>
     <div class="mb-4">
       <el-input v-model="searchQuery" :placeholder="t('common.search')" clearable>
         <template #prefix>

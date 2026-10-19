@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, useTemplateRef } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { useI18n } from 'vue-i18n';
 import type { Project } from '../../types';
@@ -19,6 +19,7 @@ import {
 } from '../../utils/workspaceContentSearch';
 import LightweightEditor from './LightweightEditor.vue';
 import { escapeHtml } from '../../utils/escapeHtml';
+import { useOverlayZIndex } from '../../composables/useOverlayZIndex';
 
 export type WorkspaceSearchMode = 'files' | 'content';
 
@@ -38,8 +39,8 @@ const { t } = useI18n();
 const settingsStore = useSettingsStore();
 const query = ref('');
 const replaceQuery = ref('');
-const inputRef = ref<HTMLInputElement | null>(null);
-const listRef = ref<HTMLElement | null>(null);
+const inputRef = useTemplateRef<HTMLInputElement>('inputRef');
+const listRef = useTemplateRef<HTMLElement>('listRef');
 const selectedIndex = ref(0);
 const loading = ref(false);
 const buildingIndex = ref(false);
@@ -48,6 +49,9 @@ const fileResults = ref<WorkspacePathEntry[]>([]);
 const contentResults = ref<ContentSearchMatch[]>([]);
 const truncated = ref(false);
 const cancelledFlag = ref<{ cancelled: boolean } | null>(null);
+
+/***********************浮层层级*********************/
+const overlayZIndex = useOverlayZIndex(() => props.open);
 
 /** 下方预览 */
 const previewPath = ref('');
@@ -324,7 +328,7 @@ function onWindowKeydown(event: KeyboardEvent): void {
 
 <template>
   <Teleport to="body">
-    <div v-if="open" class="ws-search-overlay" @mousedown.self="emit('close')">
+    <div v-if="open" class="ws-search-overlay" :style="{ zIndex: overlayZIndex }" @mousedown.self="emit('close')">
       <div
         class="ws-search-panel"
         :class="{ 'is-content': isContentMode }"
@@ -497,7 +501,6 @@ function onWindowKeydown(event: KeyboardEvent): void {
 .ws-search-overlay {
   position: fixed;
   inset: 0;
-  z-index: 4000;
   display: flex;
   justify-content: center;
   align-items: flex-start;

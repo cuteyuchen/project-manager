@@ -939,7 +939,7 @@ onBeforeUnmount(() => {
     <AddNodeModal v-model="showAddModal" />
     <InstallNodeModal v-model="showInstallModal" />
 
-    <el-dialog v-model="showStorageDialog" :title="t('nodes.changeLocation')" width="560px" align-center destroy-on-close>
+    <el-dialog v-model="showStorageDialog" :title="t('nodes.changeLocation')" width="560px" align-center destroy-on-close append-to-body>
       <el-form label-position="top">
         <el-form-item :label="t('nodes.locationModeLabel')">
           <el-radio-group v-model="storageMode" class="flex flex-col items-start gap-2">
@@ -968,7 +968,7 @@ onBeforeUnmount(() => {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="showUsageDialog" :title="t('nodes.viewUsage')" width="720px" align-center class="runtime-usage-dialog">
+    <el-dialog v-model="showUsageDialog" :title="t('nodes.viewUsage')" width="720px" align-center class="runtime-usage-dialog" append-to-body>
       <div v-if="selectedUsageRuntime" class="mb-3 flex items-center justify-between gap-3">
         <div class="min-w-0">
           <div class="flex items-center gap-2">
@@ -1002,7 +1002,7 @@ onBeforeUnmount(() => {
       </div>
     </el-dialog>
 
-    <el-dialog v-model="showRuntimeDetailsDialog" :title="t('nodes.runtimeDetails')" width="820px" align-center class="runtime-details-dialog">
+    <el-dialog v-model="showRuntimeDetailsDialog" :title="t('nodes.runtimeDetails')" width="820px" align-center class="runtime-details-dialog" append-to-body>
       <div v-if="selectedRuntimeDetailsGroup" class="mb-3 flex items-center justify-between gap-3">
         <div class="min-w-0">
           <div class="flex items-center gap-2">

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch, useTemplateRef } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { useI18n } from 'vue-i18n';
 import type { GitFileStatus, Project } from '../../types';
@@ -9,6 +9,7 @@ import { useProjectStore } from '../../stores/project';
 import { useSettingsStore } from '../../stores/settings';
 import { useWorkspaceEditorStore } from '../../stores/workspaceEditor';
 import { useProjectExternalActions } from '../../composables/useProjectExternalActions';
+import { useOverlayZIndex } from '../../composables/useOverlayZIndex';
 import { fileKind } from '../../utils/fileTypes';
 import { clampContextMenuPosition } from '../../utils/contextMenuPosition';
 import {
@@ -44,9 +45,12 @@ const showHidden = ref(false);
 const showHeavy = ref(false);
 const refreshToken = ref(0);
 const selectedFileKey = ref<string | null>(null);
-const contextMenuRef = ref<HTMLElement | null>(null);
+const contextMenuRef = useTemplateRef<HTMLElement>('contextMenuRef');
 const contextMenu = ref<{ x: number; y: number; payload: ExplorerContextPayload } | null>(null);
 const contextMenuStyle = ref({ left: '0px', top: '0px' });
+/***********************浮层层级*********************/
+const contextMenuZIndex = useOverlayZIndex(() => contextMenu.value !== null);
+
 const actionProject = ref<Project | null>(null);
 const explorerWidth = ref(readWorkspaceExplorerWidth(settingsStore.settings));
 const resizingExplorer = ref(false);
@@ -561,7 +565,7 @@ onUnmounted(() => {
       v-if="contextMenu"
       ref="contextMenuRef"
       class="workspace-context-menu fixed py-1"
-      :style="contextMenuStyle"
+      :style="[contextMenuStyle, { zIndex: contextMenuZIndex }]"
       @mousedown.stop
       @click.stop
     >
@@ -742,7 +746,6 @@ onUnmounted(() => {
   border-radius: 3px;
 }
 .workspace-context-menu {
-  z-index: 5000;
   width: max-content;
   min-width: 230px;
   max-width: min(320px, calc(100vw - 16px));

@@ -936,7 +936,7 @@ useAppShortcuts([
     />
 
     <!-- 批量设置分组 -->
-    <el-dialog v-model="showBatchGroupMenu" :title="t('dashboard.batchSetGroup')" width="360px" align-center>
+    <el-dialog v-model="showBatchGroupMenu" :title="t('dashboard.batchSetGroup')" width="360px" align-center append-to-body>
       <el-select v-model="batchGroupTarget" :placeholder="t('dashboard.group')" clearable class="w-full">
         <el-option :label="t('dashboard.ungrouped')" value="" />
         <el-option v-for="group in projectStore.projectGroups" :key="group.id" :label="group.name" :value="group.id" />

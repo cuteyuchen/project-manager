@@ -872,6 +872,42 @@ function getTerminalSpawnOptions(nodePath) {
     };
 }
 
+/** 自定义命令复用项目 Node 环境，避免命中旧 NVM/Corepack 入口。 */
+function buildCommandEnv(nodePath, pmNodePath) {
+    const env = { ...process.env };
+    const nodeDir = resolveTerminalNodeDir(nodePath);
+    if (!nodeDir) return env;
+
+    // Windows 的环境变量名不区分大小写，不能同时留下 Path 与 PATH。
+    const pathKey = Object.keys(env).find(key => key.toUpperCase() === 'PATH') || 'PATH';
+    const entries = [nodeDir];
+    const pmDir = resolveTerminalNodeDir(pmNodePath);
+    if (pmDir && normalizePathStr(pmDir) !== normalizePathStr(nodeDir)) entries.push(pmDir);
+    const filtered = filterPathEntries(nodeDir, env[pathKey] || '');
+    if (filtered) entries.push(filtered);
+    env[pathKey] = entries.join(path.delimiter);
+    return env;
+}
+
+/** 从真实包元数据定位 CLI，绕过引用已删除 Node 版本的 Corepack shim。 */
+function resolvePmCli(nodeDir, pm) {
+    const roots = [path.join(nodeDir, 'node_modules'), path.join(path.dirname(nodeDir), 'lib', 'node_modules')];
+    const packages = pm === 'pnpm' || pm === 'yarn' ? [pm, 'corepack'] : [pm];
+    for (const root of roots) {
+        for (const name of packages) {
+            try {
+                const packageDir = path.join(root, name);
+                const manifest = JSON.parse(fs.readFileSync(path.join(packageDir, 'package.json'), 'utf8'));
+                const entry = typeof manifest.bin === 'string' ? manifest.bin : manifest.bin?.[pm];
+                if (typeof entry !== 'string') continue;
+                const cli = path.join(packageDir, entry);
+                if (fs.statSync(cli).isFile()) return cli;
+            } catch (_) {}
+        }
+    }
+    return null;
+}
+
 function escapeCmdDoubleQuotes(value) {
     return String(value || '').replace(/"/g, '""');
 }
@@ -1837,13 +1873,13 @@ window.services = {
         }
     },
 
-    runCustomCommand: async (commandKey, sessionId, projectPath, command) => {
+    runCustomCommand: async (commandKey, sessionId, projectPath, command, nodePath, pmNodePath) => {
         if (processes.has(commandKey)) throw new Error('Already running');
 
         const child = spawn(command, {
             cwd: projectPath,
             shell: true,
-            env: { ...process.env },
+            env: buildCommandEnv(nodePath, pmNodePath),
             detached: process.platform !== 'win32',
             windowsHide: process.platform === 'win32',
         });
@@ -3438,12 +3474,13 @@ $result | ConvertTo-Json -Compress`;
         }
 
         // 解析 node 目录
-        let nodeDir = checkPath;
-        try {
-            if (fs.existsSync(checkPath) && fs.statSync(checkPath).isFile()) {
-                nodeDir = path.dirname(checkPath);
-            }
-        } catch (_) {}
+        const nodeDir = resolveTerminalNodeDir(checkPath);
+        const executionNodeDir = resolveTerminalNodeDir(nodePath) || nodeDir;
+        const cli = resolvePmCli(nodeDir, pm);
+        if (cli) {
+            const node = path.join(executionNodeDir, process.platform === 'win32' ? 'node.exe' : 'node');
+            return { available: true, commandPath: `"${node}" "${cli}"`, reason: null };
+        }
 
         // 在 nodeDir 中查找包管理器
         const isWin = process.platform === 'win32';

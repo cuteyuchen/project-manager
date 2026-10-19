@@ -198,7 +198,8 @@ export interface PlatformAPI {
 
     // Runner
     runProjectCommand(commandKey: string, sessionId: string, path: string, script: string, packageManager: string, nodePath: string, commandPath?: string, pmNodePath?: string): Promise<void>;
-    runCustomCommand(commandKey: string, sessionId: string, path: string, command: string): Promise<void>;
+    /** 自定义命令也需继承项目 Node 与显式借用的包管理器目录。 */
+    runCustomCommand(commandKey: string, sessionId: string, path: string, command: string, nodePath?: string, pmNodePath?: string): Promise<void>;
     stopProjectCommand(commandKey: string): Promise<void>;
     sendProjectInput(commandKey: string, input: string): Promise<void>;
     closeProjectInput(commandKey: string): Promise<void>;

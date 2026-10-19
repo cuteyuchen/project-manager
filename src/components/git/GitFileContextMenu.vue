@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch, useTemplateRef } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { GitFileStatus, GitIgnoreKind } from '../../types';
 import { positionContextSubmenu } from '../../utils/contextMenuPosition';
+import { useOverlayZIndex } from '../../composables/useOverlayZIndex';
 
 const props = defineProps<{
   x: number;
@@ -22,9 +23,12 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const ignoreOpen = ref(false);
-const menuRef = ref<HTMLElement | null>(null);
-const submenuRef = ref<HTMLElement | null>(null);
+const menuRef = useTemplateRef<HTMLElement>('menuRef');
+const submenuRef = useTemplateRef<HTMLElement>('submenuRef');
 const submenuStyle = ref({ left: '0px', top: '0px' });
+
+/***********************浮层层级*********************/
+const contextMenuZIndex = useOverlayZIndex(() => true);
 
 function uniqueFiles(files: GitFileStatus[]): GitFileStatus[] {
   const seen = new Set<string>();
@@ -137,7 +141,7 @@ watch(ignoreOpen, (open) => {
     <div
       ref="menuRef"
       class="git-file-context-menu fixed min-w-[220px] py-1"
-      :style="menuStyle"
+      :style="[menuStyle, { zIndex: contextMenuZIndex }]"
       @click.stop
       @mousemove="handleMenuMouseMove"
       @mouseleave="ignoreOpen = false"
@@ -227,7 +231,6 @@ watch(ignoreOpen, (open) => {
 
 <style scoped>
 .git-file-context-menu {
-  z-index: 4000;
   width: max-content;
   min-width: 220px;
   max-width: min(320px, calc(100vw - 16px));

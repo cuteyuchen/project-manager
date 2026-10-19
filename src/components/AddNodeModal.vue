@@ -65,6 +65,7 @@ async function submit() {
     width="500px"
     destroy-on-close
     align-center
+    append-to-body
     class="app-dialog"
   >
     <el-form label-position="top">

@@ -1,7 +1,29 @@
+<script setup lang="ts">
+import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
+import { useOverlayZIndex } from '../composables/useOverlayZIndex';
+
+const props = defineProps<{
+  percentage: number;
+  indeterminate?: boolean;
+  phase?: 'downloading' | 'verifying' | 'installing';
+}>();
+
+defineEmits<{
+  (e: 'background'): void;
+}>();
+
+/***********************更新进度与浮层层级*********************/
+const { t } = useI18n();
+const normalizedPercentage = computed(() => Math.max(0, Math.min(100, Math.round(props.percentage))));
+const phaseLabel = computed(() => t(`update.${props.phase || 'downloading'}`));
+const overlayZIndex = useOverlayZIndex(() => true);
+</script>
+
 <template>
   <Teleport to="body">
     <Transition name="update-progress-fade">
-      <section class="update-progress-panel" role="status" aria-live="polite">
+      <section class="update-progress-panel" :style="{ zIndex: overlayZIndex }" role="status" aria-live="polite">
         <el-card shadow="always" :body-style="{ padding: '14px 16px 12px' }">
           <header class="update-progress-header">
             <div class="update-progress-title">
@@ -37,35 +59,11 @@
   </Teleport>
 </template>
 
-<script setup lang="ts">
-import { computed } from 'vue';
-import { useI18n } from 'vue-i18n';
-
-const props = defineProps<{
-  percentage: number;
-  indeterminate?: boolean;
-  phase?: 'downloading' | 'verifying' | 'installing';
-}>();
-
-defineEmits<{
-  (e: 'background'): void;
-}>();
-
-const { t } = useI18n();
-const normalizedPercentage = computed(() => Math.max(0, Math.min(100, Math.round(props.percentage))));
-const phaseLabel = computed(() => t(`update.${props.phase || 'downloading'}`));
-</script>
-
 <style scoped>
 .update-progress-panel {
   position: fixed;
   right: 16px;
   bottom: 16px;
-  /*
-   * 全局下载进度条 Teleport 到 body，必须高于项目弹窗叠层（3000/3001），
-   * 否则用户在弹窗内操作时看不到更新进度。
-   */
-  z-index: 4500;
   width: min(360px, calc(100vw - 32px));
 }
 

@@ -198,8 +198,8 @@ export class UToolsAdapter implements PlatformAPI {
     }
     return this.service.runProjectCommand(commandKey, sessionId, path, script, packageManager, nodePath);
   }
-  runCustomCommand(commandKey: string, sessionId: string, path: string, command: string): Promise<void> {
-    return this.service.runCustomCommand(commandKey, sessionId, path, command);
+  runCustomCommand(commandKey: string, sessionId: string, path: string, command: string, nodePath?: string, pmNodePath?: string): Promise<void> {
+    return this.service.runCustomCommand(commandKey, sessionId, path, command, nodePath, pmNodePath);
   }
   stopProjectCommand(commandKey: string): Promise<void> { return this.service.stopProjectCommand(commandKey); }
   sendProjectInput(commandKey: string, input: string): Promise<void> {

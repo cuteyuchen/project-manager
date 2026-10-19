@@ -280,6 +280,7 @@ function handleClosed() {
     :title="t('import.title')"
     width="640px"
     align-center
+    append-to-body
     class="app-centered-dialog"
     @closed="handleClosed"
   >

@@ -1624,6 +1624,7 @@ function describeAiTestError(error: any): string {
       width="960px"
       destroy-on-close
       align-center
+      append-to-body
       class="import-preview-dialog"
     >
       <div v-if="importPlan" class="space-y-5 import-dialog-content">

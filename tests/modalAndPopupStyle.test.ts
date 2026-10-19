@@ -16,22 +16,22 @@ assert(/app-shell-with-titlebar/.test(read('src/App.vue')), '桌面应用壳层�
 assert(/body:has\(\.app-shell-with-titlebar\) \.el-overlay\s*\{[\s\S]*top:\s*var\(--app-titlebar-height\)[\s\S]*height:\s*calc\(100% - var\(--app-titlebar-height\)\)/.test(theme), 'Dialog overlay 应从标题栏底部开始铺设');
 assert(/body:has\(\.app-shell-with-titlebar\) \.el-overlay-dialog\s*\{[\s\S]*position:\s*absolute[\s\S]*padding-top:\s*0/.test(theme), 'Dialog 应在 overlay 剩余区域内居中');
 assert(
-  /body:has\(\.project-management-dialog\) \.el-overlay:has\(\.project-modal\)\s*\{[\s\S]*z-index:\s*3000\s*!important/.test(theme),
-  '管理弹窗叠编辑项目弹窗时应抬高编辑弹窗 overlay',
+  !/z-index:\s*\d+\s*!important/.test(theme),
+  '不得用固定层级覆盖 Element Plus 的动态层级，否则子弹窗与确认框会被父弹窗压住',
 );
 assert(
-  /body:has\(\.project-management-dialog\) \.el-select__popper\.el-popper\s*\{[\s\S]*z-index:\s*3001\s*!important/.test(theme),
-  '编辑项目弹窗抬高后内部 select 下拉必须盖过弹窗本体',
+  !/body:has\(\.project-management-dialog\) \.el-select__popper/.test(theme),
+  'Select 应与 Dialog、MessageBox 共用动态层级，不能单独固定置顶',
 );
 
 const fileManager = read('src/components/FileManager.vue');
 assert(
-  /\.file-preview-overlay\s*\{[\s\S]*z-index:\s*4000/.test(fileManager),
-  '关联文件预览弹窗必须高于项目弹窗（叠层 3000）',
+  /useOverlayZIndex\(\(\) => previewVisible\.value\)/.test(fileManager),
+  '文件预览应在打开时申请高于当前弹窗的新层级',
 );
 assert(
-  /\.file-context-menu\s*\{[\s\S]*z-index:\s*4000/.test(fileManager),
-  '文件右键菜单必须高于项目弹窗，避免被遮挡',
+  /useOverlayZIndex\(\(\) => contextMenuVisible\.value\)/.test(fileManager),
+  '文件右键菜单应在打开时使用统一动态层级',
 );
 assert(
   !/z-999/.test(fileManager),
@@ -40,8 +40,8 @@ assert(
 
 const gitHistory = read('src/components/git/GitHistory.vue');
 assert(
-  /\.git-history-ctx\s*\{[\s\S]*z-index:\s*4000/.test(gitHistory),
-  'Git 提交右键菜单必须高于项目弹窗 overlay',
+  /useOverlayZIndex\(\(\) => ctxMenu\.value !== null\)/.test(gitHistory),
+  'Git 提交右键菜单必须随当前弹窗动态分配层级',
 );
 assert(
   !/z-50/.test(gitHistory),
@@ -50,8 +50,8 @@ assert(
 
 const updateProgress = read('src/components/UpdateProgress.vue');
 assert(
-  /\.update-progress-panel\s*\{[\s\S]*z-index:\s*4500/.test(updateProgress),
-  '更新进度条必须高于项目弹窗叠层（3000/3001）',
+  /useOverlayZIndex\(\(\) => true\)/.test(updateProgress),
+  '更新进度条应与其 Tooltip 等浮层共用层级计数',
 );
 
 console.log('modal and popup style tests passed');
