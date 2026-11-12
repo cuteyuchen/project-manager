@@ -35,3 +35,6 @@ promo-video
 # Playwright CLI runtime artifacts
 .playwright-cli/
 
+# Local agent workspace data
+.workbuddy/
+

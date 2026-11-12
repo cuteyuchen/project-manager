@@ -48,7 +48,7 @@ const hasGitRepo = computed(() => {
 });
 const gitCapabilityKnown = computed(() => {
   const projectId = activeProject.value?.id;
-  return !projectId || projectId in gitStore.isGitRepo;
+  return !projectId || gitStore.isGitCapabilityKnown(projectId);
 });
 const hasRunnableCommands = computed(() => {
   const project = activeProject.value;
@@ -135,6 +135,16 @@ watch(
 
 watch(() => props.initialTab, (tab, previous) => {
   if (tab !== previous) void activate(tab);
+});
+
+/**
+ * 从托盘恢复时 git 探测处于冷存储跳过状态。
+ * 若当前项目的仓库能力仍未确认（例如启动瞬间探测失败），
+ * 回到前台后补一次探测，否则 Git 页签会一直缺席到重启。
+ */
+watch(() => gitStore.coldStorage, (cold) => {
+  if (cold || !activeProject.value || gitCapabilityKnown.value) return;
+  void activate(activeTab.value);
 });
 
 watch([hasRunnableCommands, hasGitRepo, hasFrontendEnv, leafTabsDisabled, activeTab, () => props.editorEnabled], () => {

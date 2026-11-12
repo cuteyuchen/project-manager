@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { shallowRef, computed, ref, onMounted, onUnmounted } from 'vue';
+import { computed, ref, onMounted, onUnmounted } from 'vue';
 import { useGitStore } from '../../stores/git.ts';
 import { useSettingsStore } from '../../stores/settings.ts';
 import { useI18n } from 'vue-i18n';
@@ -25,7 +25,7 @@ const commitMessage = computed({
   get: () => gitStore.commitMessage[props.project.id] || '',
   set: (v: string) => { gitStore.commitMessage[props.project.id] = v; },
 });
-const aiGenerating = shallowRef(false);
+const aiGenerating = computed(() => gitStore.isAiCommitMessageGenerating(props.project.id));
 const menuOpen = ref(false);
 const menuRef = ref<HTMLElement | null>(null);
 
@@ -202,6 +202,8 @@ async function handleUndoLastCommit(mode: 'soft' | 'mixed') {
 /***********************AI提交信息生成*********************/
 
 async function handleAiGenerate() {
+  if (aiGenerating.value) return;
+
   const s = settingsStore.settings;
   // 槽位是否可用的判断收敛在 buildAiAttempts 里：
   // 空列表 = 压根没配好任何一个渠道
@@ -212,15 +214,10 @@ async function handleAiGenerate() {
   }
 
   const requestProjectId = props.project.id;
-  const requestProjectPath = props.project.path;
-
-  aiGenerating.value = true;
   try {
-    // 无 staged 时先自动暂存，便于 AI 读取 diff
-    if (willAutoStage.value) {
-      await gitStore.stageAll(requestProjectId, requestProjectPath);
-    }
-    const result = await gitStore.generateAiCommitMessage(requestProjectId, requestProjectPath, {
+    // 自动暂存、diff 读取、取消令牌都在 store 里，
+    // 组件被页签切换卸载后生成仍会继续，回来后仍显示进行中
+    const result = await gitStore.generateAiCommitMessage(requestProjectId, props.project.path, {
       attempts,
       promptTemplate: s.gitAiPromptTemplate,
       stream: s.gitAiStream,
@@ -235,14 +232,23 @@ async function handleAiGenerate() {
     }
   } catch (e: any) {
     const msg = String(e);
+    if (msg.includes('ai_cancelled')) {
+      ElMessage.info(t('git.aiCancelled'));
+      return;
+    }
+    // 另一个实例已经在生成（按钮此时是取消态），不重复提示
+    if (msg.includes('ai_busy')) return;
     if (msg.includes('no_staged')) {
       ElMessage.warning(t('git.aiNoStaged'));
     } else {
       showPersistentGitError(t('git.aiError', { error: msg }));
     }
-  } finally {
-    aiGenerating.value = false;
   }
+}
+
+/** 取消正在进行的生成：中止请求，状态由 store 统一收尾 */
+function handleAiCancel() {
+  gitStore.cancelAiCommitMessage(props.project.id);
 }
 </script>
 
@@ -256,14 +262,23 @@ async function handleAiGenerate() {
       </span>
       <div class="flex items-center gap-1">
         <button
-          v-if="aiEnabled"
+          v-if="aiEnabled && aiGenerating"
+          @click="handleAiCancel"
+          class="git-ai-button git-ai-cancel app-outline-action app-text-control flex items-center gap-0.5 px-1.5 py-0.5 transition-colors cursor-pointer"
+          :title="t('git.aiCancel')"
+        >
+          <div class="i-mdi-stop text-xs" />
+          {{ t('git.aiCancel') }}
+        </button>
+        <button
+          v-else-if="aiEnabled"
           @click="handleAiGenerate"
-          :disabled="aiGenerating || hasConflicts"
+          :disabled="hasConflicts"
           class="git-ai-button app-outline-action app-text-control flex items-center gap-0.5 px-1.5 py-0.5 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           :title="t('git.aiGenerate')"
         >
-          <div :class="aiGenerating ? 'i-mdi-loading animate-spin' : 'i-mdi-auto-fix'" class="text-xs" />
-          {{ aiGenerating ? t('git.aiGenerating') : t('git.aiGenerate') }}
+          <div class="i-mdi-auto-fix text-xs" />
+          {{ t('git.aiGenerate') }}
         </button>
         <span
           v-if="stagedFiles.length > 0"
@@ -349,6 +364,10 @@ async function handleAiGenerate() {
 .git-ai-button {
   appearance: none;
   color: var(--app-primary);
+}
+
+.git-ai-cancel {
+  color: var(--app-danger);
 }
 
 .git-staged-pill {

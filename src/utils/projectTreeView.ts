@@ -91,3 +91,62 @@ export function setProjectTreeConstraint(
   }
   state.constrained = constrained;
 }
+
+/***********************手动折叠覆盖*********************/
+
+export interface ProjectTreeExpansionInput {
+  /** 用户手动展开的项目 */
+  expandedIds: ReadonlySet<string>;
+  /** 用户手动折叠的项目：优先级高于筛选态的自动展开 */
+  collapsedIds: ReadonlySet<string>;
+  /** 筛选/搜索命中的祖先链，由系统自动展开 */
+  autoExpandedIds: ReadonlySet<string>;
+}
+
+export interface ProjectTreeExpansionResult {
+  expandedIds: Set<string>;
+  collapsedIds: Set<string>;
+}
+
+/** 当前实际上是否展开：自动展开也要算，并且手动折叠优先 */
+export function isProjectTreeExpanded(
+  state: ProjectTreeExpansionInput,
+  projectId: string,
+): boolean {
+  if (state.collapsedIds.has(projectId)) return false;
+  return state.expandedIds.has(projectId) || state.autoExpandedIds.has(projectId);
+}
+
+/**
+ * 切换单个项目的展开状态。
+ *
+ * 筛选/搜索态下命中节点的祖先链会被自动展开，若只看 expandedIds，
+ * 折叠动作会被自动展开立刻抵消 —— 这正是「最近使用」里层级关不掉的根因。
+ * 所以折叠时额外记一笔「手动折叠」，由有效展开集合把它减掉。
+ */
+export function toggleProjectTreeExpansion(
+  state: ProjectTreeExpansionInput,
+  projectId: string,
+): ProjectTreeExpansionResult {
+  const expanded = new Set(state.expandedIds);
+  const collapsed = new Set(state.collapsedIds);
+
+  if (isProjectTreeExpanded(state, projectId)) {
+    expanded.delete(projectId);
+    collapsed.add(projectId);
+  } else {
+    expanded.add(projectId);
+    collapsed.delete(projectId);
+  }
+
+  return { expandedIds: expanded, collapsedIds: collapsed };
+}
+
+/** 有效展开集合：手动展开 ∪ 自动展开，再减去手动折叠 */
+export function resolveExpandedProjectIds(state: ProjectTreeExpansionInput): Set<string> {
+  const result = new Set<string>([...state.expandedIds, ...state.autoExpandedIds]);
+  for (const projectId of state.collapsedIds) {
+    result.delete(projectId);
+  }
+  return result;
+}

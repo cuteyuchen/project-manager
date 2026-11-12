@@ -1147,6 +1147,8 @@ export default {
     // AI commit message
     aiGenerate: 'AI Generate',
     aiGenerating: 'Generating...',
+    aiCancel: 'Cancel',
+    aiCancelled: 'Generation cancelled',
     aiSuccess: 'Commit message generated',
     aiSuccessFallback: 'Commit message generated (fell back to {target})',
     aiError: 'AI generation failed: {error}',

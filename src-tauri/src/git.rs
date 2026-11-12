@@ -710,15 +710,30 @@ pub async fn git_cancel_operation(
 #[tauri::command]
 pub async fn git_check(path: String) -> Result<bool, String> {
     run_git_task(move || {
-        let repo_root = match run_git(&path, &["rev-parse", "--show-toplevel"]) {
-            Ok(output) => output,
-            Err(_) => return Ok(false),
-        };
+        // 路径暂时不可访问（外置盘/网络盘尚未挂载）不是「不是仓库」，
+        // 作为错误上报让前端保留重试机会，挂载恢复后 Git 页签会自动出现
+        if !Path::new(&path).exists() {
+            return Err(format!("Project path is not accessible: {path}"));
+        }
+
+        // 注意：这里不能用 run_git —— 它把「git 进程根本没跑起来」（PATH 未就绪、
+        // 瞬时 CreateProcess 失败等）和「git 正常退出但这不是仓库」都压成 Err。
+        // 前者是环境问题，必须作为错误上报给前端去重试；后者才是确定的 false。
+        let output = git_command(Some(&path), &["rev-parse", "--show-toplevel"])?;
+        if !output.status.success() {
+            return Ok(false);
+        }
+
+        let repo_root = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if repo_root.is_empty() {
+            return Ok(false);
+        }
+
         let requested_path = match fs::canonicalize(&path) {
             Ok(value) => value,
             Err(_) => return Ok(false),
         };
-        let repo_root_path = match fs::canonicalize(repo_root.trim()) {
+        let repo_root_path = match fs::canonicalize(&repo_root) {
             Ok(value) => value,
             Err(_) => return Ok(false),
         };

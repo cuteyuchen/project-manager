@@ -37,7 +37,9 @@ import {
     collectAutoExpandedProjectIds,
     collectVisibleProjectIds,
     createProjectTreeExpansionState,
+    resolveExpandedProjectIds,
     setProjectTreeConstraint,
+    toggleProjectTreeExpansion,
 } from '../utils/projectTreeView';
 
 const { t } = useI18n();
@@ -70,13 +72,21 @@ const managementProject = computed<Project | null>(() => {
 /***********************一级项目树状态*********************/
 const treeExpansionState = createProjectTreeExpansionState();
 const expandedProjectIds = ref(treeExpansionState.expandedIds);
+/**
+ * 筛选/搜索态下手动折叠的项目。
+ * 这类项目通常因后代命中而被自动展开，只有单独记录才能让折叠真正生效。
+ */
+const collapsedProjectIds = ref<ReadonlySet<string>>(new Set());
 
 function toggleProjectExpanded(project: Project): void {
-    const next = new Set(expandedProjectIds.value);
-    if (next.has(project.id)) next.delete(project.id);
-    else next.add(project.id);
-    expandedProjectIds.value = next;
-    treeExpansionState.expandedIds = next;
+    const next = toggleProjectTreeExpansion({
+        expandedIds: expandedProjectIds.value,
+        collapsedIds: collapsedProjectIds.value,
+        autoExpandedIds: autoExpandedProjectIds.value,
+    }, project.id);
+    expandedProjectIds.value = next.expandedIds;
+    collapsedProjectIds.value = next.collapsedIds;
+    treeExpansionState.expandedIds = next.expandedIds;
 }
 
 function openProjectManagement(project: Project, initialTab: WorkspaceTab | null = null): void {
@@ -413,14 +423,22 @@ const visibleProjectIds = computed(() => {
 const autoExpandedProjectIds = computed(() => treeConstraintActive.value
     ? collectAutoExpandedProjectIds(projectStore.projects, matchingProjectIds.value)
     : new Set<string>());
-const effectiveExpandedProjectIds = computed(() => new Set([
-    ...expandedProjectIds.value,
-    ...autoExpandedProjectIds.value,
-]));
+const effectiveExpandedProjectIds = computed(() => resolveExpandedProjectIds({
+    expandedIds: expandedProjectIds.value,
+    collapsedIds: collapsedProjectIds.value,
+    autoExpandedIds: autoExpandedProjectIds.value,
+}));
 
 watch(treeConstraintActive, (constrained) => {
     setProjectTreeConstraint(treeExpansionState, constrained);
     expandedProjectIds.value = treeExpansionState.expandedIds;
+    // 折叠覆盖只对当前这轮筛选有意义，退出筛选时清掉，避免影响完整树
+    if (!constrained) collapsedProjectIds.value = new Set();
+});
+
+// 切换筛选/搜索词等于换了一批「自动展开」的目标，上一次的手动折叠不再适用
+watch([searchQuery, activeQuickFilter, selectedGroupId, selectedTags], () => {
+    if (collapsedProjectIds.value.size > 0) collapsedProjectIds.value = new Set();
 });
 
 /** 批量操作仍默认针对可见一级项目，子项目勾选仍可单独加入 selectedIds。 */

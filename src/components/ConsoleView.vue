@@ -26,6 +26,7 @@ import {
 } from '../utils/consoleLogs';
 import { buildRunLogFileName, isHistoryCommandAvailable } from '../utils/runHistory';
 import { formatDuration, isRunSessionActive } from '../utils/runSession';
+import { resolveActiveConsoleTab } from '../utils/consoleTabs';
 
 const { t } = useI18n();
 const projectStore = useProjectStore();
@@ -130,21 +131,27 @@ const activeRunningTabs = computed(() => projectLatestSessions.value
     .map(({ tabId }) => tabId));
 
 watch(projectLatestSessions, (entries) => {
+    let startedTab: string | null = null;
     for (const entry of entries) {
         if (knownLatestSessionIds.get(entry.commandKey) !== entry.sessionId) {
             knownLatestSessionIds.set(entry.commandKey, entry.sessionId);
             closedTabs.value.delete(entry.tabId);
             openTabs.value.add(entry.tabId);
+            // 只有「新起一个还在跑的命令」才值得抢焦点；
+            // 状态变化（running → success）不算，否则打包结束会跳窗口
+            if (isRunSessionActive(entry.session.status)) startedTab = entry.tabId;
         }
     }
-    const runningTabs = activeRunningTabs.value;
-    if (!activeScript.value && runningTabs.length > 0) {
-        activeScript.value = runningTabs[runningTabs.length - 1];
-    } else if (activeScript.value && !runningTabs.includes(activeScript.value) && runningTabs.length > 0) {
-        const current = getSessionForTab(activeScript.value);
-        if (!current || isRunSessionActive(current.status)) return;
-        activeScript.value = runningTabs[runningTabs.length - 1];
-    }
+    const currentTab = activeScript.value;
+    const nextTab = resolveActiveConsoleTab({
+        activeTab: currentTab,
+        openTabs: Array.from(openTabs.value),
+        runningTabs: activeRunningTabs.value,
+        startedTab,
+        // 会话可能已被清理，这种情况才允许把空壳页签换掉
+        activeTabHasSession: currentTab ? !!getSessionForTab(currentTab) : false,
+    });
+    if (nextTab !== currentTab) activeScript.value = nextTab;
 }, { immediate: true, deep: true });
 
 function initOpenTabsFromProject(): void {

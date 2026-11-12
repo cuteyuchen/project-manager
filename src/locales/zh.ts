@@ -1149,6 +1149,8 @@ export default {
     // AI commit message
     aiGenerate: 'AI 生成',
     aiGenerating: '生成中...',
+    aiCancel: '取消生成',
+    aiCancelled: '已取消生成',
     aiSuccess: '已生成提交信息',
     aiSuccessFallback: '已生成提交信息（回退到 {target}）',
     aiError: 'AI 生成失败：{error}',

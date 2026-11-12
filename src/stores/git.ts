@@ -27,6 +27,12 @@ import { summarizeGitStatus } from '../utils/projectGitOverview.ts';
 const REPO_CHECK_MAX_AGE = 60_000;
 const SUMMARY_STATUS_MAX_AGE = 15_000;
 const HISTORY_MAX_AGE = 45_000;
+/** 启动瞬间会同时探测多个项目；并发太高时 git 进程可能创建失败，限制同时探测数 */
+const REPO_CHECK_CONCURRENCY = 4;
+/** 探测失败（不是「不是仓库」）后的重试间隔，用完后等下一次交互再试 */
+const REPO_CHECK_RETRY_DELAYS = [1_000, 3_000, 8_000] as const;
+/** 单次仓库探测超时：网络盘 / 休眠磁盘上的 rev-parse 可能一直不返回 */
+const REPO_CHECK_TIMEOUT_MS = 10_000;
 type GitOperationKind =
   | 'stage'
   | 'unstage'
@@ -83,6 +89,11 @@ export const useGitStore = defineStore('git', () => {
   // Commit message per project (survives tab switches)
   const commitMessage = ref<Record<string, string>>({});
 
+  // AI 提交信息生成状态按项目分桶：生成期间切走页签/项目再回来，
+  // 进行中的状态不能丢（组件卸载不该等于任务结束）。
+  const aiCommitGenerating = ref<Record<string, boolean>>({});
+  const aiCommitControllers = new Map<string, AbortController>();
+
   // Loading states
   const loading = ref(false);
   const operationLoading = ref(false);
@@ -97,10 +108,15 @@ export const useGitStore = defineStore('git', () => {
   const operationCancelling = ref(false);
   const coldStorage = ref(false);
 
-  // Cache timestamps
+  // 缓存时间戳
   const repoCheckedAt = ref<Record<string, number>>({});
   const summaryStatusLoadedAt = ref<Record<string, number>>({});
   const historyLoadedAt = ref<Record<string, number>>({});
+
+  // 探测失败的项目：与「确认不是仓库」区分开。
+  // 失败结果不写进 isGitRepo，否则一次瞬时失败（git 尚未可用、进程创建失败）
+  // 会让 Git 模块在整个会话里消失，只能重启恢复。
+  const repoCheckFailures = ref<Record<string, boolean>>({});
 
   // In-flight request dedupe
   const repoCheckTasks = new Map<string, Promise<boolean>>();
@@ -108,6 +124,13 @@ export const useGitStore = defineStore('git', () => {
   const historyTasks = new Map<string, Promise<void>>();
   const fileHistoryTasks = new Map<string, Promise<void>>();
   let loadingCount = 0;
+
+  // git rev-parse 并发闸门；非响应式，和上面的 *Tasks 容器同一风格
+  const repoCheckQueue: (() => void)[] = [];
+  let repoCheckActive = 0;
+  // 失败重试定时器 / 已重试次数
+  const repoRetryTimers = new Map<string, number>();
+  const repoRetryCounts = new Map<string, number>();
 
   // ─── Getters ─────────────────────────────────────────────────────────────
 
@@ -214,6 +237,87 @@ export const useGitStore = defineStore('git', () => {
 
   // ─── Refresh Actions (on-demand) ────────────────────────────────────────
 
+  /***********************仓库探测的并发与重试*********************/
+
+  function acquireRepoCheckSlot(): Promise<() => void> {
+    return new Promise((resolve) => {
+      const release = () => {
+        repoCheckActive = Math.max(0, repoCheckActive - 1);
+        const next = repoCheckQueue.shift();
+        if (next) next();
+      };
+      const start = () => {
+        repoCheckActive += 1;
+        resolve(release);
+      };
+      if (repoCheckActive < REPO_CHECK_CONCURRENCY) start();
+      else repoCheckQueue.push(start);
+    });
+  }
+
+  async function gitCheckLimited(path: string): Promise<boolean> {
+    const release = await acquireRepoCheckSlot();
+    try {
+      // 网络盘/休眠磁盘上的 git 可能长时间不返回；加超时避免一个探测把并发槽位永久占住，
+      // 也避免调用方（页签解析）一直等下去。
+      return await withRepoCheckTimeout(api.gitCheck(path));
+    } finally {
+      release();
+    }
+  }
+
+  function withRepoCheckTimeout(task: Promise<boolean>): Promise<boolean> {
+    return new Promise<boolean>((resolve, reject) => {
+      const timer = window.setTimeout(() => {
+        reject(new Error(`Git repository check timed out after ${REPO_CHECK_TIMEOUT_MS}ms`));
+      }, REPO_CHECK_TIMEOUT_MS);
+      task.then(
+        (value) => {
+          window.clearTimeout(timer);
+          resolve(value);
+        },
+        (error) => {
+          window.clearTimeout(timer);
+          reject(error);
+        },
+      );
+    });
+  }
+
+  function clearRepoRetry(projectId: string): void {
+    const timer = repoRetryTimers.get(projectId);
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      repoRetryTimers.delete(projectId);
+    }
+    repoRetryCounts.delete(projectId);
+  }
+
+  /**
+   * 探测失败后自动补一次检查。
+   *
+   * 首次启动时 git 可能还没准备好（PATH 未注入、并发创建进程失败），
+   * 这类失败不该让 Git 模块消失到下次重启；退避重试几次，成功即自动恢复。
+   */
+  function scheduleRepoRetry(projectId: string, path: string): void {
+    if (repoRetryTimers.has(projectId)) return;
+    const attempt = repoRetryCounts.get(projectId) ?? 0;
+    const delay = REPO_CHECK_RETRY_DELAYS[attempt];
+    if (delay === undefined) return;
+
+    repoRetryCounts.set(projectId, attempt + 1);
+    const timer = window.setTimeout(() => {
+      repoRetryTimers.delete(projectId);
+      void checkGitRepo(projectId, path, { force: true });
+    }, delay);
+    repoRetryTimers.set(projectId, timer);
+  }
+
+  /** 仓库能力是否已经确认过（失败不算确认，调用方应重新探测） */
+  function isGitCapabilityKnown(projectId: string): boolean {
+    return projectId in isGitRepo.value && !repoCheckFailures.value[projectId];
+  }
+
   async function checkGitRepo(
     projectId: string,
     path: string,
@@ -226,7 +330,7 @@ export const useGitStore = defineStore('git', () => {
       return isGitRepo.value[projectId] || false;
     }
 
-    if (!force && projectId in isGitRepo.value && isFresh(repoCheckedAt.value, projectId, maxAgeMs)) {
+    if (!force && projectId in isGitRepo.value && !repoCheckFailures.value[projectId] && isFresh(repoCheckedAt.value, projectId, maxAgeMs)) {
       return isGitRepo.value[projectId];
     }
 
@@ -237,14 +341,20 @@ export const useGitStore = defineStore('git', () => {
 
     const task = (async () => {
       try {
-        const result = await api.gitCheck(path);
+        const result = await gitCheckLimited(path);
         isGitRepo.value[projectId] = result;
         repoCheckedAt.value[projectId] = Date.now();
+        if (repoCheckFailures.value[projectId]) {
+          delete repoCheckFailures.value[projectId];
+        }
+        clearRepoRetry(projectId);
         return result;
-      } catch {
-        isGitRepo.value[projectId] = false;
-        repoCheckedAt.value[projectId] = Date.now();
-        return false;
+      } catch (e) {
+        // 失败不等于「不是仓库」：保留上一次的结论，标记为未确认并安排重试
+        console.error('Failed to check git repo:', e);
+        repoCheckFailures.value[projectId] = true;
+        scheduleRepoRetry(projectId, path);
+        return isGitRepo.value[projectId] === true;
       }
     })();
 
@@ -263,6 +373,10 @@ export const useGitStore = defineStore('git', () => {
     await api.gitInit(path);
     isGitRepo.value[projectId] = true;
     repoCheckedAt.value[projectId] = Date.now();
+    if (repoCheckFailures.value[projectId]) {
+      delete repoCheckFailures.value[projectId];
+    }
+    clearRepoRetry(projectId);
     await refreshSummaryAndStatus(projectId, path);
   }
 
@@ -937,6 +1051,9 @@ export const useGitStore = defineStore('git', () => {
    * 生成 AI 提交信息，按配置的槽位顺序回退。
    *
    * 返回实际生效的那次尝试，调用方可以据此提示用户「用的不是首选渠道」。
+   *
+   * 生成状态与取消令牌都由 store 持有：组件（GitCommitArea）会被页签切换卸载，
+   * 局部状态会跟着丢失，导致「正在生成」显示不回来、还能再点一次发起第二个请求。
    */
   async function generateAiCommitMessageV3(
     projectId: string,
@@ -947,14 +1064,38 @@ export const useGitStore = defineStore('git', () => {
       stream?: boolean;
     }
   ): Promise<AiFallbackResult> {
-    /***********************AI 提交信息仅使用已暂存内容*********************/
-    const diff = await api.gitDiffForAi(path);
-    if (!diff.trim()) {
-      throw new Error('no_staged');
+    if (aiCommitGenerating.value[projectId]) {
+      throw new Error('ai_busy');
     }
 
-    const systemPrompt = settings.promptTemplate?.trim() ||
-      `Generate a git commit message with these rules:
+    const controller = new AbortController();
+    aiCommitControllers.set(projectId, controller);
+    // 同步置位，抢在第一个 await 之前拦住重复点击
+    aiCommitGenerating.value[projectId] = true;
+
+    const throwIfCancelled = () => {
+      if (controller.signal.aborted) throw new Error('ai_cancelled');
+    };
+
+    try {
+      /***********************无 staged 时先自动暂存，便于 AI 读取 diff*********************/
+      const s = status.value[projectId];
+      const stagedCount = s?.staged?.length ?? 0;
+      const dirtyCount = (s?.unstaged?.length ?? 0) + (s?.untracked?.length ?? 0);
+      if (stagedCount === 0 && dirtyCount > 0) {
+        await stageAll(projectId, path);
+      }
+      throwIfCancelled();
+
+      /***********************AI 提交信息仅使用已暂存内容*********************/
+      const diff = await api.gitDiffForAi(path);
+      throwIfCancelled();
+      if (!diff.trim()) {
+        throw new Error('no_staged');
+      }
+
+      const systemPrompt = settings.promptTemplate?.trim() ||
+        `Generate a git commit message with these rules:
 1. The first line must use Conventional Commits format: <type>(<scope>): <short summary>.
 2. Use one of these types: feat, fix, refactor, chore, docs, style, test, perf.
 3. Add a blank line after the first line, then write a concise body describing the concrete changes.
@@ -962,19 +1103,38 @@ export const useGitStore = defineStore('git', () => {
 5. Keep each line within 72 characters.
 6. Output only the commit message itself, with no extra explanation.`;
 
-    // 槽位是否可用的判断收敛在 buildAiAttempts 里，这里只负责空列表兜底
-    const result = await requestAiTextWithFallback(settings.attempts, {
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: `Git diff:\n\`\`\`\n${diff}\n\`\`\`` },
-      ],
-      maxTokens: 200,
-      temperature: 0.3,
-      stream: settings.stream,
-    });
+      // 槽位是否可用的判断收敛在 buildAiAttempts 里，这里只负责空列表兜底
+      const result = await requestAiTextWithFallback(settings.attempts, {
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: `Git diff:\n\`\`\`\n${diff}\n\`\`\`` },
+        ],
+        maxTokens: 200,
+        temperature: 0.3,
+        stream: settings.stream,
+        signal: controller.signal,
+      });
+      throwIfCancelled();
+      return result;
+    } catch (error) {
+      // 统一成稳定错误码，调用方不必区分各渠道抛出的 AbortError 形态
+      throwIfCancelled();
+      throw error;
+    } finally {
+      if (aiCommitControllers.get(projectId) === controller) {
+        aiCommitControllers.delete(projectId);
+      }
+      delete aiCommitGenerating.value[projectId];
+    }
+  }
 
-    void projectId;
-    return result;
+  function isAiCommitMessageGenerating(projectId: string): boolean {
+    return aiCommitGenerating.value[projectId] === true;
+  }
+
+  /** 取消某项目正在进行的 AI 生成；没有在跑时是空操作 */
+  function cancelAiCommitMessage(projectId: string): void {
+    aiCommitControllers.get(projectId)?.abort();
   }
 
   async function discardUntracked(projectId: string, path: string, files: string[]): Promise<void> {
@@ -1014,14 +1174,30 @@ export const useGitStore = defineStore('git', () => {
     prune(selectedCommitHash.value);
     prune(commitMessage.value);
     prune(repoCheckedAt.value);
+    prune(repoCheckFailures.value);
     prune(summaryStatusLoadedAt.value);
     prune(historyLoadedAt.value);
+    prune(aiCommitGenerating.value);
     pruneDiffSelections(diffSelections.value, diffSelectionOrder, activeProjectIds);
+
+    for (const [projectId, controller] of [...aiCommitControllers.entries()]) {
+      if (alive.has(projectId)) continue;
+      controller.abort();
+      aiCommitControllers.delete(projectId);
+    }
+
+    for (const projectId of [...repoRetryTimers.keys()]) {
+      if (!alive.has(projectId)) clearRepoRetry(projectId);
+    }
+    for (const projectId of [...repoRetryCounts.keys()]) {
+      if (!alive.has(projectId)) repoRetryCounts.delete(projectId);
+    }
   }
 
   return {
     // State
     isGitRepo,
+    repoCheckFailures,
     summary,
     status,
     history,
@@ -1032,6 +1208,7 @@ export const useGitStore = defineStore('git', () => {
     commitFiles,
     selectedCommitHash,
     commitMessage,
+    aiCommitGenerating,
     loading,
     operationLoading,
     activeOperationKind,
@@ -1050,6 +1227,7 @@ export const useGitStore = defineStore('git', () => {
     getTotalChanges,
     getCommitFiles,
     getCommitDetail,
+    isGitCapabilityKnown,
 
     // Refresh
     checkGitRepo,
@@ -1114,5 +1292,7 @@ export const useGitStore = defineStore('git', () => {
     getDiffSelection,
     cleanupRemovedProjects,
     generateAiCommitMessage: generateAiCommitMessageV3,
+    isAiCommitMessageGenerating,
+    cancelAiCommitMessage,
   };
 });
