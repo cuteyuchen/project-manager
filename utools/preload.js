@@ -2154,7 +2154,7 @@ window.services = {
     },
 
     getAppVersion: async () => {
-        return "1.7.4";
+        return "1.7.5";
     },
 
     installUpdate: async (url) => {
