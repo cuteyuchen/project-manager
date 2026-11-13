@@ -164,11 +164,13 @@ async function handleImportProject(path: string) {
     if (info.projectType === 'java' && info.buildTool) {
       project.buildTool = info.buildTool;
       project.hasWrapper = !!info.hasWrapper;
+      project.springBootModule = info.springBootModule;
       project.customCommands = buildJavaPresetCommands(
         info.buildTool,
         !!info.hasWrapper,
         isWindowsPlatform(),
         () => crypto.randomUUID(),
+        info.springBootModule,
       );
     }
 
@@ -710,6 +712,8 @@ onMounted(async () => {
   await runHistoryStore.load();
   await nodeStore.loadRuntimes();
   loaded.value = true;
+  // 后台补齐 Java 构建信息（老数据没有 spring-boot 模块信息），不阻塞首屏
+  void projectStore.refreshJavaBuildInfo();
   if (nativeExitRequestedBeforeLoad) {
     nativeExitRequestedBeforeLoad = false;
     void exitApp();

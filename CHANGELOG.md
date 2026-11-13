@@ -6,6 +6,13 @@
 
 - 修复项目列表面板「Git 改动」「健康异常」计数偏小的问题：计数改为覆盖整棵项目树（含子项目），与筛选命中结果一致；「运行中」按项目自身会话统计，避免父项目聚合子项目被重复计数。
 - 健康扫描中的 Git 改动判定与列表徽标统一口径，仅统计工作区未提交改动（M/A/D），仅领先/落后远端不再被算作「Git 改动」。
+- 修复 Windows 下运行器输出乱码：cmd 报错和 JDK 8 / Maven 输出是 GBK，之前按 UTF-8 解码导致「命令不存在」变成一串 ``；现在按行先试 UTF-8，失败回退 GBK。
+
+### 新功能
+
+- Java 项目新增「安装依赖」预设命令：Maven 执行 `mvn install -DskipTests`，Gradle 执行 `gradle build -x test`；老项目读取 data.json 或刷新时会自动补上，无需删了重加。
+- Maven 聚合工程自动识别唯一带 `spring-boot-maven-plugin` 的模块，「启动服务」改为 `mvn -pl <module> spring-boot:run`，不再对着根 pom 执行导致 “No plugin found for prefix 'spring-boot'”。
+- 运行 Java 构建命令前预检 JDK / Maven / Gradle 与 Wrapper：缺失时直接提示「缺少 JDK 8（配置 JAVA_HOME）、Maven（加入 PATH）」并写入控制台，不再只显示 exit 1。
 
 ### 优化
 

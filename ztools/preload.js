@@ -508,6 +508,33 @@ function scanChildDirs(dirPath, depth, maxDepth, seen) {
     return nodes.sort((a, b) => Number(b.hasGit) - Number(a.hasGit));
 }
 
+/**
+ * Maven 聚合工程里唯一带 spring-boot-maven-plugin 的子模块。
+ * 与 src-tauri/src/project.rs 的 detect_spring_boot_module 保持一致：
+ * 根 pom 自己带插件时返回空，多个候选也不猜。
+ */
+function detectSpringBootModule(rootPath) {
+    try {
+        const rootPom = fs.readFileSync(path.join(rootPath, 'pom.xml'), 'utf-8');
+        if (rootPom.includes('spring-boot-maven-plugin')) return undefined;
+
+        const modules = [...rootPom.matchAll(/<module>([\s\S]*?)<\/module>/g)]
+            .map(match => match[1].trim())
+            .filter(Boolean);
+        const candidates = modules.filter((moduleName) => {
+            try {
+                const pom = fs.readFileSync(path.join(rootPath, moduleName, 'pom.xml'), 'utf-8');
+                return pom.includes('spring-boot-maven-plugin');
+            } catch {
+                return false;
+            }
+        });
+        return candidates.length === 1 ? candidates[0] : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
 const processes = new Map();
 const runnerProcessStates = new Map();
 let outputCallback = null;
@@ -1532,7 +1559,8 @@ window.services = {
                         nodeVersionHint: undefined,
                         projectType: 'java',
                         buildTool,
-                        hasWrapper
+                        hasWrapper,
+                        springBootModule: isMaven ? detectSpringBootModule(projectPath) : undefined
                     };
                 }
 

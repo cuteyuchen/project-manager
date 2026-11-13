@@ -35,6 +35,10 @@ pub struct ProjectInfo {
     /// 免得机器上没装或装了不同版本的 mvn / gradle。
     #[serde(rename = "hasWrapper", skip_serializing_if = "Option::is_none")]
     has_wrapper: Option<bool>,
+    /// Maven 聚合工程里真正带 spring-boot-maven-plugin 的模块（相对路径）。
+    /// 根 pom 自己就是可执行模块时为空；前端据此给 run 命令加 `-pl <module>`。
+    #[serde(rename = "springBootModule", skip_serializing_if = "Option::is_none")]
+    spring_boot_module: Option<String>,
 }
 
 impl ProjectInfo {
@@ -57,6 +61,7 @@ impl ProjectInfo {
             project_type,
             build_tool: None,
             has_wrapper: None,
+            spring_boot_module: None,
         }
     }
 }
@@ -86,6 +91,51 @@ fn pom_has_spring_boot(dir: &Path) -> bool {
     fs::read_to_string(dir.join("pom.xml"))
         .map(|content| content.contains("spring-boot"))
         .unwrap_or(false)
+}
+
+/// 读取 pom.xml 的 `<modules>` 列表。只需处理简单的 `<module>name</module>`，
+/// 不做完整 XML 解析（注释里的示例极少出现在 modules 段）。
+fn read_maven_modules(content: &str) -> Vec<String> {
+    let mut modules = Vec::new();
+    let mut rest = content;
+    while let Some(start) = rest.find("<module>") {
+        let after = &rest[start + "<module>".len()..];
+        let Some(end) = after.find("</module>") else {
+            break;
+        };
+        let name = after[..end].trim();
+        if !name.is_empty() {
+            modules.push(name.to_string());
+        }
+        rest = &after[end + "</module>".len()..];
+    }
+    modules
+}
+
+/// Maven 聚合工程里真正带 spring-boot-maven-plugin 的模块（相对路径）。
+///
+/// 根 pom 自己就是可执行模块时返回 None。多个模块都带插件时也不猜：
+/// 让用户自己改命令，比随便挑一个启动错服务好。
+fn detect_spring_boot_module(dir: &Path) -> Option<String> {
+    let root_pom = fs::read_to_string(dir.join("pom.xml")).ok()?;
+    if root_pom.contains("spring-boot-maven-plugin") {
+        return None;
+    }
+
+    let mut candidates: Vec<String> = read_maven_modules(&root_pom)
+        .into_iter()
+        .filter(|module| {
+            fs::read_to_string(dir.join(module).join("pom.xml"))
+                .map(|content| content.contains("spring-boot-maven-plugin"))
+                .unwrap_or(false)
+        })
+        .collect();
+
+    if candidates.len() == 1 {
+        candidates.pop()
+    } else {
+        None
+    }
 }
 
 #[derive(Deserialize)]
@@ -219,6 +269,11 @@ pub async fn scan_project(path: String) -> Result<ProjectInfo, String> {
                     project_path.join("gradlew").exists()
                         || project_path.join("gradlew.bat").exists()
                 };
+                let spring_boot_module = if is_maven {
+                    detect_spring_boot_module(project_path)
+                } else {
+                    None
+                };
 
                 return Ok(ProjectInfo {
                     name: dir_name,
@@ -233,6 +288,7 @@ pub async fn scan_project(path: String) -> Result<ProjectInfo, String> {
                     project_type: "java".to_string(),
                     build_tool: Some(build_tool.to_string()),
                     has_wrapper: Some(has_wrapper),
+                    spring_boot_module,
                 });
             }
 
@@ -638,7 +694,7 @@ pub async fn scan_import_tree(path: String) -> Result<Vec<ImportNode>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{scan_child_dirs, ImportNode, MAX_SCAN_DEPTH};
+    use super::{detect_spring_boot_module, scan_child_dirs, ImportNode, MAX_SCAN_DEPTH};
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -872,6 +928,82 @@ mod tests {
             pkg.children.is_empty(),
             "有构建清单但非仓库根的目录不应向内递归，实际子节点 {:?}",
             names(&pkg.children)
+        );
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    /***********************Maven 聚合工程的启动模块识别*********************/
+
+    fn write_pom(path: &Path, content: &str) {
+        fs::write(path, content).expect("pom should be written");
+    }
+
+    #[test]
+    fn detects_single_spring_boot_module_in_aggregator() {
+        let root = create_temp_dir("boot-module");
+        write_pom(
+            &root.join("pom.xml"),
+            "<project><modules><module>api</module><module>web</module></modules></project>",
+        );
+        make_dir(&root, "api", &[]);
+        write_pom(&root.join("api/pom.xml"), "<project></project>");
+        make_dir(&root, "web", &[]);
+        write_pom(
+            &root.join("web/pom.xml"),
+            "<project><build><plugins><plugin><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins></build></project>",
+        );
+
+        assert_eq!(
+            detect_spring_boot_module(&root).as_deref(),
+            Some("web"),
+            "聚合工程根目录没有 boot 插件时，应定位到唯一带插件的子模块",
+        );
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn root_boot_module_keeps_command_at_root() {
+        let root = create_temp_dir("boot-root");
+        write_pom(
+            &root.join("pom.xml"),
+            "<project><build><plugins><plugin><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins></build><modules><module>web</module></modules></project>",
+        );
+        make_dir(&root, "web", &[]);
+        write_pom(
+            &root.join("web/pom.xml"),
+            "<project><build><plugins><plugin><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins></build></project>",
+        );
+
+        assert_eq!(
+            detect_spring_boot_module(&root),
+            None,
+            "根 pom 自己就是可执行模块时，不应再跳到子模块",
+        );
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn multiple_boot_modules_are_not_guessed() {
+        let root = create_temp_dir("boot-multiple");
+        write_pom(
+            &root.join("pom.xml"),
+            "<project><modules><module>a</module><module>b</module></modules></project>",
+        );
+        for name in ["a", "b"] {
+            make_dir(&root, name, &[]);
+            write_pom(
+                &root.join(name).join("pom.xml"),
+                "<project><build><plugins><plugin><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins></build></project>",
+            );
+        }
+
+        assert_eq!(
+            detect_spring_boot_module(&root),
+            None,
+            "多个可启动模块时不能随便挑一个，交给用户自己改命令",
         );
 
         fs::remove_dir_all(&root).ok();

@@ -12,7 +12,7 @@ import { normalizeAiApiType, requestAiText } from '../utils/ai';
 import { buildAiAttempts } from '../utils/aiFallback.ts';
 import { mergeDetectedEditors } from '../utils/editorDetection';
 import { isAbortError } from '../utils/network';
-import { ensureNodeInstallCommand } from '../utils/projectCommands';
+import { ensureJavaCommands, ensureNodeInstallCommand } from '../utils/projectCommands';
 import { sortNodeVersions } from '../utils/nodeDefaultState';
 import { createTerminalConfig, getTerminalDuplicateKey, normalizeTerminalConfigs } from '../utils/terminalConfig';
 import {
@@ -583,13 +583,14 @@ async function exportData() {
 
 function normalizeProject(project: any): Project | null {
   if (!project || !project.path) return null;
-  return ensureNodeInstallCommand({
+  return ensureJavaCommands(ensureNodeInstallCommand({
     id: typeof project.id === 'string' && project.id ? project.id : crypto.randomUUID(),
     name: project.name || project.path.split(/[\\/]/).pop() || 'Untitled',
     path: project.path,
     type: project.type === 'java' ? 'java' : (project.type === 'other' ? 'other' : 'node'),
     buildTool: project.buildTool === 'maven' || project.buildTool === 'gradle' ? project.buildTool : undefined,
     hasWrapper: typeof project.hasWrapper === 'boolean' ? project.hasWrapper : undefined,
+    springBootModule: typeof project.springBootModule === 'string' ? project.springBootModule : undefined,
     gitRemoteUrl: typeof project.gitRemoteUrl === 'string' && project.gitRemoteUrl ? project.gitRemoteUrl : undefined,
     gitBranch: typeof project.gitBranch === 'string' && project.gitBranch ? project.gitBranch : undefined,
     gitConfigured: typeof project.gitConfigured === 'boolean' ? project.gitConfigured : undefined,
@@ -605,7 +606,7 @@ function normalizeProject(project: any): Project | null {
     pinOrder: project.pinOrder ?? undefined,
     editorId: project.editorId || undefined,
     parentId: typeof project.parentId === 'string' && project.parentId ? project.parentId : undefined,
-  }, t('project.installDependencies'));
+  }, t('project.installDependencies')), t('project.installDependencies'));
 }
 
 function normalizeSettingsPayload(settings: any): Settings {

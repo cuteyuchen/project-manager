@@ -785,6 +785,7 @@ export default {
     typeOther: 'Other',
     javaCommand: {
       run: 'Run Service',
+      install: 'Install Dependencies',
       package: 'Package (skip tests)',
       test: 'Run Tests'
     },

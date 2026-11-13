@@ -5,6 +5,7 @@ import {
   resolveJavaBuildExecutable,
   buildJavaCommand,
   buildJavaPresetCommands,
+  ensureJavaCommands,
   getCustomCommandDisplayName,
   MAVEN_COMMAND_PRESETS,
   GRADLE_COMMAND_PRESETS,
@@ -41,6 +42,16 @@ assert.equal(
   'mvn clean package -DskipTests',
 );
 assert.equal(buildJavaCommand('maven', false, false, ''), 'mvn', '空参数不该留下尾随空格');
+assert.equal(
+  buildJavaCommand('maven', false, false, 'spring-boot:run', 'DevBase-web'),
+  'mvn -pl DevBase-web spring-boot:run',
+  '聚合工程必须用 -pl 锁定启动模块，否则根 pom 找不到 spring-boot 插件',
+);
+assert.equal(
+  buildJavaCommand('gradle', false, false, 'bootRun', 'web'),
+  'gradle bootRun',
+  'Gradle 的模块路径语法不同，暂不套用 Maven 的 -pl',
+);
 
 /***********************预设命令*********************/
 
@@ -49,14 +60,33 @@ assert.equal(buildJavaCommand('maven', false, false, ''), 'mvn', '空参数不�
   assert.equal(commands.length, MAVEN_COMMAND_PRESETS.length);
   assert.deepEqual(
     commands.map(c => c.command),
-    ['mvnw.cmd spring-boot:run', 'mvnw.cmd clean package -DskipTests', 'mvnw.cmd test'],
+    [
+      'mvnw.cmd spring-boot:run',
+      'mvnw.cmd install -DskipTests',
+      'mvnw.cmd clean package -DskipTests',
+      'mvnw.cmd test',
+    ],
   );
   assert.deepEqual(
     commands.map(c => c.builtinId),
-    ['java_run', 'java_package', 'java_test'],
+    ['java_run', 'java_install', 'java_package', 'java_test'],
     '显示名靠 builtinId 在渲染时翻译，不把语言写死进数据',
   );
   assert(commands.every(c => c.id === 'fixed-id'), 'id 由调用方注入，便于测试与去重');
+}
+
+{
+  const commands = buildJavaPresetCommands('maven', false, true, () => 'x', 'DevBase-web');
+  assert.equal(
+    commands[0].command,
+    'mvn -pl DevBase-web spring-boot:run',
+    '扫描到 boot 子模块后，启动服务应带上 -pl（不能用 -am，否则上游模块也会执行 run）',
+  );
+  assert.equal(
+    commands[1].command,
+    'mvn install -DskipTests',
+    '安装依赖仍在根工程执行，一次装完所有模块',
+  );
 }
 
 {
@@ -64,9 +94,94 @@ assert.equal(buildJavaCommand('maven', false, false, ''), 'mvn', '空参数不�
   assert.equal(commands.length, GRADLE_COMMAND_PRESETS.length);
   assert.deepEqual(
     commands.map(c => c.command),
-    ['gradle bootRun', 'gradle build -x test', 'gradle test'],
+    ['gradle bootRun', 'gradle build -x test', 'gradle build -x test', 'gradle test'],
   );
 }
+
+/***********************老项目补齐安装依赖与启动模块*********************/
+
+function javaProject(overrides: Record<string, unknown> = {}) {
+  return {
+    type: 'java',
+    buildTool: 'maven',
+    hasWrapper: false,
+    customCommands: [
+      { id: 'run', name: 'java_run', command: 'mvn spring-boot:run', builtinId: 'java_run' },
+      { id: 'pkg', name: 'java_package', command: 'mvn clean package -DskipTests', builtinId: 'java_package' },
+      { id: 'test', name: 'java_test', command: 'mvn test', builtinId: 'java_test' },
+      { id: 'mine', name: '自定义命令', command: 'mvn -v' },
+    ],
+    ...overrides,
+  };
+}
+
+{
+  const ensured = ensureJavaCommands(javaProject(), '安装依赖', true) as any;
+  const install = ensured.customCommands.find((c: any) => c.builtinId === 'java_install');
+  assert(install, '老项目升级后应自动补上「安装依赖」');
+  assert.equal(install.command, 'mvn install -DskipTests');
+  assert.equal(
+    ensured.customCommands.findIndex((c: any) => c.builtinId === 'java_install'),
+    1,
+    '安装依赖应紧跟启动服务，不抢一级页快捷命令的位置',
+  );
+  assert(
+    ensured.customCommands.some((c: any) => c.id === 'mine' && c.command === 'mvn -v'),
+    '用户自建命令必须原样保留',
+  );
+}
+
+{
+  const ensured = ensureJavaCommands(
+    javaProject({ springBootModule: 'DevBase-web' }),
+    '安装依赖',
+    true,
+  ) as any;
+  assert.equal(
+    ensured.customCommands.find((c: any) => c.builtinId === 'java_run').command,
+    'mvn -pl DevBase-web spring-boot:run',
+    '仍是默认写法的启动命令要跟随扫描结果切到 boot 子模块',
+  );
+}
+
+{
+  const customRun = 'mvn spring-boot:run -Dspring-boot.run.profiles=dev';
+  const ensured = ensureJavaCommands(
+    javaProject({
+      springBootModule: 'DevBase-web',
+      customCommands: [
+        { id: 'run', name: 'java_run', command: customRun, builtinId: 'java_run' },
+      ],
+    }),
+    '安装依赖',
+    true,
+  ) as any;
+  assert.equal(
+    ensured.customCommands.find((c: any) => c.builtinId === 'java_run').command,
+    customRun,
+    '用户手动加过参数的启动命令不能被覆盖',
+  );
+}
+
+{
+  const ensured = ensureJavaCommands(
+    javaProject({ hasWrapper: true }),
+    '安装依赖',
+    true,
+  ) as any;
+  assert.equal(
+    ensured.customCommands.find((c: any) => c.builtinId === 'java_run').command,
+    'mvnw.cmd spring-boot:run',
+    '后来生成 mvnw 后，默认启动命令应切到 wrapper',
+  );
+  assert.equal(
+    ensured.customCommands.find((c: any) => c.builtinId === 'java_install').command,
+    'mvnw.cmd install -DskipTests',
+    '安装依赖也要走 wrapper',
+  );
+}
+
+
 
 /***********************显示名按当前语言翻译*********************/
 
@@ -210,13 +325,27 @@ assert(
   '直接拖拽目录导入 Java 项目时必须保留 java 类型并生成预设命令',
 );
 assert(
+  /project\.springBootModule = info\.springBootModule/.test(app)
+  && /springBootModule/.test(projectRs)
+  && /detect_spring_boot_module/.test(projectRs),
+  '扫描到的 Spring Boot 子模块要传到前端，否则聚合工程启动命令仍会打错目标',
+);
+assert(
+  /refreshJavaBuildInfo\(\)/.test(app)
+  && /function refreshJavaBuildInfo/.test(readFileSync(resolve(root, 'src/stores/project.ts'), 'utf8')),
+  '启动后要在后台补齐老 Java 项目的 spring-boot 模块信息',
+);
+assert(
+  /ensureJavaCommands/.test(readFileSync(resolve(root, 'src/utils/persistence.ts'), 'utf8')),
+  '读取 data.json 时要给老 Java 项目补安装依赖命令',
+);
+assert(
   /project\.type === 'java' \? 'java'/.test(settingsView)
   && /buildTool: project\.buildTool/.test(settingsView),
   '备份导入不能把 Java 项目误归成 Node，且必须保留构建工具信息',
 );
 
 /***********************Java 不该被注入 Node 环境*********************/
-
 const projectStore = readFileSync(resolve(root, 'src/stores/project.ts'), 'utf8');
 assert(
   /if \(project\.type !== 'node' \|\| !project\.packageManager\)/.test(projectStore),
@@ -225,6 +354,26 @@ assert(
 assert(
   /p\.type === 'java' && info\.buildTool/.test(projectStore),
   '刷新项目时应更新 Java 的构建工具与 wrapper 状态',
+);
+assert(
+  /ensureJavaCommands\(updated, installCommandName\)/.test(projectStore),
+  '刷新扫描到 spring-boot 子模块后要同步校正启动命令',
+);
+
+/***********************缺少 JDK / Maven 时要提前提示*********************/
+
+const runnerRs = readFileSync(resolve(root, 'src-tauri/src/runner.rs'), 'utf8');
+assert(
+  /preflight_build_command\(&command, &path\)\?/.test(runnerRs),
+  '启动 Java 构建命令前必须先检查环境，不能等 cmd 报「不是内部或外部命令」',
+);
+assert(
+  runnerRs.includes('缺少') && runnerRs.includes('JAVA_HOME'),
+  '环境缺失提示要说明缺 JDK / Maven 以及 JAVA_HOME',
+);
+assert(
+  runnerRs.includes('encoding_rs::GBK'),
+  'Windows 控制台输出（cmd / JDK8）是 GBK，必须回退解码，否则报错全是乱码',
 );
 
 console.log('javaProjectSupport tests passed');

@@ -5,7 +5,7 @@ import { useSettingsStore } from '../stores/settings';
 import { useNodeStore } from '../stores/node';
 import { useUsageStore } from '../stores/usage';
 import type { AppDefaultNode, NodeVersion, Project, ProjectGroup, Settings, UsageData } from '../types';
-import { ensureNodeInstallCommand } from './projectCommands';
+import { ensureJavaCommands, ensureNodeInstallCommand } from './projectCommands';
 import { createPersistenceSaveQueue } from './persistenceQueue';
 import { clampWorkspaceExplorerWidth } from './workspaceExplorerLayout';
 import { normalizeUiSize } from './uiSize';
@@ -274,9 +274,10 @@ export async function loadData(): Promise<PersistenceLoadResult> {
       const settingsStore = useSettingsStore();
       const installCommandName = settingsStore.settings.locale === 'en' ? 'Install Dependencies' : '安装依赖';
 
-      projectStore.projects = data.projects.map((p: any) => ensureNodeInstallCommand({
+      projectStore.projects = data.projects.map((p: any) => ensureJavaCommands(ensureNodeInstallCommand({
         ...p,
         type: p.type || 'node',
+        springBootModule: typeof p.springBootModule === 'string' ? p.springBootModule : undefined,
         gitRemoteUrl: typeof p.gitRemoteUrl === 'string' ? p.gitRemoteUrl : undefined,
         gitBranch: typeof p.gitBranch === 'string' ? p.gitBranch : undefined,
         gitConfigured: p.gitConfigured ?? undefined,
@@ -299,7 +300,7 @@ export async function loadData(): Promise<PersistenceLoadResult> {
         frontendEnvScannedAt: typeof p.frontendEnvScannedAt === 'number' ? p.frontendEnvScannedAt : undefined,
         terminalInjectNode: typeof p.terminalInjectNode === 'boolean' ? p.terminalInjectNode : undefined,
         nodeRuntimeId: typeof p.nodeRuntimeId === 'string' ? p.nodeRuntimeId : undefined,
-      }, installCommandName));
+      }, installCommandName), installCommandName));
 
       normalizedDataChanged = projectStore.projects.some((project: Project, index: number) => {
         const originalCommands = Array.isArray(data.projects[index]?.customCommands) ? data.projects[index].customCommands : [];

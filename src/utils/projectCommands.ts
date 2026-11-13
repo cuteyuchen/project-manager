@@ -42,6 +42,9 @@ function getBuiltinCommandLabelByLocale(builtinId: CustomCommand['builtinId'], l
   if (builtinId === 'java_run') {
     return locale === 'en' ? 'Run Service' : '启动服务';
   }
+  if (builtinId === 'java_install') {
+    return locale === 'en' ? 'Install Dependencies' : '安装依赖';
+  }
   if (builtinId === 'java_package') {
     return locale === 'en' ? 'Package (skip tests)' : '打包（跳过测试）';
   }
@@ -109,9 +112,12 @@ export interface JavaCommandPreset {
  * Maven 预设。
  * 打包默认跳过测试：装依赖/首次编译时跑全量测试往往要等很久，
  * 需要跑测试的话有独立的 test 条目。
+ * 安装依赖用 install 而不是 dependency:go-offline：多模块工程里兄弟模块的
+ * SNAPSHOT 只有 install 到本地仓库后才解析得到。
  */
 export const MAVEN_COMMAND_PRESETS: JavaCommandPreset[] = [
   { builtinId: 'java_run', args: 'spring-boot:run' },
+  { builtinId: 'java_install', args: 'install -DskipTests' },
   { builtinId: 'java_package', args: 'clean package -DskipTests' },
   { builtinId: 'java_test', args: 'test' },
 ];
@@ -119,6 +125,7 @@ export const MAVEN_COMMAND_PRESETS: JavaCommandPreset[] = [
 /** Gradle 预设 */
 export const GRADLE_COMMAND_PRESETS: JavaCommandPreset[] = [
   { builtinId: 'java_run', args: 'bootRun' },
+  { builtinId: 'java_install', args: 'build -x test' },
   { builtinId: 'java_package', args: 'build -x test' },
   { builtinId: 'java_test', args: 'test' },
 ];
@@ -144,15 +151,29 @@ export function resolveJavaBuildExecutable(
   return isWindows ? 'gradlew.bat' : './gradlew';
 }
 
-/** 组装一条完整的 Java 命令 */
+/**
+ * 组装一条完整的 Java 命令。
+ *
+ * springBootModule 只对 Maven 生效：聚合工程根 pom 通常没有
+ * spring-boot-maven-plugin，直接 `mvn spring-boot:run` 会报
+ * “No plugin found for prefix 'spring-boot'”。
+ * 用 `-pl <module>` 只让该模块执行 goal；不能加 `-am`，否则上游模块
+ * 也会执行 spring-boot:run，同样会报找不到插件。
+ * 依赖模块由「安装依赖」先 install 到本地仓库。
+ */
 export function buildJavaCommand(
   buildTool: 'maven' | 'gradle',
   hasWrapper: boolean,
   isWindows: boolean,
   args: string,
+  springBootModule?: string,
 ): string {
   const executable = resolveJavaBuildExecutable(buildTool, hasWrapper, isWindows);
-  return `${executable} ${args}`.trim();
+  const module = springBootModule?.trim();
+  const scopedArgs = module && buildTool === 'maven'
+    ? `-pl ${module} ${args}`.trim()
+    : args;
+  return `${executable} ${scopedArgs}`.trim();
 }
 
 /**
@@ -171,6 +192,7 @@ export function buildJavaPresetCommands(
   hasWrapper: boolean,
   isWindows: boolean,
   createId: () => string,
+  springBootModule?: string,
 ): CustomCommand[] {
   const presets = buildTool === 'maven' ? MAVEN_COMMAND_PRESETS : GRADLE_COMMAND_PRESETS;
   return presets.map(preset => ({
@@ -178,8 +200,108 @@ export function buildJavaPresetCommands(
     // name 作为兜底：旧版本或不认识该 builtinId 时至少能看出是什么命令
     name: preset.builtinId,
     builtinId: preset.builtinId,
-    command: buildJavaCommand(buildTool, hasWrapper, isWindows, preset.args),
+    command: buildJavaCommand(
+      buildTool,
+      hasWrapper,
+      isWindows,
+      preset.args,
+      preset.builtinId === 'java_run' ? springBootModule : undefined,
+    ),
   }));
+}
+
+/** 某个预设在不同 wrapper / 模块写法下的默认命令，用于判断命令是否被用户改过 */
+function buildJavaPresetVariants(
+  buildTool: 'maven' | 'gradle',
+  isWindows: boolean,
+  preset: JavaCommandPreset,
+  springBootModule?: string,
+): Set<string> {
+  const variants = new Set<string>();
+  for (const hasWrapper of [false, true]) {
+    variants.add(buildJavaCommand(buildTool, hasWrapper, isWindows, preset.args));
+    if (preset.builtinId === 'java_run' && buildTool === 'maven' && springBootModule) {
+      variants.add(buildJavaCommand(buildTool, hasWrapper, isWindows, preset.args, springBootModule));
+    }
+  }
+  return variants;
+}
+
+/**
+ * 补齐/校正 Java 项目的内置命令。
+ *
+ * 用途有两个：
+ * 1. 老项目升级后补上「安装依赖」按钮；
+ * 2. 扫描发现 spring-boot 子模块后，把仍然是默认写法的「启动服务」
+ *    改成 `-pl <module> spring-boot:run`。
+ *
+ * 只改「看起来还是默认值」的命令，用户手动加过参数的一律不动。
+ */
+export function ensureJavaCommands<T extends Pick<Project, 'type' | 'buildTool' | 'hasWrapper' | 'springBootModule' | 'customCommands'>>(
+  project: T,
+  installCommandName: string,
+  isWindows = isWindowsPlatform(),
+): T {
+  if (project.type !== 'java' || !project.buildTool) {
+    return project;
+  }
+
+  const buildTool = project.buildTool;
+  const presets = buildJavaPresetCommands(
+    buildTool,
+    !!project.hasWrapper,
+    isWindows,
+    () => crypto.randomUUID(),
+    project.springBootModule,
+  );
+  const presetArgs = new Map(
+    (buildTool === 'maven' ? MAVEN_COMMAND_PRESETS : GRADLE_COMMAND_PRESETS)
+      .map(preset => [preset.builtinId, preset.args]),
+  );
+
+  const commands: CustomCommand[] = [];
+  let hasInstall = false;
+
+  for (const command of Array.isArray(project.customCommands) ? project.customCommands : []) {
+    if (!command.name || !command.command) continue;
+    const preset = command.builtinId
+      ? presets.find(item => item.builtinId === command.builtinId)
+      : undefined;
+
+    if (!preset) {
+      commands.push(command);
+      continue;
+    }
+
+    if (command.builtinId === 'java_install') {
+      hasInstall = true;
+      // 安装命令总是对齐最新的 wrapper / 参数，避免 mvnw 生成后还跑全局 mvn
+      commands.push({ ...command, command: preset.command });
+      continue;
+    }
+
+    // 只有仍处于默认写法时才跟随构建工具/模块更新，保留用户自改的命令
+    const args = presetArgs.get(command.builtinId as JavaCommandPreset['builtinId']) ?? '';
+    const variants = buildJavaPresetVariants(
+      buildTool,
+      isWindows,
+      { builtinId: command.builtinId as JavaCommandPreset['builtinId'], args },
+      project.springBootModule,
+    );
+    commands.push(variants.has(command.command) ? { ...command, command: preset.command } : command);
+  }
+
+  if (!hasInstall) {
+    const installPreset = presets.find(preset => preset.builtinId === 'java_install');
+    if (installPreset) {
+      // 放在「启动服务」后面，避免抢掉一级页快捷命令的位置
+      const runIndex = commands.findIndex(command => command.builtinId === 'java_run');
+      const insertAt = runIndex >= 0 ? runIndex + 1 : 0;
+      commands.splice(insertAt, 0, { ...installPreset, name: installCommandName });
+    }
+  }
+
+  return { ...project, customCommands: commands };
 }
 
 export function getCustomCommandDisplayNameByLocale(

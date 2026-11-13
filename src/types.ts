@@ -5,6 +5,7 @@ import type { UiSize } from './utils/uiSize';
 export type BuiltinCommandId =
   | 'install_dependencies'
   | 'java_run'
+  | 'java_install'
   | 'java_package'
   | 'java_test';
 
@@ -171,6 +172,11 @@ export interface Project {
   buildTool?: 'maven' | 'gradle';
   /** 是否存在 mvnw / gradlew，有则命令优先走 wrapper */
   hasWrapper?: boolean;
+  /**
+   * Maven 聚合工程里真正带 spring-boot-maven-plugin 的模块（相对路径）。
+   * 根 pom 自己就是可执行模块时为空；「启动服务」会带上 -pl <module>。
+   */
+  springBootModule?: string;
   gitRemoteUrl?: string;
   gitBranch?: string;
   gitConfigured?: boolean;

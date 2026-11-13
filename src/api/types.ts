@@ -67,6 +67,8 @@ export interface ProjectInfo {
     buildTool?: 'maven' | 'gradle';
     /** 是否存在 mvnw / gradlew，有则优先用 wrapper */
     hasWrapper?: boolean;
+    /** Maven 聚合工程里带 spring-boot-maven-plugin 的模块（相对路径） */
+    springBootModule?: string;
 }
 
 /** 导入候选（批量导入列表项的展示形状） */

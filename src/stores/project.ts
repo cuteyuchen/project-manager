@@ -11,6 +11,7 @@ import { useNavMemoryStore } from './navMemory.ts';
 import { useWorkspaceEditorStore } from './workspaceEditor';
 import { useRunHistoryStore } from './runHistory';
 import {
+  ensureJavaCommands,
   getCustomCommandDisplayNameByLocale,
   getProjectCommandRunId,
   type ProjectCommandType,
@@ -884,7 +885,48 @@ export const useProjectStore = defineStore('project', () => {
     delete partialOutput.value[commandKey];
   }
 
+  /**
+   * 启动后在后台补齐 Java 项目的构建信息。
+   *
+   * 老数据里没有 springBootModule；不补的话聚合工程的「启动服务」
+   * 会一直对着根 pom 执行 spring-boot:run，永远报找不到插件。
+   * 只扫描 Java 项目，失败静默交给手动刷新。
+   */
+  async function refreshJavaBuildInfo(): Promise<void> {
+    const installCommandName = useSettingsStore().settings.locale === 'en'
+      ? 'Install Dependencies'
+      : '安装依赖';
+    const targets = projects.value.filter(project => project.type === 'java' && project.buildTool);
+
+    await Promise.all(targets.map(async (project) => {
+      try {
+        const info = await api.scanProject(project.path);
+        if (info.projectType !== 'java' || !info.buildTool) return;
+        if (
+          project.springBootModule === info.springBootModule
+          && project.hasWrapper === !!info.hasWrapper
+          && project.buildTool === info.buildTool
+        ) {
+          return;
+        }
+        const index = projects.value.findIndex(candidate => candidate.id === project.id);
+        if (index === -1) return;
+        projects.value[index] = ensureJavaCommands({
+          ...projects.value[index],
+          buildTool: info.buildTool,
+          hasWrapper: !!info.hasWrapper,
+          springBootModule: info.springBootModule,
+        }, installCommandName);
+      } catch {
+        // 路径暂时不可用（外置盘未挂载等）时保持原状
+      }
+    }));
+  }
+
   async function refreshAll() {
+    const installCommandName = useSettingsStore().settings.locale === 'en'
+      ? 'Install Dependencies'
+      : '安装依赖';
     const updates = await Promise.all(
       projects.value.map(async (p) => {
         try {
@@ -919,7 +961,15 @@ export const useProjectStore = defineStore('project', () => {
         // 不刷新的话命令会一直用全局 mvn。已配好的自定义命令不动，
         // 免得覆盖用户手改过的参数。
         if (info && p.type === 'java' && info.buildTool) {
-          return { ...nextProject, buildTool: info.buildTool, hasWrapper: !!info.hasWrapper };
+          const updated: Project = {
+            ...nextProject,
+            buildTool: info.buildTool,
+            hasWrapper: !!info.hasWrapper,
+            springBootModule: info.springBootModule,
+          };
+          // 同一次刷新里补上「安装依赖」并校正 spring-boot 启动模块，
+          // 老项目不用删了重加
+          return ensureJavaCommands(updated, installCommandName);
         }
 
         return nextProject;
@@ -1163,6 +1213,7 @@ export const useProjectStore = defineStore('project', () => {
     clearLog,
     clearSessionOutput,
     refreshAll,
+    refreshJavaBuildInfo,
     scanFrontendEnvForProject,
     scanFrontendEnvForAll,
     pinProject,

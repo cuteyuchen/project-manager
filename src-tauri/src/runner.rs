@@ -148,7 +148,7 @@ impl StreamDecoder {
         let mut lines = Vec::new();
         while let Some(pos) = self.pending.iter().position(|&b| b == b'\n') {
             let raw: Vec<u8> = self.pending.drain(..=pos).collect();
-            let text = String::from_utf8_lossy(&raw);
+            let text = decode_console_line(&raw);
             lines.push(text.trim_end_matches(['\r', '\n']).to_string());
         }
         let partial = pending_utf8_prefix(&self.pending);
@@ -157,7 +157,38 @@ impl StreamDecoder {
 
     fn finish(&mut self) -> Option<String> {
         let leftover = std::mem::take(&mut self.pending);
-        pending_utf8_prefix(&leftover)
+        if leftover.is_empty() {
+            return None;
+        }
+        let text = decode_console_line(&leftover);
+        let trimmed = text.trim_end_matches(['\r', '\n']);
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    }
+}
+
+/// 解码控制台输出。
+///
+/// Windows 下 cmd 自身的中文报错和 JDK8 / Maven 的输出是 GBK（代码页 936），
+/// 直接按 UTF-8 解会变成一片 “�”，用户根本看不出是「命令不存在」还是编译失败。
+/// 先按 UTF-8 解，失败再退回 GBK；npm 等输出 UTF-8 的工具不受影响。
+fn decode_console_line(raw: &[u8]) -> String {
+    match std::str::from_utf8(raw) {
+        Ok(text) => text.to_string(),
+        Err(_) => {
+            #[cfg(target_os = "windows")]
+            {
+                let (decoded, _, _) = encoding_rs::GBK.decode(raw);
+                decoded.into_owned()
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                String::from_utf8_lossy(raw).into_owned()
+            }
+        }
     }
 }
 
@@ -173,6 +204,141 @@ fn pending_utf8_prefix(bytes: &[u8]) -> Option<String> {
         None
     } else {
         Some(valid.to_string())
+    }
+}
+
+/// 判断可执行文件是否在 PATH 中（Windows 用 where，Unix 用 which）
+fn executable_in_path(name: &str) -> bool {
+    #[cfg(target_os = "windows")]
+    let status = Command::new("where")
+        .arg(name)
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+
+    #[cfg(not(target_os = "windows"))]
+    let status = Command::new("which")
+        .arg(name)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+
+    status.map(|code| code.success()).unwrap_or(false)
+}
+
+fn java_runtime_available() -> bool {
+    if let Ok(home) = std::env::var("JAVA_HOME") {
+        let exe = if cfg!(target_os = "windows") {
+            "java.exe"
+        } else {
+            "java"
+        };
+        if std::path::Path::new(home.trim())
+            .join("bin")
+            .join(exe)
+            .exists()
+        {
+            return true;
+        }
+    }
+    executable_in_path("java")
+}
+
+fn read_pom_tag(content: &str, tag: &str) -> Option<String> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let start = content.find(&open)? + open.len();
+    let end = content[start..].find(&close)? + start;
+    let value = content[start..end].trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+/// 从 pom.xml 里读项目声明的 Java 版本，提示时能说清要装 JDK 8 还是 17。
+fn required_java_version(project_path: &str) -> Option<String> {
+    let pom = std::fs::read_to_string(std::path::Path::new(project_path).join("pom.xml")).ok()?;
+    let version = [
+        "java.version",
+        "maven.compiler.release",
+        "maven.compiler.source",
+    ]
+    .iter()
+    .find_map(|tag| read_pom_tag(&pom, tag))?;
+    // 1.8 -> 8，17 / 21 原样保留
+    Some(
+        version
+            .strip_prefix("1.")
+            .unwrap_or(&version)
+            .trim()
+            .to_string(),
+    )
+}
+
+/// 运行 Java 构建命令前先确认 JDK / 构建工具是否可用。
+///
+/// 等到 cmd 里才报“'mvn' 不是内部或外部命令”，用户只能看到一串乱码，
+/// 既不知道缺什么，也不知道该装什么。这里在启动前给出可操作的提示。
+fn preflight_build_command(command: &str, project_path: &str) -> Result<(), String> {
+    let program = command.trim().split_whitespace().next().unwrap_or("");
+    let program = program
+        .trim_matches(|c| c == '"' || c == '\'')
+        .to_ascii_lowercase();
+
+    let (tool, wrapper_file) = match program.as_str() {
+        "mvn" | "mvn.cmd" => ("Maven", None),
+        "mvnw" | "mvnw.cmd" | "./mvnw" => (
+            "Maven",
+            Some(if cfg!(target_os = "windows") {
+                "mvnw.cmd"
+            } else {
+                "mvnw"
+            }),
+        ),
+        "gradle" | "gradle.bat" => ("Gradle", None),
+        "gradlew" | "gradlew.bat" | "./gradlew" => (
+            "Gradle",
+            Some(if cfg!(target_os = "windows") {
+                "gradlew.bat"
+            } else {
+                "gradlew"
+            }),
+        ),
+        // 不是 Java 构建命令就不插手，npm / 自定义脚本保持原样
+        _ => return Ok(()),
+    };
+
+    let mut missing: Vec<String> = Vec::new();
+
+    if !java_runtime_available() {
+        let jdk = match required_java_version(project_path) {
+            Some(version) => format!("JDK {version}（配置 JAVA_HOME）"),
+            None => "JDK（配置 JAVA_HOME）".to_string(),
+        };
+        missing.push(jdk);
+    }
+
+    match wrapper_file {
+        Some(file) => {
+            if !std::path::Path::new(project_path).join(file).exists() {
+                missing.push(format!("{file}（项目根目录未找到）"));
+            }
+        }
+        None => {
+            if !executable_in_path(if tool == "Maven" { "mvn" } else { "gradle" }) {
+                missing.push(format!("{tool}（加入 PATH）"));
+            }
+        }
+    }
+
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "缺少 {}：请安装并配置后重启应用再试。",
+            missing.join("、")
+        ))
     }
 }
 
@@ -976,6 +1142,10 @@ pub fn run_custom_command(
     if processes_lock.contains_key(&command_key) {
         return Err("Command is already running".to_string());
     }
+
+    // Java 构建命令先做环境预检，缺 JDK / Maven 时给出可读提示，
+    // 不要把 cmd 的“不是内部或外部命令”抛给用户
+    preflight_build_command(&command, &path)?;
 
     // Setup Log File
     let base_log_dir = if let Ok(exe_path) = std::env::current_exe() {
@@ -2760,5 +2930,53 @@ mod tests {
         let (lines, partial) = decoder.push(&[0xa0, b'\n']);
         assert_eq!(lines, vec!["你"]);
         assert!(partial.is_none());
+    }
+
+    /// cmd 的中文报错和 JDK8 / Maven 输出都是 GBK，不能再显示成 “�”
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn stream_decoder_falls_back_to_gbk_for_windows_console() {
+        let text = "'mvn' 不是内部或外部命令，也不是可运行的程序或批处理文件。";
+        let (encoded, _, had_errors) = encoding_rs::GBK.encode(text);
+        assert!(!had_errors, "测试文本应能用 GBK 完整编码");
+
+        let mut bytes = encoded.into_owned();
+        bytes.push(b'\n');
+
+        let mut decoder = StreamDecoder::new();
+        let (lines, _) = decoder.push(&bytes);
+        assert_eq!(lines, vec![text]);
+    }
+
+    #[test]
+    fn required_java_version_normalizes_pom_value() {
+        let dir = std::env::temp_dir().join(format!(
+            "project-manager-java-version-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("pom.xml"),
+            "<project><properties><java.version>1.8</java.version></properties></project>",
+        )
+        .unwrap();
+
+        assert_eq!(
+            required_java_version(dir.to_str().unwrap()),
+            Some("8".to_string()),
+            "1.8 应提示为 JDK 8"
+        );
+
+        std::fs::write(
+            dir.join("pom.xml"),
+            "<project><properties><maven.compiler.release>17</maven.compiler.release></properties></project>",
+        )
+        .unwrap();
+        assert_eq!(
+            required_java_version(dir.to_str().unwrap()),
+            Some("17".to_string()),
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

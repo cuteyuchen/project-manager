@@ -785,6 +785,7 @@ export default {
     typeOther: '其他',
     javaCommand: {
       run: '启动服务',
+      install: '安装依赖',
       package: '打包（跳过测试）',
       test: '运行测试'
     },

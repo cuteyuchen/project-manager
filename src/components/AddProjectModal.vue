@@ -8,7 +8,7 @@ import type { ProjectInfo, ImportNode } from '../api/types';
 import { useNodeStore } from '../stores/node';
 import { normalizeNodeVersion, projectNodeVersionHint } from '../utils/nvm';
 import { getNodeRuntimeId, normalizeRuntimeVersion, resolveAppDefaultNodePath, resolveProjectNodePath, resolveProjectRuntime } from '../utils/nodeRuntime';
-import { ensureNodeInstallCommand, getInstallDependenciesCommand, buildJavaPresetCommands, isWindowsPlatform } from '../utils/projectCommands';
+import { ensureJavaCommands, ensureNodeInstallCommand, getInstallDependenciesCommand, buildJavaPresetCommands, isWindowsPlatform } from '../utils/projectCommands';
 import { getCustomCommandDisplayName } from '../utils/projectCommands';
 import { useSettingsStore } from '../stores/settings';
 import { useProjectStore } from '../stores/project';
@@ -42,6 +42,8 @@ type ProjectForm = {
   buildTool?: 'maven' | 'gradle';
   /** 是否存在 mvnw / gradlew，有则命令优先走 wrapper */
   hasWrapper?: boolean;
+  /** Maven 聚合工程里真正可启动的 Spring Boot 模块 */
+  springBootModule?: string;
   gitConfigured: boolean;
   gitRemoteUrl: string;
   gitBranch: string;
@@ -341,6 +343,7 @@ async function applyScanResult(info: ProjectInfo, options: { preferDetectedName?
     form.value.type = 'java';
     form.value.buildTool = info.buildTool;
     form.value.hasWrapper = !!info.hasWrapper;
+    form.value.springBootModule = info.springBootModule;
     // Java 没有 package.json 那样的脚本清单，用预设自定义命令代替，
     // 这样「命令」页签才会渲染出来（它的条件是有脚本或有自定义命令）
     form.value.scripts = [];
@@ -351,6 +354,7 @@ async function applyScanResult(info: ProjectInfo, options: { preferDetectedName?
         !!info.hasWrapper,
         isWindowsPlatform(),
         () => crypto.randomUUID(),
+        info.springBootModule,
       );
     }
     syncQuickCommands(true);
@@ -360,6 +364,7 @@ async function applyScanResult(info: ProjectInfo, options: { preferDetectedName?
   form.value.type = 'other';
   form.value.buildTool = undefined;
   form.value.hasWrapper = undefined;
+  form.value.springBootModule = undefined;
   form.value.scripts = [];
   form.value.visibleScripts = [];
 }
@@ -373,6 +378,7 @@ function hydrateFormFromProject(project: Project) {
     type: project.type,
     buildTool: project.buildTool,
     hasWrapper: project.hasWrapper,
+    springBootModule: project.springBootModule,
     gitConfigured: !!project.gitConfigured,
     gitRemoteUrl: project.gitRemoteUrl || '',
     gitBranch: project.gitBranch || '',
@@ -698,6 +704,7 @@ function buildProjectPayload(): Project {
   if (form.value.type === 'java') {
     project.buildTool = form.value.buildTool;
     project.hasWrapper = form.value.hasWrapper;
+    project.springBootModule = form.value.springBootModule;
   }
 
   project.customCommands = form.value.customCommands.filter((command) => command.name && command.command);
@@ -731,7 +738,10 @@ function buildProjectPayload(): Project {
     project.subScannedAt = props.editProject.subScannedAt;
   }
 
-  return ensureNodeInstallCommand(project, t('project.installDependencies'));
+  return ensureJavaCommands(
+    ensureNodeInstallCommand(project, t('project.installDependencies')),
+    t('project.installDependencies'),
+  );
 }
 
 async function submit() {
