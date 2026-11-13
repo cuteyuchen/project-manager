@@ -670,6 +670,9 @@ export default {
     updateCheckFailed: '检查更新失败：{error}',
     releases: '版本历史',
     version: '当前版本',
+    portableTag: '便携版',
+    portableUpdate: '便携版更新方式',
+    portableUpdateHint: '检查更新会引导下载新版压缩包；退出应用后用新的 project-manager.exe 覆盖当前文件即可，不会安装为普通版本。',
     // AI commit
     gitAi: 'AI 提交信息生成',
     gitAiEnabled: '启用 AI 生成',
@@ -878,7 +881,10 @@ export default {
     saveFailedTitle: '无法保存当前数据',
     saveFailedMessage: '为保护项目数据，更新安装已暂停。保存失败原因：{error}',
     retrySave: '重试保存',
-    openDownloadPage: '打开下载页面'
+    openDownloadPage: '打开下载页面',
+    portableMessage: '发现新版本：{version}。便携版不会自动安装更新，请下载新版压缩包，退出应用后用其中的 project-manager.exe 覆盖当前文件。',
+    portableHint: '覆盖前请先退出应用，避免文件被占用。',
+    portableDownload: '下载便携版'
   },
   git: {
     title: 'Git 管理',

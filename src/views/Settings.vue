@@ -26,6 +26,7 @@ import {
 } from '../utils/shortcut';
 import { createImageDataUrl } from '../utils/backgroundImage';
 import { normalizeUiSize } from '../utils/uiSize';
+import { isPortableMode, loadAppMode } from '../utils/appMode';
 import ShortcutRecorder from '../components/ShortcutRecorder.vue';
 import SettingsSectionNav from '../components/settings/SettingsSectionNav.vue';
 
@@ -104,6 +105,8 @@ const nodeStore = useNodeStore();
 const appVersion = ref('');
 const target = import.meta.env.VITE_TARGET;
 const isPlugin = target === 'utools' || target === 'ztools';
+/** 便携版：更新只提示下载压缩包，不执行安装 */
+const isPortable = isPortableMode;
 const contextMenuEnabled = ref(false);
 const contextMenuSupported = ref(false);
 const autoLaunchEnabled = ref(false);
@@ -337,6 +340,10 @@ function handleShortcutRecordingChange(recording: boolean) {
 
 onMounted(async () => {
   appVersion.value = await api.getAppVersion();
+  if (!isPlugin) {
+    // App.vue 启动时通常已探测过；这里兜底，保证直接打开设置页也能拿到运行形态
+    void loadAppMode();
+  }
   if (settingsStore.availableTerminals.length === 0) {
     settingsStore.fetchAvailableTerminals();
   }
@@ -1424,13 +1431,25 @@ function describeAiTestError(error: any): string {
         <div class="settings-row-line">
           <div>
             <div class="settings-row-title">{{ t('settings.version') }}</div>
-            <div class="settings-row-desc">v{{ appVersion }}</div>
+            <div class="settings-row-desc">
+              v{{ appVersion }}
+              <span
+                v-if="!isPlugin && isPortable"
+                class="app-text-caption ml-1.5 rounded px-1.5 py-0.5 bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+              >{{ t('settings.portableTag') }}</span>
+            </div>
           </div>
           <div class="settings-inline-control">
             <el-button v-if="!isPlugin" :loading="updateCheckLoading" @click="triggerManualUpdateCheck">
               {{ updateCheckLoading ? t('settings.checkingUpdate') : t('settings.checkNow') }}
             </el-button>
             <el-button link type="primary" @click="openReleases">{{ t('settings.releases') }}</el-button>
+          </div>
+        </div>
+        <div v-if="!isPlugin && isPortable" class="settings-row-line">
+          <div>
+            <div class="settings-row-title">{{ t('settings.portableUpdate') }}</div>
+            <div class="settings-row-desc">{{ t('settings.portableUpdateHint') }}</div>
           </div>
         </div>
       </section>

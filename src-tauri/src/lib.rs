@@ -397,6 +397,19 @@ fn get_startup_args() -> Vec<String> {
     std::env::args().collect()
 }
 
+/// 便携版由 exe 同目录的 `portable.marker` 识别（压缩包内一并分发）。
+/// 安装版没有该文件，继续走 Tauri 原生安装器更新。
+#[tauri::command]
+fn is_portable_build() -> bool {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| {
+            exe.parent()
+                .map(|dir| dir.join("portable.marker").is_file())
+        })
+        .unwrap_or(false)
+}
+
 #[tauri::command]
 fn exit_app(
     app: tauri::AppHandle,
@@ -526,6 +539,7 @@ pub fn run() {
             system::list_used_ports,
             system::terminate_process_by_pid,
             exit_app,
+            is_portable_build,
             git::git_check,
             git::git_init,
             git::git_list_remote_branches,

@@ -196,7 +196,7 @@ npm run release:publish -- 1.7.0
 
 发布前请按 [`docs/release-checklist.md`](docs/release-checklist.md) 执行自动检查与各平台手工 QA。`release:prepare` 和 `release:publish` 均支持 `--dry-run`；本轮不会创建正式 tag、GitHub Release 或发布插件。
 
-GitHub Release 的 Windows 资产会同时提供 NSIS 安装包与 `project-manager_<version>_x64-portable.zip` 免安装便携版：解压后直接运行 `project-manager.exe`，不写注册表、不产生卸载项，更新时用新版压缩包覆盖即可。
+GitHub Release 的 Windows 资产会同时提供 NSIS 安装包与 `project-manager_<version>_x64-portable.zip` 免安装便携版：解压后直接运行 `project-manager.exe`，不写注册表、不产生卸载项。便携版的应用内检查更新只引导下载新版压缩包，不会改成安装版；退出应用后用新的 exe 覆盖即可。
 
 ---
 

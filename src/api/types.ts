@@ -255,6 +255,8 @@ export interface PlatformAPI {
     workspaceTrashMode(): Promise<'recycle_bin' | 'permanent'>;
 
     getAppVersion(): Promise<string>;
+    /** 是否为免安装便携版（exe 同目录存在 portable.marker），决定更新走安装器还是替换压缩包 */
+    isPortableBuild(): Promise<boolean>;
 
     // Dialogs
     openDialog(options?: {

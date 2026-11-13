@@ -51,6 +51,8 @@ import {
 import { useAppShortcuts } from './composables/useAppShortcuts.ts';
 import { formatErrorDetails, getLatestCapturedError } from './utils/errorDetails';
 import { createLifecycleGuard, flushBeforeLifecycle } from './utils/lifecycle';
+import { buildPortableDownloadUrl } from './utils/updateChannel';
+import { isPortableMode, loadAppMode } from './utils/appMode';
 
 const target = import.meta.env.VITE_TARGET;
 const isPlugin = target === 'utools' || target === 'ztools';
@@ -380,6 +382,34 @@ async function installDesktopUpdate(update: Update) {
   }
 }
 
+/**
+ * 便携版更新入口。
+ *
+ * 便携版没有安装信息，调用 download/install 会被 NSIS 安装成普通版本，
+ * 因此这里只说明“下载新版压缩包 → 退出 → 覆盖 exe”，不执行任何安装动作。
+ */
+async function promptPortableUpdate(update: Update, version: string) {
+  try {
+    await ElMessageBox.confirm(
+      h('div', null, [
+        h('p', null, t('update.portableMessage', { version })),
+        h('p', { class: 'mt-2 text-xs' }, t('update.portableHint')),
+      ]),
+      t('update.title'),
+      {
+        confirmButtonText: t('update.portableDownload'),
+        cancelButtonText: t('update.cancel'),
+        type: 'info',
+      },
+    );
+    await api.openUrl(buildPortableDownloadUrl(version));
+  } catch {
+    // 用户取消
+  } finally {
+    await update.close().catch(() => undefined);
+  }
+}
+
 async function checkUpdate(manual = false) {
   if (isPlugin) return;
 
@@ -393,6 +423,12 @@ async function checkUpdate(manual = false) {
 
     const version = displayUpdateVersion(update.version);
     if (manual) dispatchManualUpdateResult({ status: 'available', version });
+
+    if (isPortableMode.value) {
+      await promptPortableUpdate(update, version);
+      update = null;
+      return;
+    }
 
     try {
       await ElMessageBox.confirm(
@@ -797,6 +833,10 @@ onMounted(async () => {
   }
 
   // Default to true if undefined (legacy support)
+  if (!isPlugin) {
+    // 先确认运行形态：便携版的更新要走“下载压缩包替换”，不能拉起 NSIS 安装器
+    await loadAppMode();
+  }
   if (!isPlugin && useSettingsStore().settings.autoUpdate !== false) {
     checkUpdate();
   }

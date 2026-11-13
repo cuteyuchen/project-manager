@@ -347,6 +347,10 @@ export class TauriAdapter implements PlatformAPI {
         return getVersion();
     }
 
+    async isPortableBuild(): Promise<boolean> {
+        return invoke('is_portable_build');
+    }
+
     // Dialogs
     async openDialog(options: any): Promise<string | string[] | null> {
         return openDialogFn(options);

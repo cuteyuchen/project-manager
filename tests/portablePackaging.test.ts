@@ -38,11 +38,26 @@ try {
   const zipBuffer = readFileSync(zipPath);
   assert(zipBuffer.includes(Buffer.from('project-manager.exe')), 'zip 内应包含主程序');
   assert(zipBuffer.includes(Buffer.from('便携版说明.txt', 'utf8')), 'zip 内应包含便携版说明');
+  assert(zipBuffer.includes(Buffer.from('portable.marker')), 'zip 内应包含便携版标记文件');
 
-  const readme = readFileSync(join(outDir, 'project-manager_9.9.9_x64-portable', '便携版说明.txt'), 'utf8');
+  // 直接解压校验，确保产物能正常展开
+  const extractDir = join(workspace, 'extract');
+  mkdirSync(extractDir, { recursive: true });
+  execFileSync('powershell.exe', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-Command',
+    `Expand-Archive -LiteralPath '${zipPath.replace(/'/g, "''")}' -DestinationPath '${extractDir.replace(/'/g, "''")}' -Force`,
+  ], { stdio: 'pipe' });
+
+  const readme = readFileSync(join(extractDir, '便携版说明.txt'), 'utf8');
   assert(readme.includes('9.9.9'), '说明文件应写入版本号');
   assert(readme.includes('免安装'), '说明文件应说明免安装特性');
   assert(readme.includes('WebView2'), '说明文件应提示 WebView2 运行库');
+  assert(readme.includes('不会自动安装'), '说明文件应说明便携版不会自动安装更新');
+
+  const marker = readFileSync(join(extractDir, 'portable.marker'), 'utf8');
+  assert(marker.includes('9.9.9'), '标记文件应写入版本号');
 
   console.log('portablePackaging tests passed');
 } finally {

@@ -93,7 +93,7 @@ Version numbers live in 7+ files: `package.json`, `src-tauri/tauri.conf.json`, `
 
 ## CI/CD
 
-GitHub Actions (`.github/workflows/release.yml`) triggers on `v*` tags and builds for Windows (NSIS), Ubuntu (deb + appimage), macOS arm64 (dmg), macOS x86_64 (dmg) using `tauri-apps/tauri-action@v0`. The Windows job additionally packages and uploads `project-manager_<version>_x64-portable.zip` (portable, no installer).
+GitHub Actions (`.github/workflows/release.yml`) triggers on `v*` tags and builds for Windows (NSIS), Ubuntu (deb + appimage), macOS arm64 (dmg), macOS x86_64 (dmg) using `tauri-apps/tauri-action@v0`. The Windows job additionally packages and uploads `project-manager_<version>_x64-portable.zip` (portable, no installer); the zip contains `portable.marker`, which makes the app use the "download zip and replace exe" update path instead of the NSIS updater.
 
 ## Notes
 

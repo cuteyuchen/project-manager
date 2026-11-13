@@ -325,6 +325,9 @@ export class UToolsAdapter implements PlatformAPI {
 
   getAppVersion(): Promise<string> { return this.service.getAppVersion(); }
 
+  // 插件运行在 uTools / ZTools 宿主里，由宿主负责更新，不存在便携版概念
+  isPortableBuild(): Promise<boolean> { return Promise.resolve(false); }
+
   openDialog(options: any): Promise<string | string[] | null> { return this.service.openDialog(options); }
   saveDialog(options: any): Promise<string | null> { return this.service.saveDialog(options); }
 

@@ -7,12 +7,15 @@
  * 解压即用，不进注册表、不产生卸载项。
  */
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
 const ROOT_DIR = path.resolve(__dirname, '..');
 const EXE_NAME = 'project-manager.exe';
 const README_NAME = '便携版说明.txt';
+/** 便携版标记：应用据此走“下载压缩包替换”的更新路径，而不是 NSIS 安装器 */
+const MARKER_NAME = 'portable.marker';
 
 function parseArgs(argv) {
     const options = {
@@ -90,8 +93,9 @@ function buildReadme(version) {
    便携版与安装版共用同一份 data.json；如需完全隔离，请先备份该目录。
 
 4. 更新方式
-   下载新版本的 portable 压缩包，用其中的 ${EXE_NAME} 覆盖旧文件即可。
-   应用内的“检查更新”会下载安装包并按普通版本安装，便携版建议直接替换文件。
+   应用内“检查更新”只会提示下载新版 portable 压缩包，不会自动安装（避免把便携版
+   装成普通版本）。下载后退出应用，用新的 ${EXE_NAME} 覆盖当前文件即可。
+   请保留同目录的 ${MARKER_NAME}，应用靠它识别便携版；删除后会被当作安装版处理。
 
 5. 校验
    压缩包与安装包来自同一次构建，版本号应与 GitHub Release 的标签一致。
@@ -119,6 +123,16 @@ function zipDirectory(sourceDir, zipPath) {
     execFileSync('zip', ['-r', '-q', zipPath, '.'], { cwd: sourceDir, stdio: 'inherit' });
 }
 
+function removeDirectoryQuietly(target) {
+    try {
+        fs.rmSync(target, { recursive: true, force: true });
+    } catch (error) {
+        // 删除失败不影响产物：临时目录可以留给系统清理，
+        // 也不会因为用户正在运行旧的便携版而中断打包。
+        console.warn(`Could not remove temporary directory ${target}: ${error.message}`);
+    }
+}
+
 function packagePortable(options = {}) {
     if (process.platform !== 'win32') {
         throw new Error('Portable packaging currently targets Windows builds only.');
@@ -129,21 +143,32 @@ function packagePortable(options = {}) {
     const exePath = resolveExe(options.exe, target);
     const outDir = options.outDir || path.join(ROOT_DIR, 'dist-portable');
     const stageName = `project-manager_${version}_${target}-portable`;
-    const stageDir = path.join(outDir, stageName);
-    const zipPath = `${stageDir}.zip`;
+    const zipPath = path.join(outDir, `${stageName}.zip`);
 
-    fs.rmSync(stageDir, { recursive: true, force: true });
+    // 在系统临时目录组装，避免与 dist-portable 里已被用户解压运行的副本互相占用
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-portable-'));
+    const stageDir = path.join(workDir, stageName);
+    const tempZipPath = path.join(workDir, `${stageName}.zip`);
     fs.mkdirSync(stageDir, { recursive: true });
+    fs.mkdirSync(outDir, { recursive: true });
 
     fs.copyFileSync(exePath, path.join(stageDir, EXE_NAME));
     fs.writeFileSync(path.join(stageDir, README_NAME), buildReadme(version), 'utf8');
+    fs.writeFileSync(
+        path.join(stageDir, MARKER_NAME),
+        `Project Manager portable build ${version}\n`,
+        'utf8',
+    );
 
-    zipDirectory(stageDir, zipPath);
+    zipDirectory(stageDir, tempZipPath);
+    // copyFileSync 直接覆盖旧压缩包：不经过删除，旧包被占用时也能给出明确错误
+    fs.copyFileSync(tempZipPath, zipPath);
+    removeDirectoryQuietly(workDir);
 
     const sizeMb = (fs.statSync(zipPath).size / 1024 / 1024).toFixed(1);
     console.log(`Portable package: ${path.relative(ROOT_DIR, zipPath)} (${sizeMb} MB)`);
     console.log(`  from: ${path.relative(ROOT_DIR, exePath)}`);
-    return { zipPath, stageDir, version, target };
+    return { zipPath, version, target };
 }
 
 function runCli(argv = process.argv.slice(2)) {
@@ -157,4 +182,4 @@ function runCli(argv = process.argv.slice(2)) {
 
 if (require.main === module) runCli();
 
-module.exports = { parseArgs, packagePortable, buildReadme, EXE_NAME, README_NAME };
+module.exports = { parseArgs, packagePortable, buildReadme, EXE_NAME, README_NAME, MARKER_NAME };

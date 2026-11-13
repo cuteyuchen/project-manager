@@ -5,6 +5,7 @@
 ### 优化
 
 - Windows 发布产物新增免安装便携版 `project-manager_<version>_x64-portable.zip`：解压即用、不写注册表、不产生卸载项，更新时覆盖 exe 即可。本地可用 `npm run build:portable` 生成，发布流水线会与 NSIS 安装包一起上传到 GitHub Release。
+- 便携版的应用内检查更新改为“下载新版压缩包 → 退出应用 → 覆盖 exe”，不再调用 NSIS 安装器（避免免安装版本被安装成普通版本）；设置页会标注当前为便携版并说明更新方式。
 
 ## v1.7.5 - 2026-11-12
 

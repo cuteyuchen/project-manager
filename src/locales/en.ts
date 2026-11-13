@@ -671,6 +671,9 @@ export default {
     updateCheckFailed: 'Update check failed: {error}',
     releases: 'Release History',
     version: 'Current Version',
+    portableTag: 'Portable',
+    portableUpdate: 'Portable Updates',
+    portableUpdateHint: 'Update checks link to the new zip. Quit the app and replace project-manager.exe with the new one; it will not be installed as a regular build.',
     // AI commit
     gitAi: 'AI Commit Message',
     gitAiEnabled: 'Enable AI Generation',
@@ -878,7 +881,10 @@ export default {
     saveFailedTitle: 'Unable to Save Current Data',
     saveFailedMessage: 'Update installation was paused to protect project data. Save failed: {error}',
     retrySave: 'Retry Save',
-    openDownloadPage: 'Open Download Page'
+    openDownloadPage: 'Open Download Page',
+    portableMessage: 'Version {version} is available. The portable build does not install updates automatically — download the new zip, quit the app, and replace project-manager.exe with the new one.',
+    portableHint: 'Quit the app before replacing the file so Windows does not keep it locked.',
+    portableDownload: 'Download Portable'
   },
   git: {
     title: 'Git',
