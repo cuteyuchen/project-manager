@@ -21,6 +21,7 @@
 - [x] macOS CI：`cargo test --manifest-path src-tauri/Cargo.toml`
 - [x] Plugin CI：`npm run build:utools`
 - [x] Plugin CI：`npm run build:ztools`
+- [x] Windows CI：发布资产包含 `project-manager_<version>_x64-portable.zip`（与安装包同一次构建）
 - [x] 本地：`npm run release:preflight`
 - [ ] 本地发布上下文：`npm run release:preflight -- --strict-local --tag <目标版本>`（仅在干净 `main` 且 `origin/main` 已同步时执行）
 - [x] 版本源全部一致，当前版本为 `1.6.2`
@@ -50,6 +51,14 @@
 - [ ] Settings export/import
 - [ ] 使用临时 profile 验证 backup recovery、corrupt snapshot 和只读保护
 - [ ] Windows 125% DPI 下无重叠、无截断
+
+## Windows 便携版 QA
+
+- [ ] 解压到空目录，双击 `project-manager.exe` 可启动
+- [ ] 不写入卸载项；删除目录即移除程序（数据目录按需保留）
+- [ ] 与安装版共用 `%APPDATA%\com.cuteyuchen.project-manager` 时数据可正常读取
+- [ ] 压缩包内 `便携版说明.txt` 的版本号与 Release 标签一致
+- [ ] 未安装 WebView2 的机器有可操作的提示或说明
 
 ## macOS 手工 QA
 

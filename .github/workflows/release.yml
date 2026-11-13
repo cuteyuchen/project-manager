@@ -153,3 +153,19 @@ jobs:
           uploadUpdaterSignatures: true
           updaterJsonPreferNsis: true
           args: ${{ matrix.args }}
+
+      # 免安装便携版：与安装包来自同一次构建，直接取 tauri build 产出的 exe 打包。
+      # 仅 Windows 需要（其他平台的“免安装”形态是 dmg / AppImage，已是现成产物）。
+      - name: Package portable build (Windows only)
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        run: node scripts/package-portable.cjs --version "${RELEASE_TAG#v}"
+
+      - name: Upload portable build (Windows only)
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${RELEASE_TAG}" dist-portable/*.zip --clobber
+          ls -lh dist-portable/*.zip

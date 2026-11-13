@@ -175,6 +175,9 @@ npm run tauri dev
 # 构建桌面端
 npm run tauri build
 
+# 构建 Windows 免安装便携版（输出 dist-portable/*-portable.zip）
+npm run build:portable
+
 # 构建 uTools 插件
 npm run build:utools
 
@@ -192,6 +195,8 @@ npm run release:publish -- 1.7.0
 ```
 
 发布前请按 [`docs/release-checklist.md`](docs/release-checklist.md) 执行自动检查与各平台手工 QA。`release:prepare` 和 `release:publish` 均支持 `--dry-run`；本轮不会创建正式 tag、GitHub Release 或发布插件。
+
+GitHub Release 的 Windows 资产会同时提供 NSIS 安装包与 `project-manager_<version>_x64-portable.zip` 免安装便携版：解压后直接运行 `project-manager.exe`，不写注册表、不产生卸载项，更新时用新版压缩包覆盖即可。
 
 ---
 

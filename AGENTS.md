@@ -14,6 +14,7 @@ npm run dev              # Vite dev server (port 1420, frontend only)
 npm run tauri dev        # Full Tauri desktop dev (frontend + Rust backend)
 npm run build            # Type-check (vue-tsc) + Vite production build
 npm run tauri build      # Build Tauri desktop app for production
+npm run build:portable   # Windows portable zip (tauri build --no-bundle + scripts/package-portable.cjs -> dist-portable/)
 
 # Plugin builds
 npm run build:utools     # Build for uTools plugin (dist-utools/)
@@ -92,7 +93,7 @@ Version numbers live in 7+ files: `package.json`, `src-tauri/tauri.conf.json`, `
 
 ## CI/CD
 
-GitHub Actions (`.github/workflows/release.yml`) triggers on `v*` tags and builds for Windows (NSIS), Ubuntu (deb + appimage), macOS arm64 (dmg), macOS x86_64 (dmg) using `tauri-apps/tauri-action@v0`.
+GitHub Actions (`.github/workflows/release.yml`) triggers on `v*` tags and builds for Windows (NSIS), Ubuntu (deb + appimage), macOS arm64 (dmg), macOS x86_64 (dmg) using `tauri-apps/tauri-action@v0`. The Windows job additionally packages and uploads `project-manager_<version>_x64-portable.zip` (portable, no installer).
 
 ## Notes
 
