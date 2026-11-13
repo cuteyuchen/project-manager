@@ -90,12 +90,10 @@ export const useProjectHealthStore = defineStore('projectHealth', () => {
         }
 
         // 3) Git dirty 检测
+        // 只看工作区是否有未提交改动，和列表里的 Git 徽标（M/A/D）同一口径；
+        // 仅领先/落后远端不算“改动”，否则会与列表显示对不上。
         if (hasGit) {
           try {
-            const summary = await api.gitSummary(project.path);
-            gitDirty = summary.ahead > 0 || summary.behind > 0;
-            // 检查是否有改动文件（通过 gitStatus 详细判断更准确，但 summary 轻量）
-            // 第一版用 gitStatus 做精确判断
             const status = await api.gitStatus(project.path);
             const hasChanges =
               status.staged.length > 0 ||

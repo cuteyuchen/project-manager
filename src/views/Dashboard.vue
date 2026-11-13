@@ -32,6 +32,7 @@ import {
 } from '../utils/shortcut.ts';
 import { collectProjectTags, projectMatchesSelectedTags } from '../utils/projectTags';
 import { summarizeGitStatus, type ProjectGitOverview } from '../utils/projectGitOverview';
+import { countProjectHealth, hasHealthIssues } from '../utils/projectHealth';
 import { buildProjectSearchEntry, projectSearchEntryMatches } from '../utils/projectSearch';
 import {
     collectAutoExpandedProjectIds,
@@ -112,6 +113,7 @@ const healthProjects = computed(() => projectStore.projects);
 const {
     getHealth,
     healthLevel,
+    refreshVisible: refreshProjectHealth,
 } = useProjectHealth({ filteredProjects: healthProjects });
 
 /** 进入某一级项目的工作区 */
@@ -484,26 +486,16 @@ function isProjectRunning(projectId: string): boolean {
     return (projectStore.runningSubtreeCount[projectId] ?? 0) > 0;
 }
 
-function getRealHealthIssues(snapshot: ProjectHealthSnapshot | undefined) {
-    return snapshot?.issues.filter((issue) => issue.code !== 'not_git') ?? [];
-}
-
 function isProjectUnhealthy(projectId: string): boolean {
-    const snapshot = getHealth(projectId);
-    if (!snapshot) return false;
-    return !snapshot.pathExists || getRealHealthIssues(snapshot).length > 0;
+    return hasHealthIssues(getHealth(projectId));
 }
 
-/** 健康分类计数（仅统计一级项目） */
-const healthCounts = computed(() => {
-    const list = rootProjects.value;
-    return {
-        running: list.filter(p => isProjectRunning(p.id)).length,
-        dirty: list.filter(p => !!getHealth(p.id)?.gitDirty).length,
-        unhealthy: list.filter(p => isProjectUnhealthy(p.id)).length,
-        missing: list.filter(p => getHealth(p.id)?.pathExists === false).length,
-    };
-});
+/** 健康分类计数：覆盖整棵项目树，和筛选命中的项目数保持一致 */
+const healthCounts = computed(() => countProjectHealth(
+    projectStore.projects,
+    getHealth,
+    projectId => projectStore.runningProjectCount[projectId] ?? 0,
+));
 
 /***********************树节点状态映射与 Git 汇总*********************/
 const healthById = computed<Record<string, ProjectHealthSnapshot | undefined>>(() => {
@@ -679,6 +671,8 @@ async function refreshProjects() {
     } finally {
         refreshing.value = false;
     }
+    // 健康快照覆盖整棵树，扫描较慢，放到后台更新，不阻塞刷新按钮
+    void refreshProjectHealth();
 }
 
 /***********************列表页快捷键*********************/
