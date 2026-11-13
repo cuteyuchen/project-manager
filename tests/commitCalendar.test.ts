@@ -6,6 +6,7 @@ import {
   hasWeekendCommits,
   isCurrentCalendarMonth,
   resolveCurrentMonthRange,
+  resolveDayCommitItems,
   resolveMonthRange,
   shiftCalendarMonth,
 } from '../src/utils/commitCalendar';
@@ -184,6 +185,50 @@ function localIso(
   });
 
   assertEq(text, 'Project A：feat: 添加提交日历（09:05）', '显示格式应为 项目名：提交信息（HH:mm）');
+}
+
+/***********************详情弹窗：当天提交概览*********************/
+
+{
+  const makeItem = (
+    projectId: string,
+    hash: string,
+    date: string,
+  ): CommitCalendarItem => ({
+    projectId,
+    projectName: `Project ${projectId.toUpperCase()}`,
+    projectPath: `/projects/${projectId}`,
+    hash,
+    shortHash: hash.slice(0, 7),
+    author: 'Yuchen',
+    email: 'yuchen@example.com',
+    date,
+    message: `feat: ${hash}`,
+  });
+
+  const items: CommitCalendarItem[] = [
+    makeItem('a', 'aaa1111', localIso(2026, 7, 9, 18, 20)),
+    makeItem('b', 'bbb2222', localIso(2026, 7, 9, 9, 5)),
+    makeItem('c', 'ccc3333', localIso(2026, 7, 9, 13, 40)),
+    makeItem('a', 'ddd4444', localIso(2026, 7, 10, 10, 0)),
+  ];
+  const days = buildCommitCalendarDays(
+    2026,
+    6,
+    groupCommitCalendarItemsByDate(items, '2026-07-01', '2026-08-01'),
+  );
+
+  // 从中午那条打开，左侧应给出当天全部 3 条，并按时间升序
+  const dayItems = resolveDayCommitItems(days, items[2]);
+  assertEq(dayItems.length, 3, '左侧概览应包含当天的全部提交');
+  assertEq(dayItems.map(item => item.hash).join(','), 'bbb2222,ccc3333,aaa1111', '概览应按时间升序排列');
+  assert(!dayItems.some(item => item.hash === 'ddd4444'), '不应混入其它日期的提交');
+
+  // 月历范围外的日期（例如跨月边界的补格）退化为当前提交自身
+  const outsideItem = makeItem('a', 'zzz9999', localIso(2026, 5, 2, 10, 0));
+  const fallback = resolveDayCommitItems(days, outsideItem);
+  assertEq(fallback.length, 1, '找不到对应日期时应只返回当前提交');
+  assertEq(fallback[0].hash, 'zzz9999', '退化结果应保留当前提交');
 }
 
 console.log('commitCalendar tests passed');

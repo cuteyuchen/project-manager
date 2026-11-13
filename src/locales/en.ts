@@ -65,6 +65,7 @@ export default {
     thisMonth: 'This month',
     backToCurrentMonth: 'Back to current month',
     detailTitle: 'Commit Detail',
+    dayCommits: 'Commits that day',
     project: 'Project',
     time: 'Time',
     copy: 'Copy Full Text',

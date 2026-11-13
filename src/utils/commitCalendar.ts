@@ -148,6 +148,20 @@ export function buildCommitCalendarDays(
   return days;
 }
 
+/**
+ * 取某条提交所在日期的全部提交，用于详情弹窗左侧的当天概览。
+ * 找不到对应日期时退化为只包含该条提交，保证弹窗永远有内容。
+ */
+export function resolveDayCommitItems(
+  days: CommitCalendarDay[],
+  item: CommitCalendarItem,
+): CommitCalendarItem[] {
+  const date = formatLocalDate(new Date(item.date));
+  const day = days.find(candidate => candidate.date === date);
+  const items = day && day.items.length > 0 ? day.items : [item];
+  return [...items].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+}
+
 export function hasWeekendCommits(days: CommitCalendarDay[]): boolean {
   return days.some((day, index) => index % 7 >= 5 && day.items.length > 0);
 }

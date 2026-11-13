@@ -64,6 +64,7 @@ export default {
     thisMonth: '本月',
     backToCurrentMonth: '回到本月',
     detailTitle: '提交详情',
+    dayCommits: '当天提交',
     project: '项目',
     time: '时间',
     copy: '复制全文',

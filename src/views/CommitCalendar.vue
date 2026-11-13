@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, onActivated, onMounted, ref, shallowRef, watch } from 'vue';
+import { computed, nextTick, onActivated, onMounted, ref, shallowRef, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import { useI18n } from 'vue-i18n';
 import { api } from '../api';
 import { useCommitCalendar } from '../composables/useCommitCalendar';
-import { formatCommitCalendarEntry, hasWeekendCommits } from '../utils/commitCalendar';
+import { formatCommitCalendarEntry, hasWeekendCommits, resolveDayCommitItems } from '../utils/commitCalendar';
 import type { CommitCalendarItem } from '../utils/commitCalendar';
 
 const { t, locale } = useI18n();
@@ -82,8 +82,11 @@ function formatCommitDateTime(date: string): string {
 /***********************提交详情与复制*********************/
 
 const selectedCommit = shallowRef<CommitCalendarItem | null>(null);
+/** 弹窗左侧展示的「当天全部提交」，切换选中项时保持不变 */
+const detailDayItems = shallowRef<CommitCalendarItem[]>([]);
 const selectedCommitDetailMessage = shallowRef('');
 const detailLoading = shallowRef(false);
+const detailListEl = shallowRef<HTMLElement | null>(null);
 let detailRequestId = 0;
 
 const detailVisible = computed({
@@ -92,6 +95,7 @@ const detailVisible = computed({
     if (!value) {
       detailRequestId += 1;
       selectedCommit.value = null;
+      detailDayItems.value = [];
       selectedCommitDetailMessage.value = '';
       detailLoading.value = false;
     }
@@ -103,10 +107,47 @@ const selectedCommitMessageText = computed(() => {
   return selectedCommitDetailMessage.value || selectedCommit.value.message;
 });
 
+function formatDetailDay(date: string): string {
+  const target = new Date(date);
+  const pad = (value: number) => String(value).padStart(2, '0');
+  const weekday = target.toLocaleDateString(locale.value.startsWith('zh') ? 'zh-CN' : 'en-US', {
+    weekday: 'short',
+  });
+  return `${target.getFullYear()}-${pad(target.getMonth() + 1)}-${pad(target.getDate())} ${weekday}`;
+}
+
+/** 概览列表只显示提交标题，完整内容在右侧展示 */
+function commitTitle(message: string): string {
+  return message.split('\n')[0].trim();
+}
+
+function isDetailActive(item: CommitCalendarItem): boolean {
+  const current = selectedCommit.value;
+  return !!current && current.hash === item.hash && current.projectId === item.projectId;
+}
+
 function openCommitDetail(item: CommitCalendarItem): void {
+  detailDayItems.value = resolveDayCommitItems(calendarDays.value, item);
   selectedCommit.value = item;
   selectedCommitDetailMessage.value = '';
   void loadCommitDetail(item);
+  void revealActiveDetailItem();
+}
+
+/** 点击左侧概览切换右侧详情 */
+function selectDetailCommit(item: CommitCalendarItem): void {
+  if (isDetailActive(item)) return;
+  selectedCommit.value = item;
+  selectedCommitDetailMessage.value = '';
+  void loadCommitDetail(item);
+}
+
+/** 从日历较靠后的日期打开时，把当前提交滚进可视区域 */
+async function revealActiveDetailItem(): Promise<void> {
+  await nextTick();
+  detailListEl.value
+    ?.querySelector<HTMLElement>('.commit-detail-item.is-active')
+    ?.scrollIntoView({ block: 'nearest' });
 }
 
 async function loadCommitDetail(item: CommitCalendarItem): Promise<void> {
@@ -116,7 +157,7 @@ async function loadCommitDetail(item: CommitCalendarItem): Promise<void> {
 
   try {
     const detail = await api.gitCommitDetail(item.projectPath, item.hash);
-    if (detailRequestId === requestId && selectedCommit.value?.hash === item.hash) {
+    if (detailRequestId === requestId && isDetailActive(item)) {
       selectedCommitDetailMessage.value = detail.message;
     }
   } catch (error) {
@@ -316,32 +357,64 @@ onActivated(refreshIfNeeded);
     <el-dialog
       v-model="detailVisible"
       :title="t('commitCalendar.detailTitle')"
-      width="560px"
+      width="min(860px, 92vw)"
       append-to-body
       align-center
       class="commit-calendar-dialog"
     >
-      <div v-if="selectedCommit" class="app-text-body space-y-3 text-slate-600 dark:text-slate-300">
-        <div class="grid grid-cols-[72px_1fr] gap-x-3 gap-y-2">
-          <span class="app-text-meta text-slate-400 dark:text-slate-500">{{ t('commitCalendar.project') }}</span>
-          <span class="font-medium text-slate-700 dark:text-slate-100">{{ selectedCommit.projectName }}</span>
-          <span class="app-text-meta text-slate-400 dark:text-slate-500">{{ t('commitCalendar.time') }}</span>
-          <span>{{ formatCommitDateTime(selectedCommit.date) }}</span>
-          <span class="app-text-meta text-slate-400 dark:text-slate-500">{{ t('git.hash') }}</span>
-          <span class="font-mono">{{ selectedCommit.shortHash }}</span>
-        </div>
-
-        <div>
-          <div class="app-text-meta mb-1 text-slate-400 dark:text-slate-500">{{ t('git.commitMessage') }}</div>
-          <div
-            v-if="detailLoading"
-            class="app-code-block app-text-code flex min-h-24 items-center justify-center"
-          >
-            <div class="i-mdi-loading animate-spin mr-1.5" />
-            {{ t('common.loading') }}
+      <div v-if="selectedCommit" class="commit-detail-layout">
+        <!-- 左侧：当天所有提交概览，点击切换右侧详情 -->
+        <aside class="commit-detail-day" :title="t('commitCalendar.dayCommits')">
+          <div class="commit-detail-day-head">
+            <div class="i-mdi-calendar-today shrink-0 text-sm text-blue-500" />
+            <span class="commit-detail-day-date">{{ formatDetailDay(selectedCommit.date) }}</span>
+            <span class="commit-detail-day-count">{{ detailDayItems.length }}</span>
           </div>
-          <pre v-else class="app-code-block app-text-code m-0 max-h-60 overflow-auto whitespace-pre-wrap px-3 py-2">{{ selectedCommitMessageText }}</pre>
-        </div>
+
+          <div ref="detailListEl" class="commit-detail-day-list">
+            <button
+              v-for="item in detailDayItems"
+              :key="item.projectId + item.hash"
+              type="button"
+              class="commit-detail-item"
+              :class="{ 'is-active': isDetailActive(item) }"
+              :aria-current="isDetailActive(item) ? 'true' : undefined"
+              :title="formatCommitCalendarEntry(item)"
+              @click="selectDetailCommit(item)"
+            >
+              <div class="commit-detail-item-head">
+                <span class="commit-detail-item-time">{{ formatCommitTime(item.date) }}</span>
+                <span class="commit-detail-item-project">{{ item.projectName }}</span>
+                <span class="commit-detail-item-hash">{{ item.shortHash }}</span>
+              </div>
+              <div class="commit-detail-item-message">{{ commitTitle(item.message) }}</div>
+            </button>
+          </div>
+        </aside>
+
+        <!-- 右侧：当前选中提交的详情 -->
+        <section class="commit-detail-body app-text-body text-slate-600 dark:text-slate-300">
+          <div class="grid grid-cols-[64px_1fr] gap-x-3 gap-y-2">
+            <span class="app-text-meta text-slate-400 dark:text-slate-500">{{ t('commitCalendar.project') }}</span>
+            <span class="font-medium text-slate-700 dark:text-slate-100">{{ selectedCommit.projectName }}</span>
+            <span class="app-text-meta text-slate-400 dark:text-slate-500">{{ t('commitCalendar.time') }}</span>
+            <span>{{ formatCommitDateTime(selectedCommit.date) }}</span>
+            <span class="app-text-meta text-slate-400 dark:text-slate-500">{{ t('git.hash') }}</span>
+            <span class="font-mono">{{ selectedCommit.shortHash }}</span>
+          </div>
+
+          <div class="mt-3 flex min-h-0 flex-1 flex-col">
+            <div class="app-text-meta mb-1 text-slate-400 dark:text-slate-500">{{ t('git.commitMessage') }}</div>
+            <div
+              v-if="detailLoading"
+              class="app-code-block app-text-code flex min-h-24 items-center justify-center"
+            >
+              <div class="i-mdi-loading animate-spin mr-1.5" />
+              {{ t('common.loading') }}
+            </div>
+            <pre v-else class="app-code-block app-text-code m-0 max-h-64 overflow-auto whitespace-pre-wrap px-3 py-2">{{ selectedCommitMessageText }}</pre>
+          </div>
+        </section>
       </div>
 
       <template #footer>
@@ -471,6 +544,157 @@ onActivated(refreshIfNeeded);
 }
 
 .commit-day-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--app-text-muted) 56%, transparent);
+  border-radius: 999px;
+}
+
+/***********************提交详情：左侧当天概览 + 右侧详情*********************/
+
+.commit-detail-layout {
+  display: flex;
+  gap: 16px;
+  min-height: 260px;
+  max-height: 60vh;
+}
+
+.commit-detail-day {
+  display: flex;
+  flex: 0 0 248px;
+  min-width: 0;
+  flex-direction: column;
+  padding-right: 12px;
+  border-right: 1px solid var(--app-border);
+}
+
+.commit-detail-day-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px 8px;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.commit-detail-day-date {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--app-font-control);
+  font-weight: 600;
+  color: var(--app-text-secondary);
+}
+
+.commit-detail-day-count {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--app-primary-soft);
+  padding: 0 6px;
+  font-size: var(--app-font-caption);
+  font-weight: 600;
+  line-height: 18px;
+  color: var(--app-primary);
+}
+
+.commit-detail-day-list {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.commit-detail-item {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  appearance: none;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  padding: 6px 8px;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--app-duration-fast) var(--app-ease),
+    border-color var(--app-duration-fast) var(--app-ease);
+}
+
+.commit-detail-item:hover {
+  background: var(--app-surface-soft);
+}
+
+.commit-detail-item.is-active {
+  border-color: color-mix(in srgb, var(--app-primary) 30%, transparent);
+  background: var(--app-primary-soft);
+}
+
+.commit-detail-item-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--app-font-caption);
+  line-height: 16px;
+}
+
+.commit-detail-item-time {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--app-text-muted);
+}
+
+.commit-detail-item-project {
+  flex: 0 1 auto;
+  max-width: 42%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--app-text-secondary);
+}
+
+.commit-detail-item-hash {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--app-text-muted);
+}
+
+.commit-detail-item-message {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: var(--app-font-control);
+  line-height: 18px;
+  color: var(--app-text-secondary);
+}
+
+.commit-detail-item.is-active .commit-detail-item-message {
+  color: var(--app-primary);
+}
+
+.commit-detail-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.commit-detail-day-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.commit-detail-day-list::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--app-text-muted) 56%, transparent);
   border-radius: 999px;
 }
