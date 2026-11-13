@@ -71,6 +71,10 @@ export const useProjectHealthStore = defineStore('projectHealth', () => {
       // 路径不存在时后续项无意义
       if (pathExists) {
         // 2) Git 检测
+        // 必须区分两种结果：git 正常退出并确认不是仓库（not_git，只是提示），
+        // 与 git 压根没跑起来（PATH 未就绪、外置盘未挂载、并发创建进程失败）。
+        // 后者是真实的环境问题，如果压成 not_git 就会被排除在异常之外，
+        // 项目会显示成健康的绿点。
         try {
           hasGit = await api.gitCheck(project.path);
           if (!hasGit) {
@@ -80,12 +84,12 @@ export const useProjectHealthStore = defineStore('projectHealth', () => {
               message: '未初始化 Git',
             });
           }
-        } catch (_) {
+        } catch (error) {
           hasGit = false;
           issues.push({
-            code: 'not_git',
+            code: 'git_check_failed',
             level: 'warn',
-            message: 'Git 检测失败',
+            message: `Git 检测失败：${String(error)}`,
           });
         }
 

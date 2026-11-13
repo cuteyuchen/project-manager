@@ -6,6 +6,28 @@ import { ElMessage } from 'element-plus';
 import { useI18n } from 'vue-i18n';
 
 /**
+ * 归一化快捷筛选值。
+ *
+ * 历史视图里可能存着 'unhealthy'（旧版把 Git 改动也算作异常）。
+ * 现在语义拆成 'envIssue'，直接映射过去即可；未知值退回 'all'，
+ * 避免出现一个匹配不到任何项目的空列表。
+ */
+function normalizeQuickFilter(value: string | undefined): ProjectQuickFilter {
+  const known: ProjectQuickFilter[] = [
+    'all',
+    'pinned',
+    'recent',
+    'favorite',
+    'running',
+    'dirty',
+    'envIssue',
+    'missing',
+  ];
+  if (value === 'unhealthy') return 'envIssue';
+  return known.includes(value as ProjectQuickFilter) ? (value as ProjectQuickFilter) : 'all';
+}
+
+/**
  * 保存视图 composable：把当前搜索/快捷筛选/分组/标签/排序状态打包命名后保存，
  * 点击 preset chips 可一键恢复筛选条件。
  */
@@ -51,7 +73,9 @@ export function useViewPresets(options: {
   /** 应用某个视图：回填筛选条件 */
   function applyPreset(preset: ProjectViewPreset) {
     options.searchQuery.value = preset.searchQuery;
-    options.activeQuickFilter.value = preset.quickFilter;
+    // 旧版本保存的视图可能仍是已废弃的 'unhealthy'，映射到新语义，
+    // 否则应用后会匹配不到任何项目，看起来像筛选坏了
+    options.activeQuickFilter.value = normalizeQuickFilter(preset.quickFilter);
     options.selectedGroupId.value = preset.groupId ?? '';
     options.selectedTags.value = [...preset.tags];
     settingsStore.settings.sortMode = preset.sortMode;
@@ -73,7 +97,7 @@ export function useViewPresets(options: {
   function isPresetActive(preset: ProjectViewPreset): boolean {
     return (
       options.searchQuery.value === preset.searchQuery &&
-      options.activeQuickFilter.value === preset.quickFilter &&
+      options.activeQuickFilter.value === normalizeQuickFilter(preset.quickFilter) &&
       (options.selectedGroupId.value || null) === preset.groupId &&
       options.selectedTags.value.length === preset.tags.length &&
       options.selectedTags.value.every((tag) => preset.tags.includes(tag)) &&

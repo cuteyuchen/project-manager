@@ -3,22 +3,45 @@ import type { ProjectHealthIssue, ProjectHealthSnapshot } from '../types';
 export interface ProjectHealthCounts {
   running: number;
   dirty: number;
-  unhealthy: number;
+  envIssue: number;
   missing: number;
 }
 
-/** 非 Git 项目不算异常，“未初始化 Git”只是提示 */
-export function getRealHealthIssues(snapshot: ProjectHealthSnapshot | undefined): ProjectHealthIssue[] {
+/**
+ * 不计入「异常」的问题码。
+ *
+ * - `not_git`：非 Git 项目只是提示，不是故障
+ * - `git_dirty`：工作区有未提交改动，属于当前状态而非环境问题；
+ *   总览里已有独立的「Git 改动」计数，再算进异常会让同一个项目被数两次，
+ *   用户也分不清「有点脏」和「真的坏了」
+ */
+const NON_ISSUE_CODES: ReadonlySet<ProjectHealthIssue['code']> = new Set(['not_git', 'git_dirty']);
+
+/** 会阻断或影响使用的环境问题（路径缺失、检测失败、依赖工具不可用） */
+export function getEnvironmentIssues(
+  snapshot: ProjectHealthSnapshot | undefined,
+): ProjectHealthIssue[] {
   if (!snapshot) return [];
-  return snapshot.issues.filter(issue => issue.code !== 'not_git');
+  return snapshot.issues.filter(issue => !NON_ISSUE_CODES.has(issue.code));
 }
 
-/** 路径缺失或存在真实健康问题（含 Git 未提交改动） */
-export function hasHealthIssues(snapshot: ProjectHealthSnapshot | undefined): boolean {
+/** 兼容旧命名：等价于 getEnvironmentIssues */
+export const getRealHealthIssues = getEnvironmentIssues;
+
+/**
+ * 项目是否存在环境异常。
+ *
+ * 只看「能不能用」，不看「脏不脏」：路径缺失、Git 检测失败、
+ * 包管理器 / Node 运行时不可用才算异常。
+ */
+export function hasEnvironmentIssue(snapshot: ProjectHealthSnapshot | undefined): boolean {
   if (!snapshot) return false;
   if (!snapshot.pathExists) return true;
-  return getRealHealthIssues(snapshot).length > 0;
+  return getEnvironmentIssues(snapshot).length > 0;
 }
+
+/** 兼容旧命名：语义已收窄为「环境异常」 */
+export const hasHealthIssues = hasEnvironmentIssue;
 
 /**
  * 统计健康分类计数。
@@ -34,7 +57,7 @@ export function countProjectHealth(
 ): ProjectHealthCounts {
   let running = 0;
   let dirty = 0;
-  let unhealthy = 0;
+  let envIssue = 0;
   let missing = 0;
 
   for (const project of projects) {
@@ -45,11 +68,29 @@ export function countProjectHealth(
 
     if (snapshot?.pathExists === false) {
       missing += 1;
-      unhealthy += 1;
+      envIssue += 1;
       continue;
     }
-    if (hasHealthIssues(snapshot)) unhealthy += 1;
+    if (hasEnvironmentIssue(snapshot)) envIssue += 1;
   }
 
-  return { running, dirty, unhealthy, missing };
+  return { running, dirty, envIssue, missing };
+}
+
+/**
+ * 健康等级（决定卡片圆点颜色）。
+ *
+ * 与「环境异常」筛选同口径：Git 有改动不会让圆点变黄，
+ * 否则圆点和筛选数字会各说各话。
+ */
+export function resolveHealthLevel(
+  snapshot: ProjectHealthSnapshot | undefined,
+): 'healthy' | 'warn' | 'error' | 'unknown' {
+  if (!snapshot) return 'unknown';
+  if (!snapshot.pathExists) return 'error';
+
+  const issues = getEnvironmentIssues(snapshot);
+  if (issues.some(issue => issue.level === 'error')) return 'error';
+  if (issues.length > 0) return 'warn';
+  return 'healthy';
 }

@@ -32,7 +32,7 @@ import {
 } from '../utils/shortcut.ts';
 import { collectProjectTags, projectMatchesSelectedTags } from '../utils/projectTags';
 import { summarizeGitStatus, type ProjectGitOverview } from '../utils/projectGitOverview';
-import { countProjectHealth, hasHealthIssues } from '../utils/projectHealth';
+import { countProjectHealth, hasEnvironmentIssue } from '../utils/projectHealth';
 import { buildProjectSearchEntry, projectSearchEntryMatches } from '../utils/projectSearch';
 import {
     collectAutoExpandedProjectIds,
@@ -54,8 +54,8 @@ const refreshing = ref(false);
 const PROJECT_LIST_ITEM_GAP = 8;
 const PROJECT_LIST_OVERSCAN = 4;
 
-/** 快捷筛选类型：基础(all/pinned/recent/favorite) + 健康(running/dirty/unhealthy/missing) */
-type QuickFilter = 'all' | 'pinned' | 'recent' | 'favorite' | 'running' | 'dirty' | 'unhealthy' | 'missing';
+/** 快捷筛选类型：基础(all/pinned/recent/favorite) + 健康(running/dirty/envIssue/missing) */
+type QuickFilter = 'all' | 'pinned' | 'recent' | 'favorite' | 'running' | 'dirty' | 'envIssue' | 'missing';
 
 /** *********************钻取状态：为空时显示列表页，否则显示工作区页*********************/
 const drilledRootId = ref<string | null>(null);
@@ -108,7 +108,7 @@ function openProjectRunSummary(project: Project): void {
     }
 }
 
-/** 健康快照覆盖整棵已导入项目树，支持后代 dirty/unhealthy/missing 筛选。 */
+/** 健康快照覆盖整棵已导入项目树，支持后代 dirty/envIssue/missing 筛选。 */
 const healthProjects = computed(() => projectStore.projects);
 const {
     getHealth,
@@ -294,10 +294,10 @@ const quickFilterOptions = computed(() => [
 
 /** 健康状态快捷筛选 chips（原「项目总览」的分类） */
 const healthFilterChips = computed(() => [
-    { key: 'running', label: t('dashboard.overviewRunning'), icon: 'i-mdi-play-circle-outline', tone: 'emerald', count: healthCounts.value.running },
-    { key: 'dirty', label: t('dashboard.overviewDirty'), icon: 'i-mdi-git', tone: 'amber', count: healthCounts.value.dirty },
-    { key: 'unhealthy', label: t('dashboard.overviewUnhealthy'), icon: 'i-mdi-alert-circle-outline', tone: 'red', count: healthCounts.value.unhealthy },
-    { key: 'missing', label: t('dashboard.overviewMissing'), icon: 'i-mdi-folder-alert-outline', tone: 'rose', count: healthCounts.value.missing },
+    { key: 'running', label: t('dashboard.overviewRunning'), icon: 'i-mdi-play-circle-outline', tone: 'emerald', count: healthCounts.value.running, hint: '' },
+    { key: 'dirty', label: t('dashboard.overviewDirty'), icon: 'i-mdi-git', tone: 'amber', count: healthCounts.value.dirty, hint: '' },
+    { key: 'envIssue', label: t('dashboard.overviewEnvIssue'), icon: 'i-mdi-alert-circle-outline', tone: 'red', count: healthCounts.value.envIssue, hint: t('dashboard.overviewEnvIssueHint') },
+    { key: 'missing', label: t('dashboard.overviewMissing'), icon: 'i-mdi-folder-alert-outline', tone: 'rose', count: healthCounts.value.missing, hint: '' },
 ]);
 
 function toggleHealthFilter(key: QuickFilter) {
@@ -391,8 +391,8 @@ function matchesProjectFilter(project: Project): boolean {
         case 'dirty':
             if (!getHealth(project.id)?.gitDirty) return false;
             break;
-        case 'unhealthy':
-            if (!isProjectUnhealthy(project.id)) return false;
+        case 'envIssue':
+            if (!isProjectEnvIssue(project.id)) return false;
             break;
         case 'missing':
             if (getHealth(project.id)?.pathExists !== false) return false;
@@ -486,8 +486,14 @@ function isProjectRunning(projectId: string): boolean {
     return (projectStore.runningSubtreeCount[projectId] ?? 0) > 0;
 }
 
-function isProjectUnhealthy(projectId: string): boolean {
-    return hasHealthIssues(getHealth(projectId));
+/**
+ * 环境异常：只看「能不能用」。
+ *
+ * 刻意不含 Git 未提交改动——那是工作区状态，有独立的「Git 改动」计数。
+ * 两处都算会让同一个项目被数两次，也让人误以为项目坏了。
+ */
+function isProjectEnvIssue(projectId: string): boolean {
+    return hasEnvironmentIssue(getHealth(projectId));
 }
 
 /** 健康分类计数：覆盖整棵项目树，和筛选命中的项目数保持一致 */
@@ -803,18 +809,23 @@ useAppShortcuts([
             <div class="flex items-center gap-2 flex-wrap">
                 <el-segmented v-model="activeQuickFilter" :options="quickFilterOptions" />
                 <span class="w-px h-5 bg-slate-200 dark:bg-slate-700 mx-1" />
-                <button
+                <el-tooltip
                     v-for="chip in healthFilterChips"
                     :key="chip.key"
-                    @click="toggleHealthFilter(chip.key as any)"
-                    class="health-chip"
-                    :class="[`health-chip-${chip.tone}`, { 'health-chip-active': activeQuickFilter === chip.key }]"
-                    :title="chip.label"
+                    :content="chip.hint || chip.label"
+                    placement="top"
+                    :show-after="300"
                 >
-                    <div :class="chip.icon" class="text-sm" />
-                    <span>{{ chip.label }}</span>
-                    <span class="health-chip-count">{{ chip.count }}</span>
-                </button>
+                    <button
+                        @click="toggleHealthFilter(chip.key as any)"
+                        class="health-chip"
+                        :class="[`health-chip-${chip.tone}`, { 'health-chip-active': activeQuickFilter === chip.key }]"
+                    >
+                        <div :class="chip.icon" class="text-sm" />
+                        <span>{{ chip.label }}</span>
+                        <span class="health-chip-count">{{ chip.count }}</span>
+                    </button>
+                </el-tooltip>
 
                 <div class="flex-1" />
 

@@ -2,6 +2,7 @@ import { computed, watch } from 'vue';
 import type { Ref } from 'vue';
 import { useProjectHealthStore } from '../../stores/projectHealth';
 import { useProjectStore } from '../../stores/project';
+import { countProjectHealth, resolveHealthLevel } from '../../utils/projectHealth';
 import type { Project, ProjectHealthSnapshot } from '../../types';
 
 /**
@@ -27,58 +28,27 @@ export function useProjectHealth(options: {
     await healthStore.refreshMany(options.filteredProjects.value);
   }
 
-  /** 汇总统计 */
+  /**
+   * 汇总统计。
+   *
+   * 复用 countProjectHealth，避免这里再手写一遍判定导致口径分叉
+   * （历史上就因为两份实现，「异常」把 Git 改动也算进去了）。
+   */
   const healthSummary = computed(() => {
     const allProjects = projectStore.projects;
-    let runningCount = 0;
-    let dirtyCount = 0;
-    let unhealthyCount = 0;
-    let missingCount = 0;
-
-    for (const p of allProjects) {
-      const snapshot = healthStore.snapshots[p.id];
-      if (!snapshot) continue;
-
-      // 运行中：通过 runningProjectCount 判断
-      if ((projectStore.runningProjectCount[p.id] ?? 0) > 0) {
-        runningCount++;
-      }
-      // Git 有改动
-      if (snapshot.gitDirty) {
-        dirtyCount++;
-      }
-      // 路径缺失
-      if (!snapshot.pathExists) {
-        missingCount++;
-        unhealthyCount++;
-        continue;
-      }
-      // 有任何健康问题（排除 not_git，非 Git 项目不是异常）
-      const realIssues = snapshot.issues.filter(
-        (issue) => issue.code !== 'not_git'
-      );
-      if (realIssues.length > 0) {
-        unhealthyCount++;
-      }
-    }
-
-    return {
-      total: allProjects.length,
-      running: runningCount,
-      dirty: dirtyCount,
-      unhealthy: unhealthyCount,
-      missing: missingCount,
-    };
+    const counts = countProjectHealth(
+      allProjects,
+      id => healthStore.snapshots[id],
+      id => projectStore.runningProjectCount[id] ?? 0,
+    );
+    return { total: allProjects.length, ...counts };
   });
 
-  /** 健康状态对应的颜色标识 */
-  function healthLevel(snapshot: ProjectHealthSnapshot | undefined): 'healthy' | 'warn' | 'error' | 'unknown' {
-    if (!snapshot) return 'unknown';
-    if (!snapshot.pathExists) return 'error';
-    const realIssues = snapshot.issues.filter((i) => i.code !== 'not_git');
-    if (realIssues.some((i) => i.level === 'error')) return 'error';
-    if (realIssues.some((i) => i.level === 'warn')) return 'warn';
-    return 'healthy';
+  /** 健康状态对应的颜色标识（与「环境异常」筛选同口径） */
+  function healthLevel(
+    snapshot: ProjectHealthSnapshot | undefined,
+  ): 'healthy' | 'warn' | 'error' | 'unknown' {
+    return resolveHealthLevel(snapshot);
   }
 
   /** 防抖刷新定时器 */

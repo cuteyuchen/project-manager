@@ -371,14 +371,22 @@ export interface WorkspaceNavMemory {
   levelLeaf: Record<string, string | null>;
 }
 
-/** 项目列表快捷筛选类型：基础 + 健康状态 */export type ProjectQuickFilter =
+/**
+ * 项目列表快捷筛选类型。
+ *
+ * 健康类筛选刻意拆开、互不重叠：
+ * - dirty：工作区有未提交改动（状态，不代表出问题）
+ * - envIssue：环境异常，影响「能不能用」
+ * - missing：路径缺失（envIssue 的子集，单独列出便于快速定位）
+ */
+export type ProjectQuickFilter =
   | 'all'
   | 'pinned'
   | 'recent'
   | 'favorite'
   | 'running'
   | 'dirty'
-  | 'unhealthy'
+  | 'envIssue'
   | 'missing';
 
 /** 保存视图：把当前过滤/排序状态打包命名后保存 */
@@ -418,9 +426,31 @@ export interface WorkspaceProfile {
   createdAt: string;
 }
 
-/** 项目健康问题 */
+/**
+ * Git 模块内的子页签：文件状态 / 提交历史。
+ *
+ * 存在 store 里按项目分桶，因为快速管理弹窗与完整工作区是两个
+ * 独立的 GitView 实例，局部状态无法跨实例传递。
+ */
+export type GitSubTab = 'changes' | 'history';
+
+/**
+ * 项目健康问题。
+ *
+ * 分为两类，判定口径不能混：
+ * - 环境问题（path_missing / git_check_failed / pm_unresolved / node_unresolved）
+ *   → 影响“能不能用”，计入「环境异常」
+ * - 状态提示（git_dirty / not_git）
+ *   → 只是当前工作区状态，不计入异常（git_dirty 有独立的「Git 改动」计数）
+ */
 export interface ProjectHealthIssue {
-  code: 'path_missing' | 'not_git' | 'git_dirty' | 'pm_unresolved' | 'node_unresolved';
+  code:
+    | 'path_missing'
+    | 'git_check_failed'
+    | 'not_git'
+    | 'git_dirty'
+    | 'pm_unresolved'
+    | 'node_unresolved';
   level: 'warn' | 'error';
   message: string;
 }

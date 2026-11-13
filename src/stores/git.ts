@@ -16,6 +16,7 @@ import type {
   GitBranch,
   GitCommit,
   GitCommitFile,
+  GitSubTab,
   GitSummary,
   GitStashEntry,
   GitTag,
@@ -85,6 +86,15 @@ export const useGitStore = defineStore('git', () => {
   const commitFiles = ref<Record<string, Record<string, GitCommitFile[]>>>({});
   // Currently selected commit hash in history
   const selectedCommitHash = ref<Record<string, string>>({});
+
+  /**
+   * Git 模块内的子页签（文件状态 / 提交历史），按项目分桶。
+   *
+   * 不能放在 GitView 组件里：快速管理弹窗和完整工作区是两个独立实例，
+   * 弹窗里停在「提交历史」，进入完整工作区后局部状态是默认的「文件状态」，
+   * 用户会以为自己点错了。放 store 后两处共享同一份选择。
+   */
+  const subTab = ref<Record<string, GitSubTab>>({});
 
   // Commit message per project (survives tab switches)
   const commitMessage = ref<Record<string, string>>({});
@@ -166,6 +176,25 @@ export const useGitStore = defineStore('git', () => {
   function getTotalChanges(projectId: string): number {
     const s = status.value[projectId];
     return summarizeGitStatus(s, isGitRepo.value[projectId])?.total ?? 0;
+  }
+
+  /**
+   * 取 Git 子页签。未选择过时回落到「文件状态」。
+   *
+   * 不做可用性校验（是否真的是仓库），那是调用方/页签兜底逻辑的职责。
+   */
+  function getSubTab(projectId: string): GitSubTab {
+    return subTab.value[projectId] ?? 'changes';
+  }
+
+  /**
+   * 记住 Git 子页签。
+   *
+   * 弹窗与完整工作区共享这份选择：在弹窗里点到「提交历史」，
+   * 进入完整工作区时应直接落在提交历史，而不是被重置回文件状态。
+   */
+  function rememberSubTab(projectId: string, tab: GitSubTab): void {
+    subTab.value[projectId] = tab;
   }
 
   function isFresh(record: Record<string, number>, projectId: string, maxAgeMs: number): boolean {
@@ -1172,6 +1201,7 @@ export const useGitStore = defineStore('git', () => {
     prune(commitDetails.value);
     prune(commitFiles.value);
     prune(selectedCommitHash.value);
+    prune(subTab.value);
     prune(commitMessage.value);
     prune(repoCheckedAt.value);
     prune(repoCheckFailures.value);
@@ -1207,6 +1237,7 @@ export const useGitStore = defineStore('git', () => {
     diffSelections,
     commitFiles,
     selectedCommitHash,
+    subTab,
     commitMessage,
     aiCommitGenerating,
     loading,
@@ -1225,6 +1256,8 @@ export const useGitStore = defineStore('git', () => {
     getLocalBranches,
     getRemoteBranches,
     getTotalChanges,
+    getSubTab,
+    rememberSubTab,
     getCommitFiles,
     getCommitDetail,
     isGitCapabilityKnown,

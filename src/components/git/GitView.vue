@@ -2,7 +2,7 @@
 import { ref, computed, watch, onMounted, onActivated, onDeactivated, onUnmounted, nextTick, useTemplateRef } from 'vue';
 import { useGitStore } from '../../stores/git';
 import { useSettingsStore } from '../../stores/settings';
-import type { Project } from '../../types';
+import type { GitSubTab, Project } from '../../types';
 import { useI18n } from 'vue-i18n';
 import { ElMessage } from 'element-plus';
 import { useSplitPane } from '../../composables/useSplitPane';
@@ -32,7 +32,17 @@ const settingsStore = useSettingsStore();
  */
 const props = defineProps<{ project: Project }>();
 
-const activeTab = ref<'changes' | 'history'>('changes');
+/**
+ * 子页签存在 git store 里（按项目分桶），不用组件局部 ref。
+ *
+ * 快速管理弹窗与完整工作区是两个独立的 GitView 实例：局部状态在弹窗里
+ * 切到「提交历史」后，进入完整工作区会新建实例、回落到默认的「文件状态」，
+ * 看起来像点错了页签。共享一份状态后两边始终一致。
+ */
+const activeTab = computed<GitSubTab>({
+  get: () => gitStore.getSubTab(props.project.id),
+  set: (tab) => gitStore.rememberSubTab(props.project.id, tab),
+});
 const fileHistoryPath = ref('');
 const showBranchDialog = ref(false);
 const showSettingsDialog = ref(false);
@@ -395,7 +405,11 @@ onDeactivated(enterColdStorage);
 
 // Clear diff when switching tabs; history is loaded only when the tab is used
 watch(activeTab, (tab) => {
-  gitStore.clearDiff(props.project.id);
+  // 子页签现在由 store 共享，弹窗里切换也会触发这里。
+  // 只有本实例可见时才清 diff，否则会把另一个正在显示的实例的 diff 清掉。
+  if (isViewActive.value) {
+    gitStore.clearDiff(props.project.id);
+  }
   if (tab === 'history' && activeProject.value && isViewActive.value) {
     scheduleRefresh({
       force: true,
