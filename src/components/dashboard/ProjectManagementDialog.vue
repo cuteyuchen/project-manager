@@ -6,6 +6,7 @@ import type { Project, WorkspaceTab } from '../../types';
 import type { ProjectGitOverview } from '../../utils/projectGitOverview';
 import ProjectManagementPanel from './ProjectManagementPanel.vue';
 import ProjectSwitcherPopover from './ProjectSwitcherPopover.vue';
+import SubProjectSwitcher from './SubProjectSwitcher.vue';
 import { useProjectExternalActions } from '../../composables/useProjectExternalActions';
 
 const props = withDefaults(defineProps<{
@@ -36,6 +37,23 @@ const visible = computed({
 const managementPanel = useTemplateRef<InstanceType<typeof ProjectManagementPanel>>('managementPanel');
 const { openEditor, openTerminal, openFolder } = useProjectExternalActions(() => props.project);
 const switcherVisible = ref(false);
+
+/**
+ * 下拉框只选一级项目：当前项目是子项目时，回溯到它所在的一级项目作为下拉的选中项，
+ * 具体子项目交给右侧的子级项目切换器高亮。
+ */
+const rootProject = computed<Project | null>(() => {
+  const byId = new Map(props.projects.map(project => [project.id, project]));
+  let current: Project | undefined = props.project ?? undefined;
+  const seen = new Set<string>();
+  while (current?.parentId && !seen.has(current.id)) {
+    seen.add(current.id);
+    const parent: Project | undefined = byId.get(current.parentId);
+    if (!parent) break;
+    current = parent;
+  }
+  return current ?? null;
+});
 
 /***********************弹窗尺寸*********************/
 /**
@@ -97,33 +115,44 @@ function editProject(): void {
     <template #header>
       <div class="project-management-dialog-header">
         <div class="project-management-dialog-heading min-w-0">
-          <el-popover
-            v-model:visible="switcherVisible"
-            placement="bottom-start"
-            :width="360"
-            :disabled="!project"
-            popper-class="project-switcher-popper"
-          >
-            <ProjectSwitcherPopover
+          <div class="project-management-dialog-heading-row">
+            <el-popover
+              v-model:visible="switcherVisible"
+              placement="bottom-start"
+              :width="360"
+              :disabled="!project"
+              popper-class="project-switcher-popper"
+            >
+              <ProjectSwitcherPopover
+                :projects="projects"
+                :current-project-id="project?.id"
+                :git-overview-by-id="gitOverviewById"
+                :running-count-by-project-id="runningCountByProjectId"
+                @select="selectProject"
+              />
+              <template #reference>
+                <button
+                  type="button"
+                  class="project-management-dialog-title"
+                  :title="rootProject?.name || project?.name"
+                  :disabled="!project"
+                  @click.stop
+                >
+                  <span class="truncate">{{ rootProject?.name || project?.name }}</span>
+                  <div class="i-mdi-chevron-down text-sm shrink-0" aria-hidden="true" />
+                </button>
+              </template>
+            </el-popover>
+            <!-- 一级项目右侧：所有子项目逐个平铺，点击即可切换 -->
+            <SubProjectSwitcher
+              class="project-management-dialog-subprojects"
               :projects="projects"
+              :root-id="rootProject?.id || null"
               :current-project-id="project?.id"
-              :git-overview-by-id="gitOverviewById"
               :running-count-by-project-id="runningCountByProjectId"
               @select="selectProject"
             />
-            <template #reference>
-              <button
-                type="button"
-                class="project-management-dialog-title"
-                :title="project?.name"
-                :disabled="!project"
-                @click.stop
-              >
-                <span class="truncate">{{ project?.name }}</span>
-                <div class="i-mdi-chevron-down text-sm shrink-0" aria-hidden="true" />
-              </button>
-            </template>
-          </el-popover>
+          </div>
           <div class="project-management-dialog-path truncate">{{ project?.path }}</div>
         </div>
         <div class="project-management-dialog-actions" @click.stop>
@@ -182,6 +211,17 @@ function editProject(): void {
   flex: 1 1 auto;
   min-width: 0;
 }
+/* 一级项目下拉 + 子项目切换器同一行：下拉在左，子项目平铺在右 */
+.project-management-dialog-heading-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.project-management-dialog-subprojects {
+  flex: 1 1 auto;
+  min-width: 0;
+}
 .project-management-dialog-actions {
   display: flex;
   align-items: center;
@@ -195,7 +235,8 @@ function editProject(): void {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  max-width: 100%;
+  flex: 0 0 auto;
+  max-width: min(320px, 42%);
   padding: 2px 6px;
   border: none;
   border-radius: var(--app-radius-sm);

@@ -159,3 +159,50 @@ export function assignSortOrders<T extends { parentId?: string }>(
     return { ...project, sortOrder };
   });
 }
+
+/***********************子项目平铺（切换器用）*********************/
+export interface SubProjectRow<T extends ProjectSortFields> {
+  project: T;
+  /** 项目树层级：一级项目为 1，二级项目为 2，以此类推 */
+  depth: number;
+}
+
+/**
+ * 把某个一级项目下的所有后代项目按「深度优先 + 同级手动排序」平铺出来。
+ *
+ * 用于子项目切换器：二级容器和它下面的三级项目都要出现（颜色/缩进由调用方按
+ * depth 区分），一级项目本身不进入结果——它由一级项目下拉框负责选择。
+ */
+export function collectSubProjectRows<T extends ProjectSortFields & { id: string; parentId?: string }>(
+  projects: readonly T[],
+  rootId: string | null | undefined,
+): SubProjectRow<T>[] {
+  if (!rootId) return [];
+
+  const childrenByParentId = new Map<string, T[]>();
+  for (const project of projects) {
+    if (!project.parentId) continue;
+    const siblings = childrenByParentId.get(project.parentId);
+    if (siblings) siblings.push(project);
+    else childrenByParentId.set(project.parentId, [project]);
+  }
+  for (const siblings of childrenByParentId.values()) {
+    siblings.sort(compareProjectsByPinnedThenOrder);
+  }
+
+  const result: SubProjectRow<T>[] = [];
+  // seen 同时防脏数据成环，并保证同一项目只出现一次
+  const seen = new Set<string>([rootId]);
+  const walk = (parentId: string, depth: number): void => {
+    if (depth > MAX_PROJECT_DEPTH) return;
+    for (const project of childrenByParentId.get(parentId) ?? []) {
+      if (seen.has(project.id)) continue;
+      seen.add(project.id);
+      result.push({ project, depth });
+      walk(project.id, depth + 1);
+    }
+  };
+  walk(rootId, 2);
+
+  return result;
+}

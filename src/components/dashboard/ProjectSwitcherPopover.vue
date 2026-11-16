@@ -1,17 +1,17 @@
 <script setup lang="ts">
-/***********************快速管理项目切换器*********************/
+/***********************快捷选择项目下拉内容*********************/
+/**
+ * 下拉只列出一级项目，并且只允许选中一级项目。
+ *
+ * 下钻到子项目由调用方负责：快速管理弹窗用右侧的子级项目切换器，
+ * 项目详情页用左侧文件树。这样下拉里不会再铺开整棵项目树。
+ */
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Project } from '../../types';
 import type { ProjectGitOverview } from '../../utils/projectGitOverview';
 import { compareProjectsByPinnedThenOrder } from '../../utils/projectTree';
-import { collectAutoExpandedProjectIds, collectVisibleProjectIds } from '../../utils/projectTreeView';
 import { buildProjectSearchEntry, projectSearchEntryMatches } from '../../utils/projectSearch';
-
-interface ProjectSwitcherRow {
-  project: Project;
-  depth: number;
-}
 
 const props = withDefaults(defineProps<{
   projects: readonly Project[];
@@ -31,99 +31,77 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const searchQuery = ref('');
 
+const projectById = computed(() => new Map(props.projects.map(project => [project.id, project])));
+
 const searchEntries = computed(() => new Map(
   props.projects.map(project => [project.id, buildProjectSearchEntry(project)]),
 ));
 
-const matchingProjectIds = computed(() => props.projects
-  .filter(project => {
-    const entry = searchEntries.value.get(project.id);
-    return entry ? projectSearchEntryMatches(entry, searchQuery.value) : false;
-  })
-  .map(project => project.id));
+/**
+ * 当前所在的一级项目：当前项目本身是子项目时沿 parentId 回溯到根。
+ * 用于让下拉里「自己所在的那条一级项目」保持高亮，而不是整列都没有选中态。
+ */
+const currentRootId = computed(() => {
+  let current = props.currentProjectId ? projectById.value.get(props.currentProjectId) : undefined;
+  const seen = new Set<string>();
+  while (current?.parentId && !seen.has(current.id)) {
+    seen.add(current.id);
+    current = projectById.value.get(current.parentId);
+  }
+  return current?.id ?? null;
+});
 
-const visibleProjectIds = computed(() => {
-  if (!searchQuery.value.trim()) return new Set(props.projects.map(project => project.id));
-  return collectVisibleProjectIds(props.projects, matchingProjectIds.value);
+/** 只有一级项目（没有 parentId）进入下拉列表，子项目一律不进。 */
+const rootProjects = computed(() => props.projects
+  .filter(project => !project.parentId)
+  .sort(compareProjectsByPinnedThenOrder));
+
+const childrenByParentId = computed(() => {
+  const result = new Map<string, Project[]>();
+  for (const project of props.projects) {
+    if (!project.parentId) continue;
+    const siblings = result.get(project.parentId);
+    if (siblings) siblings.push(project);
+    else result.set(project.parentId, [project]);
+  }
+  return result;
 });
 
 /**
- * 默认只展示一级项目；搜索结果和当前项目的祖先链自动展开，
- * 这样切换器不会在打开时把整棵项目树铺满，但当前上下文仍然可见。
+ * 一级项目 → 它整棵子树的 id 集合。
+ *
+ * 下拉虽然只列一级项目，但搜索仍要能命中选择项内部的项目：输入某个子项目名时
+ * 保留它所属的一级项目，用户选完一级项目就能在右侧子项目切换器里找到它。
  */
-const expandedProjectIds = ref<Set<string>>(new Set());
-const currentProjectAncestorIds = computed(() => {
-  if (!props.currentProjectId) return new Set<string>();
-  return collectAutoExpandedProjectIds(props.projects, [props.currentProjectId]);
-});
-const searchAutoExpandedProjectIds = computed(() => {
-  if (!searchQuery.value.trim()) return new Set<string>();
-  return collectAutoExpandedProjectIds(props.projects, matchingProjectIds.value);
-});
-const effectiveExpandedProjectIds = computed(() => new Set([
-  ...expandedProjectIds.value,
-  ...currentProjectAncestorIds.value,
-  ...searchAutoExpandedProjectIds.value,
-]));
-
-const sortedChildrenByParentId = computed(() => {
-  const result = new Map<string | undefined, Project[]>();
-  for (const project of props.projects) {
-    const children = result.get(project.parentId) || [];
-    children.push(project);
-    result.set(project.parentId, children);
-  }
-  for (const children of result.values()) {
-    children.sort(compareProjectsByPinnedThenOrder);
-  }
-  return result;
-});
-
-const rows = computed<ProjectSwitcherRow[]>(() => {
-  const result: ProjectSwitcherRow[] = [];
-
-  const visit = (parentId: string | undefined, depth: number): void => {
-    const children = sortedChildrenByParentId.value.get(parentId) || [];
-    for (const project of children) {
-      if (!visibleProjectIds.value.has(project.id)) continue;
-      result.push({ project, depth });
-      if (hasChildren(project.id) && effectiveExpandedProjectIds.value.has(project.id)) {
-        visit(project.id, depth + 1);
+const subtreeProjectIds = computed(() => {
+  const result = new Map<string, string[]>();
+  for (const rootProject of rootProjects.value) {
+    const ids: string[] = [rootProject.id];
+    const seen = new Set(ids);
+    const stack = [rootProject.id];
+    while (stack.length > 0) {
+      const parentId = stack.pop() as string;
+      for (const child of childrenByParentId.value.get(parentId) || []) {
+        if (seen.has(child.id)) continue;
+        seen.add(child.id);
+        ids.push(child.id);
+        stack.push(child.id);
       }
     }
-  };
-
-  visit(undefined, 0);
-
-  // Keep malformed/orphaned records selectable without flattening valid branches.
-  const renderedIds = new Set(result.map(row => row.project.id));
-  const projectIds = new Set(props.projects.map(project => project.id));
-  for (const project of [...props.projects].sort(compareProjectsByPinnedThenOrder)) {
-    if (
-      !renderedIds.has(project.id)
-      && visibleProjectIds.value.has(project.id)
-      && (!project.parentId || !projectIds.has(project.parentId))
-    ) {
-      result.push({ project, depth: 0 });
-    }
+    result.set(rootProject.id, ids);
   }
   return result;
 });
 
-function hasChildren(projectId: string): boolean {
-  return (sortedChildrenByParentId.value.get(projectId)?.length || 0) > 0;
-}
-
-function isExpanded(projectId: string): boolean {
-  return hasChildren(projectId) && effectiveExpandedProjectIds.value.has(projectId);
-}
-
-function toggleExpanded(projectId: string): void {
-  const next = new Set(expandedProjectIds.value);
-  if (next.has(projectId)) next.delete(projectId);
-  else next.add(projectId);
-  expandedProjectIds.value = next;
-}
+const rows = computed(() => {
+  const query = searchQuery.value.trim();
+  if (!query) return rootProjects.value;
+  return rootProjects.value.filter(project => (subtreeProjectIds.value.get(project.id) || [project.id])
+    .some(id => {
+      const entry = searchEntries.value.get(id);
+      return entry ? projectSearchEntryMatches(entry, query) : false;
+    }));
+});
 
 function isRunning(projectId: string): boolean {
   return (props.runningCountByProjectId?.[projectId] || 0) > 0;
@@ -158,52 +136,40 @@ function handleRowKeydown(event: KeyboardEvent, project: Project): void {
 
     <div v-if="rows.length > 0" class="project-switcher-list" role="listbox">
       <div
-        v-for="row in rows"
-        :key="row.project.id"
+        v-for="project in rows"
+        :key="project.id"
         class="project-switcher-row"
-        :class="{ 'project-switcher-row-active': row.project.id === currentProjectId }"
-        :style="{ paddingLeft: `${10 + row.depth * 18}px` }"
-        :title="row.project.path"
-        :aria-selected="row.project.id === currentProjectId"
+        :class="{ 'project-switcher-row-active': project.id === currentRootId }"
+        :title="project.path"
+        :aria-selected="project.id === currentRootId"
         role="option"
         tabindex="0"
-        @click.stop="selectProject(row.project)"
-        @keydown="handleRowKeydown($event, row.project)"
+        @click.stop="selectProject(project)"
+        @keydown="handleRowKeydown($event, project)"
       >
         <span class="project-switcher-tree-mark">
-          <button
-            v-if="hasChildren(row.project.id)"
-            type="button"
-            class="project-switcher-tree-toggle"
-            :aria-label="isExpanded(row.project.id) ? t('dashboard.collapseProject') : t('dashboard.expandProject')"
-            :aria-expanded="isExpanded(row.project.id)"
-            @click.stop="toggleExpanded(row.project.id)"
-            @keydown.stop
-          >
-            <span :class="isExpanded(row.project.id) ? 'i-mdi-chevron-down' : 'i-mdi-chevron-right'" />
-          </button>
-          <span v-else class="i-mdi-file-outline" aria-hidden="true" />
+          <span class="i-mdi-folder-home-outline" aria-hidden="true" />
         </span>
         <span class="project-switcher-row-main">
           <span class="project-switcher-row-title">
-            <span class="truncate">{{ row.project.name }}</span>
-            <span v-if="row.project.moduleKind" class="project-switcher-kind">
-              {{ t(`project.moduleKind.${row.project.moduleKind}`) }}
+            <span class="truncate">{{ project.name }}</span>
+            <span v-if="project.moduleKind" class="project-switcher-kind">
+              {{ t(`project.moduleKind.${project.moduleKind}`) }}
             </span>
           </span>
-          <span class="project-switcher-row-path">{{ row.project.path }}</span>
+          <span class="project-switcher-row-path">{{ project.path }}</span>
         </span>
         <span class="project-switcher-row-status" aria-hidden="true">
-          <span v-if="row.project.id === currentProjectId" class="i-mdi-check project-switcher-current" />
-          <span v-if="isRunning(row.project.id)" class="project-switcher-running" />
+          <span v-if="project.id === currentRootId" class="i-mdi-check project-switcher-current" />
+          <span v-if="isRunning(project.id)" class="project-switcher-running" />
           <span
-            v-if="gitOverviewById?.[row.project.id]?.isGitRepo && !gitOverviewById[row.project.id]?.clean"
+            v-if="gitOverviewById?.[project.id]?.isGitRepo && !gitOverviewById[project.id]?.clean"
             class="project-switcher-git-dirty"
           >
-            <span v-if="gitOverviewById[row.project.id]?.modified">M{{ gitOverviewById[row.project.id]?.modified }}</span>
-            <span v-if="gitOverviewById[row.project.id]?.added">A{{ gitOverviewById[row.project.id]?.added }}</span>
-            <span v-if="gitOverviewById[row.project.id]?.deleted">D{{ gitOverviewById[row.project.id]?.deleted }}</span>
-            <span v-if="gitOverviewById[row.project.id]?.conflicted">!{{ gitOverviewById[row.project.id]?.conflicted }}</span>
+            <span v-if="gitOverviewById[project.id]?.modified">M{{ gitOverviewById[project.id]?.modified }}</span>
+            <span v-if="gitOverviewById[project.id]?.added">A{{ gitOverviewById[project.id]?.added }}</span>
+            <span v-if="gitOverviewById[project.id]?.deleted">D{{ gitOverviewById[project.id]?.deleted }}</span>
+            <span v-if="gitOverviewById[project.id]?.conflicted">!{{ gitOverviewById[project.id]?.conflicted }}</span>
           </span>
         </span>
       </div>
@@ -240,9 +206,7 @@ function handleRowKeydown(event: KeyboardEvent, project: Project): void {
   width: 100%;
   min-width: 0;
   min-height: 38px;
-  padding-top: 5px;
-  padding-right: 10px;
-  padding-bottom: 5px;
+  padding: 5px 10px;
   border: none;
   border-radius: var(--app-radius-sm);
   background: transparent;
@@ -266,23 +230,6 @@ function handleRowKeydown(event: KeyboardEvent, project: Project): void {
   flex-shrink: 0;
   color: var(--app-text-muted);
   font-size: 14px;
-}
-.project-switcher-tree-toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--app-radius-xs);
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-}
-.project-switcher-tree-toggle:hover {
-  background: color-mix(in srgb, var(--app-primary) 14%, transparent);
-  color: var(--app-primary);
 }
 .project-switcher-row-main {
   display: flex;
