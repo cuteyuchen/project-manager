@@ -3,6 +3,12 @@ import { ref } from 'vue';
 import { api } from '../api';
 import { requestAiTextWithFallback, type AiFallbackResult } from '../utils/aiFallback.ts';
 import {
+  compactDiffForAi,
+  isContextOverflowError,
+  AI_DIFF_FALLBACK_TOTAL_BUDGET,
+  AI_DIFF_FALLBACK_PER_FILE_BUDGET,
+} from '../utils/aiDiff.ts';
+import {
   readDiffSelection,
   writeDiffSelection,
   clearDiffSelection,
@@ -1117,9 +1123,9 @@ export const useGitStore = defineStore('git', () => {
       throwIfCancelled();
 
       /***********************AI 提交信息仅使用已暂存内容*********************/
-      const diff = await api.gitDiffForAi(path);
+      const rawDiff = await api.gitDiffForAi(path);
       throwIfCancelled();
-      if (!diff.trim()) {
+      if (!rawDiff.trim()) {
         throw new Error('no_staged');
       }
 
@@ -1132,17 +1138,37 @@ export const useGitStore = defineStore('git', () => {
 5. Keep each line within 72 characters.
 6. Output only the commit message itself, with no extra explanation.`;
 
-      // 槽位是否可用的判断收敛在 buildAiAttempts 里，这里只负责空列表兜底
-      const result = await requestAiTextWithFallback(settings.attempts, {
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: `Git diff:\n\`\`\`\n${diff}\n\`\`\`` },
-        ],
+      // 大改动 / 大文件 / 二进制先压缩，避免请求体超过模型最大输入 token
+      const buildMessages = (diff: string) => [
+        { role: 'system' as const, content: systemPrompt },
+        { role: 'user' as const, content: `Git diff:\n\`\`\`\n${diff}\n\`\`\`` },
+      ];
+      const requestOptions = {
         maxTokens: 200,
         temperature: 0.3,
         stream: settings.stream,
         signal: controller.signal,
-      });
+      };
+
+      // 槽位是否可用的判断收敛在 buildAiAttempts 里，这里只负责空列表兜底
+      let result: AiFallbackResult;
+      try {
+        result = await requestAiTextWithFallback(settings.attempts, {
+          ...requestOptions,
+          messages: buildMessages(compactDiffForAi(rawDiff)),
+        });
+      } catch (error) {
+        throwIfCancelled();
+        // 模型上下文比默认预算还小（如 4k 模型）：更激进地压缩后重试一次
+        if (!isContextOverflowError(error)) throw error;
+        result = await requestAiTextWithFallback(settings.attempts, {
+          ...requestOptions,
+          messages: buildMessages(compactDiffForAi(rawDiff, {
+            totalBudget: AI_DIFF_FALLBACK_TOTAL_BUDGET,
+            perFileBudget: AI_DIFF_FALLBACK_PER_FILE_BUDGET,
+          })),
+        });
+      }
       throwIfCancelled();
       return result;
     } catch (error) {
