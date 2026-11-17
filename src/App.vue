@@ -75,6 +75,9 @@ const updateProgressIndeterminate = ref(false);
 const updateProgressPhase = ref<UpdateProgressPhase>('downloading');
 const processedImportInstallVersions = new Set<string>();
 const closeBehaviorDialogVisible = ref(false);
+const starPromptVisible = ref(false);
+const STAR_PROMPT_DISMISSED_KEY = 'star-prompt-dismissed';
+let starPromptTimer: ReturnType<typeof setTimeout> | null = null;
 const pluginQuickSearchVisible = ref(false);
 const rememberCloseAction = ref(false);
 let trayIcon: { close?: () => Promise<void> } | null = null;
@@ -588,6 +591,35 @@ function resolveCloseDialog(action: 'tray' | 'exit' | 'cancel') {
   }
 }
 
+/***********************GitHub Star 引导弹窗*********************/
+
+function scheduleStarPrompt() {
+  try {
+    if (localStorage.getItem(STAR_PROMPT_DISMISSED_KEY)) return;
+  } catch {
+    return;
+  }
+  // 稍作延迟，避免与启动时的更新提示等弹窗撞在一起
+  starPromptTimer = setTimeout(() => {
+    starPromptTimer = null;
+    starPromptVisible.value = true;
+  }, 3000);
+}
+
+/** 关闭（含右上角 X / ESC）后永久不再显示 */
+function handleStarPromptClosed() {
+  try {
+    localStorage.setItem(STAR_PROMPT_DISMISSED_KEY, '1');
+  } catch {
+    // localStorage 不可用时本次会话内不再弹出
+  }
+}
+
+function starOnGitHub() {
+  void api.openUrl('https://github.com/cuteyuchen/project-manager');
+  starPromptVisible.value = false;
+}
+
 async function setupTray() {
   if (isPlugin || !loaded.value) return;
 
@@ -712,6 +744,7 @@ onMounted(async () => {
   await runHistoryStore.load();
   await nodeStore.loadRuntimes();
   loaded.value = true;
+  scheduleStarPrompt();
   // 后台补齐 Java 构建信息（老数据没有 spring-boot 模块信息），不阻塞首屏
   void projectStore.refreshJavaBuildInfo();
   if (nativeExitRequestedBeforeLoad) {
@@ -870,6 +903,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  if (starPromptTimer) clearTimeout(starPromptTimer);
   if (unlistenDragEnter) unlistenDragEnter();
   if (unlistenDragLeave) unlistenDragLeave();
   if (unlistenDragDrop) unlistenDragDrop();
@@ -1155,6 +1189,29 @@ watch(
           </el-button>
           <el-button type="danger" @click="resolveCloseDialog('exit')">
             {{ t('settings.closeActionOptions.exit') }}
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="starPromptVisible"
+      :title="t('settings.starPromptTitle')"
+      width="420px"
+      append-to-body
+      align-center
+      class="app-centered-dialog"
+      @close="handleStarPromptClosed"
+    >
+      <div class="space-y-3 text-sm text-slate-600 dark:text-slate-300">
+        <p>{{ t('settings.starPromptMessage') }}</p>
+      </div>
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <el-button @click="starPromptVisible = false">{{ t('common.close') }}</el-button>
+          <el-button type="primary" @click="starOnGitHub">
+            <div class="i-mdi-star-outline mr-1" />
+            {{ t('settings.starOnGitHub') }}
           </el-button>
         </div>
       </template>

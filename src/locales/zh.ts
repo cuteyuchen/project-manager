@@ -678,6 +678,11 @@ export default {
     portableTag: '便携版',
     portableUpdate: '便携版更新方式',
     portableUpdateHint: '检查更新会引导下载新版压缩包；退出应用后用新的 project-manager.exe 覆盖当前文件即可，不会安装为普通版本。',
+    starProject: '支持项目',
+    starProjectHint: '如果这个项目帮助到你了，请给我一个 Star，这将给我更新下去的动力。',
+    starOnGitHub: '去 GitHub 点 Star',
+    starPromptTitle: '喜欢这个项目吗？',
+    starPromptMessage: '如果这个项目帮助到你了，请给我一个 Star，这将给我更新下去的动力。',
     // AI commit
     gitAi: 'AI 提交信息生成',
     gitAiEnabled: '启用 AI 生成',

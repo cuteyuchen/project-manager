@@ -679,6 +679,11 @@ export default {
     portableTag: 'Portable',
     portableUpdate: 'Portable Updates',
     portableUpdateHint: 'Update checks link to the new zip. Quit the app and replace project-manager.exe with the new one; it will not be installed as a regular build.',
+    starProject: 'Support the Project',
+    starProjectHint: 'If this project helps you, please give it a star — it keeps me motivated to keep updating.',
+    starOnGitHub: 'Star on GitHub',
+    starPromptTitle: 'Enjoying this project?',
+    starPromptMessage: 'If this project helps you, please give it a star — it keeps me motivated to keep updating.',
     // AI commit
     gitAi: 'AI Commit Message',
     gitAiEnabled: 'Enable AI Generation',

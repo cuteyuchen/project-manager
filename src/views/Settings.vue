@@ -232,6 +232,10 @@ function handleSave() {
     normalizeQuickSearchGlobalShortcut();
   }
   Object.assign(settingsStore.settings, normalizeDefaultTerminalId(normalizeAiSettings(deepClone(toRaw(draft.value)))));
+  delete settingsStore.settings.workspaceTabShortcuts;
+  // 保存时的归一化会回写 gitAiPrimaryService 等字段，store 与草稿可能不再一致；
+  // 用 store 的最新值同步草稿，避免保存后仍误报「有未保存的更改」。
+  draft.value = deepClone(toRaw(settingsStore.settings));
   ElMessage.success(t('common.success'));
 }
 
@@ -959,6 +963,10 @@ function openReleases() {
   api.openUrl('https://github.com/cuteyuchen/project-manager/releases');
 }
 
+function openGitHubRepo() {
+  void api.openUrl('https://github.com/cuteyuchen/project-manager');
+}
+
 function triggerManualUpdateCheck() {
   updateCheckLoading.value = true;
   window.dispatchEvent(new CustomEvent('manual-check-update'));
@@ -1452,6 +1460,16 @@ function describeAiTestError(error: any): string {
             <div class="settings-row-title">{{ t('settings.portableUpdate') }}</div>
             <div class="settings-row-desc">{{ t('settings.portableUpdateHint') }}</div>
           </div>
+        </div>
+        <div class="settings-row-line">
+          <div>
+            <div class="settings-row-title">{{ t('settings.starProject') }}</div>
+            <div class="settings-row-desc">{{ t('settings.starProjectHint') }}</div>
+          </div>
+          <el-button type="primary" plain @click="openGitHubRepo">
+            <div class="i-mdi-star-outline mr-1" />
+            {{ t('settings.starOnGitHub') }}
+          </el-button>
         </div>
       </section>
 
