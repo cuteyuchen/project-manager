@@ -1,6 +1,6 @@
 [package]
 name = "project-manager"
-version = "1.9.0"
+version = "1.9.1"
 description = "Cross-platform project management desktop app"
 authors = ["cuteyuchen"]
 homepage = "https://github.com/cuteyuchen/project-manager"

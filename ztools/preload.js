@@ -2182,7 +2182,7 @@ window.services = {
     },
 
     getAppVersion: async () => {
-        return "1.9.0";
+        return "1.9.1";
     },
 
     installUpdate: async (url) => {
