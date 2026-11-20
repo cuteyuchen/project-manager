@@ -168,8 +168,19 @@ assert.equal(isRetriableAiError(new Error('AI API request failed (404 Not Found)
 assert.equal(isRetriableAiError(new Error('AI API request failed (401 Unauthorized)')), false, 'key 无效不该白等三轮');
 assert.equal(isRetriableAiError(new Error('AI API request failed (403 Forbidden)')), false, '无权限不该回退');
 assert.equal(isRetriableAiError(new Error('AI API request failed (400 Bad Request)')), false, '请求格式错误不该回退');
+// 400 下的 model_not_found / unknown provider 等模型级错误应允许重试下一个模型
+assert.equal(
+  isRetriableAiError(new Error('AI API stream request failed (400 ): {"error":{"message":"unknown provider for model gpt-6-luna","type":"invalid_request_error","param":"model","code":"model_not_found"}}')),
+  true,
+  '400 下的 unknown provider 或 model_not_found 应允许换下一个模型重试',
+);
+assert.equal(
+  isRetriableAiError(new Error('AI API request failed (400 Bad Request): The model `gpt-6` does not exist')),
+  true,
+  '400 下的模型不存在应允许换下一个模型重试',
+);
 
-/***********************旧版兼容配置回写*********************/
+/***********************旧版兼容配置回写与模型拖拽排序*********************/
 
 const settingsView = readFileSync(resolve(process.cwd(), 'src/views/Settings.vue'), 'utf8');
 assert(
@@ -178,5 +189,9 @@ assert(
   && /gitAiModel: activePrimary\.model/.test(settingsView),
   '保存多槽位配置时应把当前模式的第一个尝试回写到旧版单服务字段',
 );
+
+assert(settingsView.includes('onModelDragStart'), '单渠道模型列表应支持拖拽排序');
+assert(settingsView.includes('onChannelDragStart'), '多渠道列表应支持拖拽排序');
+assert(settingsView.includes('dragToReorder'), '应提供拖动调整顺序的提示');
 
 console.log('aiFallback tests passed');

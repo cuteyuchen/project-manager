@@ -902,6 +902,45 @@ export const useProjectStore = defineStore('project', () => {
     }
   }
 
+  async function restartProject(project: Project, commandId: string, type?: ProjectCommandType): Promise<void> {
+    const commandType = type
+      ?? (project.customCommands?.some(command => command.id === commandId) ? 'custom' : 'script');
+    const commandKey = getProjectCommandRunId(project.id, commandType, commandId);
+
+    // 若当前正在运行或正在停止，先确保停止并等待进程完全退出
+    if (runningStatus.value[commandKey]) {
+      const sessionId = activeSessionIdByCommand.value[commandKey];
+      const session = sessionId ? runSessions.value[sessionId] : undefined;
+      if (session && session.status !== 'stopping') {
+        await stopProject(project, commandId, commandType);
+      }
+
+      // 等待进程退出事件触发并清理 runningStatus（最多等待 6 秒）
+      const startTime = Date.now();
+      while (runningStatus.value[commandKey] && Date.now() - startTime < 6000) {
+        await new Promise(resolve => setTimeout(resolve, 60));
+      }
+
+      // 超时兜底：若仍未结束，强制结束以防死锁
+      if (runningStatus.value[commandKey] && sessionId) {
+        finishRunSession(sessionId, {
+          commandKey,
+          sessionId,
+          exitCode: null,
+          stopped: true,
+          durationMs: Date.now() - (runSessions.value[sessionId]?.startedAt || startTime),
+        });
+      }
+    }
+
+    // 重新启动该命令
+    if (commandType === 'custom') {
+      await runCustomCommand(project, commandId);
+    } else {
+      await runProject(project, commandId);
+    }
+  }
+
   function clearSessionOutput(sessionId: string): void {
     const session = runSessions.value[sessionId];
     if (!session) return;
@@ -1251,6 +1290,7 @@ export const useProjectStore = defineStore('project', () => {
     runProject,
     runCustomCommand,
     stopProject,
+    restartProject,
     resolvePmForProject,
     clearLog,
     clearSessionOutput,

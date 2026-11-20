@@ -555,6 +555,24 @@ watch(() => projectStore.requestedConsoleHistoryToken, () => {
     openHistory('project', request.historyId || undefined);
 }, { immediate: true });
 
+const restartingCommands = ref<Record<string, boolean>>({});
+const isCurrentRestarting = computed(() => activeScript.value ? !!restartingCommands.value[activeScript.value] : false);
+
+async function handleRestart(): Promise<void> {
+    const commandKey = activeScript.value;
+    const command = commandKey ? parseProjectCommandKey(commandKey) : null;
+    if (!command || !commandKey || restartingCommands.value[commandKey]) return;
+    restartingCommands.value[commandKey] = true;
+    try {
+        await projectStore.restartProject(activeProject.value, command.id, command.type);
+    } catch (error) {
+        console.error('Failed to restart project command', error);
+        ElMessage.error(`重启失败：${String(error)}`);
+    } finally {
+        delete restartingCommands.value[commandKey];
+    }
+}
+
 function handleStop(): void {
     const command = activeScript.value ? parseProjectCommandKey(activeScript.value) : null;
     if (command) void projectStore.stopProject(activeProject.value, command.id, command.type);
@@ -707,9 +725,15 @@ onBeforeUnmount(() => {
             <div class="console-header-actions shrink-0">
                 <button class="app-icon-btn !h-6 !min-w-6 !rounded" :title="t('dashboard.searchLogs')" @click="openSearch"><div class="i-mdi-magnify text-sm" /></button>
                 <button class="console-header-command" type="button" :title="t('dashboard.runHistory')" @click="openHistory()"><div class="i-mdi-history text-sm" /><span class="hidden sm:inline">{{ t('dashboard.runHistory') }}</span></button>
-                <button v-if="currentSession && (currentSession.status === 'starting' || currentSession.status === 'running')" class="console-stop-command" type="button" @click="handleStop"><div class="i-mdi-stop text-xs" /><span class="hidden sm:inline">{{ t('dashboard.stop') }}</span></button>
-                <button v-else-if="currentSession && currentSession.status === 'stopping'" class="console-status-command" type="button" disabled><div class="i-mdi-loading animate-spin text-xs" /><span class="hidden sm:inline">{{ t('dashboard.runStatusStopping') }}</span></button>
-                <button v-else class="console-rerun-command" type="button" :disabled="!activeScript" :title="t('dashboard.rerun')" @click="handleRerun"><div class="i-mdi-restart text-xs" /><span class="hidden sm:inline">{{ t('dashboard.rerun') }}</span></button>
+                <template v-if="currentSession && (currentSession.status === 'starting' || currentSession.status === 'running')">
+                    <button class="console-stop-command" type="button" :disabled="isCurrentRestarting" :title="t('dashboard.stop')" @click="handleStop"><div class="i-mdi-stop text-xs" /><span class="hidden sm:inline">{{ t('dashboard.stop') }}</span></button>
+                    <button class="console-rerun-command" type="button" :disabled="isCurrentRestarting" :title="t('dashboard.restart')" @click="handleRestart"><div :class="isCurrentRestarting ? 'i-mdi-loading animate-spin' : 'i-mdi-restart'" class="text-xs" /><span class="hidden sm:inline">{{ t('dashboard.restart') }}</span></button>
+                </template>
+                <template v-else-if="currentSession && currentSession.status === 'stopping'">
+                    <button class="console-status-command" type="button" disabled><div class="i-mdi-loading animate-spin text-xs" /><span class="hidden sm:inline">{{ t('dashboard.runStatusStopping') }}</span></button>
+                    <button v-if="isCurrentRestarting" class="console-rerun-command" type="button" disabled :title="t('dashboard.restart')"><div class="i-mdi-loading animate-spin text-xs" /><span class="hidden sm:inline">{{ t('dashboard.restart') }}</span></button>
+                </template>
+                <button v-else class="console-rerun-command" type="button" :disabled="!activeScript || isCurrentRestarting" :title="t('dashboard.rerun')" @click="handleRerun"><div :class="isCurrentRestarting ? 'i-mdi-loading animate-spin' : 'i-mdi-restart'" class="text-xs" /><span class="hidden sm:inline">{{ t('dashboard.rerun') }}</span></button>
                 <el-dropdown trigger="click" @command="handleMoreCommand">
                     <button class="app-icon-btn !h-6 !min-w-6 !rounded" :title="t('dashboard.moreActions')" type="button"><div class="i-mdi-dots-horizontal text-sm" /></button>
                     <template #dropdown>

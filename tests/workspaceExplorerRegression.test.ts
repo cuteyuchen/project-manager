@@ -19,6 +19,22 @@ assert.match(projectNode, /is-child-project/);
 assert.match(projectNode, /@project-action="forwardProjectAction"/);
 assert.match(projectNode, /explorer-project-actions/);
 assert.match(projectNode, /explorer-action-menu/);
+assert.match(projectNode, /has-menu-open/);
+assert.match(
+  projectNode,
+  /\.explorer-project-row:hover \.explorer-project-meta[\s\S]*display:\s*none/,
+  '悬停时必须隐藏 project meta 避免分支名与操作按钮重叠',
+);
+assert.match(
+  projectNode,
+  /\.explorer-project-meta\s*\{[\s\S]*margin-left:\s*auto/,
+  'Project meta 必须靠右对齐',
+);
+assert.doesNotMatch(
+  projectNode,
+  /\.explorer-project-actions\s*\{[^}]*width:\s*1[35]\dpx/,
+  '操作栏不应使用定宽导致小尺寸或多按钮时向左溢出',
+);
 assert.match(projectNode, /user-select: none/);
 assert.match(
   projectNode,

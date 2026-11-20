@@ -8,6 +8,14 @@ export default defineConfig({
       cdn: 'https://esm.sh/',
     }),
   ],
+  content: {
+    pipeline: {
+      include: [
+        /\.(vue|svelte|[jt]sx|mdx?|astro|elm|php|phtml|html)($|\?)/,
+        'src/**/*.{js,ts}',
+      ],
+    },
+  },
   theme: {
     colors: {
       surface: {

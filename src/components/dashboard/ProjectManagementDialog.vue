@@ -37,6 +37,7 @@ const visible = computed({
 const managementPanel = useTemplateRef<InstanceType<typeof ProjectManagementPanel>>('managementPanel');
 const { openEditor, openTerminal, openFolder } = useProjectExternalActions(() => props.project);
 const switcherVisible = ref(false);
+const dialogSwitcherRef = ref<InstanceType<typeof ProjectSwitcherPopover> | null>(null);
 
 /**
  * 下拉框只选一级项目：当前项目是子项目时，回溯到它所在的一级项目作为下拉的选中项，
@@ -122,12 +123,15 @@ function editProject(): void {
               :width="360"
               :disabled="!project"
               popper-class="project-switcher-popper"
+              @show="dialogSwitcherRef?.scrollToActive()"
             >
               <ProjectSwitcherPopover
+                ref="dialogSwitcherRef"
                 :projects="projects"
                 :current-project-id="project?.id"
                 :git-overview-by-id="gitOverviewById"
                 :running-count-by-project-id="runningCountByProjectId"
+                :visible="switcherVisible"
                 @select="selectProject"
               />
               <template #reference>

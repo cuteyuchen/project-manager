@@ -21,13 +21,22 @@ api.readDir = async (dirPath: string) => {
 };
 api.workspaceStat = async (root: string, relPath: string) => {
   const full = path.join(root, relPath);
-  const st = fs.statSync(full);
-  return {
-    exists: true,
-    isDirectory: st.isDirectory(),
-    size: st.size,
-    modifiedMs: st.mtimeMs,
-  };
+  try {
+    const st = fs.statSync(full);
+    return {
+      exists: true,
+      isDirectory: st.isDirectory(),
+      size: st.size,
+      modifiedMs: st.mtimeMs,
+    };
+  } catch {
+    return {
+      exists: false,
+      isDirectory: false,
+      size: 0,
+      modifiedMs: 0,
+    };
+  }
 };
 
 const {
@@ -37,6 +46,7 @@ const {
   extractLineNumber,
   getCandidates,
   resolveFilePath,
+  clearResolutionCache,
 } = await import('../src/utils/editorFileLinks');
 
 // 1. 测试从不同语法中提取路径
@@ -161,9 +171,47 @@ const {
   const res7 = await resolveFilePath(root, currentPath, './this_file_definitely_does_not_exist_xyz.vue');
   assert.equal(res7, null);
 
+  // Non-existent path without extension returns null (does not falsely match extensionless path)
+  const res7b = await resolveFilePath(root, currentPath, './this_file_definitely_does_not_exist_xyz');
+  assert.equal(res7b, null);
+
+  // Import without extension resolves via fallback stat (explicit empty index lookup)
+  clearResolutionCache();
+  const emptyLookup = new Map<string, string>();
+  const resNoExtFallback = await resolveFilePath(
+    root,
+    currentPath,
+    './LightweightEditor',
+    emptyLookup,
+  );
+  assert.ok(resNoExtFallback);
+  assert.equal(resNoExtFallback?.type, 'file');
+  if (resNoExtFallback?.type === 'file') {
+    assert.equal(resNoExtFallback.relativePath, 'src/components/dashboard/LightweightEditor.vue');
+  }
+
+  // Alias @/components/dashboard/LightweightEditor without extension
+  clearResolutionCache();
+  const resAliasNoExt = await resolveFilePath(
+    root,
+    currentPath,
+    '@/components/dashboard/LightweightEditor',
+    emptyLookup,
+  );
+  assert.ok(resAliasNoExt);
+  assert.equal(resAliasNoExt?.type, 'file');
+  if (resAliasNoExt?.type === 'file') {
+    assert.equal(resAliasNoExt.relativePath, 'src/components/dashboard/LightweightEditor.vue');
+  }
+
   // Plain non-file string returns null
   const res8 = await resolveFilePath(root, currentPath, 'Hello world text');
   assert.equal(res8, null);
+
+  // Test clearResolutionCache
+  clearResolutionCache();
+  const resCached = await resolveFilePath(root, currentPath, 'https://github.com/cuteyuchen');
+  assert.ok(resCached);
 
   console.log('editorFileLinks tests passed');
 }

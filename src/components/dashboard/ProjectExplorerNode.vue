@@ -217,6 +217,7 @@ onBeforeUnmount(() => {
         'is-selected': selectedProjectId === project.id,
         'is-root-project': depth === 0,
         'is-child-project': depth > 0,
+        'has-menu-open': quickCommandsOpen || moreOpen,
       }"
       @click="selectProject"
       @contextmenu.prevent="forwardContextMenu($event, { kind: 'project', project, relativePath: '', name: project.name, isDirectory: true })"
@@ -238,7 +239,7 @@ onBeforeUnmount(() => {
       <div class="explorer-project-meta">
         <span v-if="running" class="explorer-running-dot" title="运行中" />
         <span v-if="gitKnown && gitDirtyCount > 0" class="explorer-project-dirty">{{ gitDirtyCount }}</span>
-        <span v-else-if="gitKnown && gitSummary" class="explorer-project-branch">{{ gitSummary.branch }}</span>
+        <span v-else-if="gitKnown && gitSummary" class="explorer-project-branch" :title="gitSummary.branch">{{ gitSummary.branch }}</span>
       </div>
       <div class="explorer-project-actions" @click.stop>
         <button
@@ -460,26 +461,26 @@ onBeforeUnmount(() => {
 .is-child-project .explorer-project-icon {
   color: color-mix(in srgb, var(--app-primary) 76%, var(--app-text-secondary));
 }
-.explorer-project-branch {
-  flex: 0 0 auto;
-  color: var(--app-text-muted);
-  font-size: var(--app-font-meta);
-  font-weight: 500;
-}
 .explorer-project-meta {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 5px;
-  min-width: 20px;
-  max-width: 94px;
+  flex: 0 0 auto;
+  margin-left: auto;
+  min-width: 0;
+  max-width: 100px;
   overflow: hidden;
 }
 .explorer-project-branch {
-  max-width: 78px;
+  flex: 0 0 auto;
+  max-width: 80px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--app-text-muted);
+  font-size: var(--app-font-meta);
+  font-weight: 500;
 }
 .explorer-project-dirty {
   color: var(--app-warning);
@@ -499,25 +500,22 @@ onBeforeUnmount(() => {
 }
 .explorer-project-actions {
   position: relative;
-  display: flex;
+  display: none;
   align-items: center;
   justify-content: flex-end;
   gap: 1px;
-  width: 154px;
-  min-width: 154px;
-  height: 26px;
-  flex: 0 0 154px;
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-  transition: opacity var(--app-duration-fast) var(--app-ease), visibility var(--app-duration-fast) var(--app-ease);
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 .explorer-project-row:hover .explorer-project-actions,
-.explorer-project-row.is-selected .explorer-project-actions,
-.explorer-project-row:focus-within .explorer-project-actions {
-  opacity: 1;
-  visibility: visible;
-  pointer-events: auto;
+.explorer-project-row:focus-within .explorer-project-actions,
+.explorer-project-row.has-menu-open .explorer-project-actions {
+  display: flex;
+}
+.explorer-project-row:hover .explorer-project-meta,
+.explorer-project-row:focus-within .explorer-project-meta,
+.explorer-project-row.has-menu-open .explorer-project-meta {
+  display: none;
 }
 .explorer-project-action {
   display: inline-flex;
@@ -615,9 +613,7 @@ onBeforeUnmount(() => {
 }
 @container (max-width: 340px) {
   .explorer-project-actions {
-    width: 78px;
-    min-width: 78px;
-    flex-basis: 78px;
+    flex-shrink: 0;
   }
   .explorer-action-secondary {
     display: none;

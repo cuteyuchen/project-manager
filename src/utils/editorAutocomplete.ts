@@ -443,9 +443,16 @@ export function createEditorAutocompleteSource(options: EditorAutocompleteOption
     // 获取当前语言预置关键字与代码片段
     const langCompletions = getLanguageCompletions(options.getLanguage());
 
-    // 扫描提取当前文档上下文标识符
-    const docText = context.state.doc.toString();
-    const docWords = extractDocumentWords(docText, currentWord);
+    // 扫描提取当前文档上下文标识符（大文件只截取光标邻近区域，保证按键 0 延迟）
+    let docSlice: string;
+    if (context.state.doc.length > 80_000) {
+      const fromPos = Math.max(0, context.pos - 40_000);
+      const toPos = Math.min(context.state.doc.length, context.pos + 40_000);
+      docSlice = context.state.doc.sliceString(fromPos, toPos);
+    } else {
+      docSlice = context.state.doc.toString();
+    }
+    const docWords = extractDocumentWords(docSlice, currentWord);
 
     // 合并并按 label 去重 (语言专属词库优先)
     const seen = new Set<string>();

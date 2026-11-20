@@ -30,6 +30,10 @@ const COMMON_EXTENSIONS = [
   '.vue',
   '.json',
   '.d.ts',
+  '.mjs',
+  '.cjs',
+  '.mts',
+  '.cts',
   '.css',
   '.scss',
   '.less',
@@ -40,6 +44,8 @@ const COMMON_EXTENSIONS = [
   '/index.jsx',
   '/index.vue',
   '/index.json',
+  '/index.mjs',
+  '/index.cjs',
   '/mod.rs',
 ];
 
@@ -195,6 +201,10 @@ export function getCandidates(baseDir: string, rawPath: string): string[] {
   }
 
   if (!cleanPath.startsWith('.') && !cleanPath.startsWith('/') && !cleanPath.startsWith('@') && !cleanPath.startsWith('~')) {
+    const srcPath = `src/${cleanPath}`;
+    for (const ext of COMMON_EXTENSIONS) {
+      add(srcPath + ext);
+    }
     const nmPath = `node_modules/${cleanPath}`;
     for (const ext of COMMON_EXTENSIONS) {
       add(nmPath + ext);
@@ -204,8 +214,14 @@ export function getCandidates(baseDir: string, rawPath: string): string[] {
   return candidates;
 }
 
-// 缓存路径解析结果，避免重复计算
+// 缓存路径解析结果，避免重复计算（上限 300 条防内存溢出）
+const MAX_RESOLUTION_CACHE_SIZE = 300;
 const resolutionCache = new Map<string, { target: ResolvedTarget | null; timestamp: number }>();
+
+/** 清理路径解析缓存 */
+export function clearResolutionCache(): void {
+  resolutionCache.clear();
+}
 
 /** 解析路径引用为项目实际文件或外部 URL */
 export async function resolveFilePath(
@@ -265,7 +281,7 @@ export async function resolveFilePath(
     for (const candidate of candidates) {
       try {
         const stat = await api.workspaceStat(projectPath, candidate);
-        if (!stat.isDirectory) {
+        if (stat && stat.exists && !stat.isDirectory) {
           result = { type: 'file', relativePath: candidate, line };
           break;
         }
@@ -275,6 +291,9 @@ export async function resolveFilePath(
     }
   }
 
+  if (resolutionCache.size >= MAX_RESOLUTION_CACHE_SIZE) {
+    resolutionCache.clear();
+  }
   resolutionCache.set(cacheKey, { target: result, timestamp: Date.now() });
   return result;
 }

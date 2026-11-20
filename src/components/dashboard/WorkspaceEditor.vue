@@ -207,6 +207,7 @@ function startAutoCheck(): void {
   stopAutoCheck();
   externalCheckTimer = setInterval(() => {
     if (typeof document !== 'undefined' && document.hidden) return;
+    if (session.value.tabs.length === 0) return;
     void checkExternalChanges();
   }, 2500);
 }
@@ -350,6 +351,15 @@ function closeSearch(): void {
 
 async function openSearchResult(relativePath: string, line?: number): Promise<void> {
   try {
+    const stat = await api.workspaceStat(props.project.path, relativePath);
+    if (!stat.exists) {
+      ElMessage.warning(`未找到对应文件: ${relativePath}`);
+      return;
+    }
+    if (stat.isDirectory) {
+      projectStore.requestExplorerReveal(props.project.id, relativePath);
+      return;
+    }
     if (fileKind(relativePath) === 'binary') {
       await api.openPath(joinAbsolutePath(props.project.path, relativePath));
       return;

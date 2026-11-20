@@ -59,4 +59,10 @@ assert.equal(getFileIconClass('photo.png'), 'i-mdi-file-image-outline text-pink-
 assert.equal(getFileIconClass('query.sql'), 'i-mdi-database text-cyan-500');
 assert.equal(getFileIconClass('script.sh'), 'i-mdi-console text-emerald-400');
 
+// Verify uno.config.ts includes src/**/*.{js,ts} in extraction pipeline so all file icons are compiled
+import fs from 'node:fs';
+import path from 'node:path';
+const unoConfig = fs.readFileSync(path.resolve(process.cwd(), 'uno.config.ts'), 'utf8');
+assert.ok(unoConfig.includes("src/**/*.{js,ts}") || unoConfig.includes("'src/**/*.{js,ts}'"), 'uno.config.ts must scan src ts/js files for dynamic icons');
+
 console.log('fileTypes tests passed');

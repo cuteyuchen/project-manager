@@ -6,7 +6,7 @@
  * 下钻到子项目由调用方负责：快速管理弹窗用右侧的子级项目切换器，
  * 项目详情页用左侧文件树。这样下拉里不会再铺开整棵项目树。
  */
-import { computed, ref } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Project } from '../../types';
 import type { ProjectGitOverview } from '../../utils/projectGitOverview';
@@ -18,10 +18,12 @@ const props = withDefaults(defineProps<{
   currentProjectId?: string | null;
   gitOverviewById?: Readonly<Record<string, ProjectGitOverview | undefined>>;
   runningCountByProjectId?: Readonly<Record<string, number>>;
+  visible?: boolean;
 }>(), {
   currentProjectId: null,
   gitOverviewById: undefined,
   runningCountByProjectId: undefined,
+  visible: false,
 });
 
 const emit = defineEmits<{
@@ -117,6 +119,58 @@ function handleRowKeydown(event: KeyboardEvent, project: Project): void {
   event.preventDefault();
   selectProject(project);
 }
+
+const listRef = ref<HTMLElement | null>(null);
+
+function performScroll(): boolean {
+  const list = listRef.value;
+  if (!list || list.clientHeight === 0) return false;
+  const activeEl = list.querySelector<HTMLElement>('.project-switcher-row-active');
+  if (!activeEl) return false;
+
+  const listRect = list.getBoundingClientRect();
+  const activeRect = activeEl.getBoundingClientRect();
+
+  const relativeTop = activeRect.top - listRect.top + list.scrollTop;
+  const listHeight = list.clientHeight;
+  const activeHeight = activeEl.offsetHeight;
+
+  const targetScrollTop = Math.max(0, Math.round(relativeTop - (listHeight - activeHeight) / 2));
+  list.scrollTop = targetScrollTop;
+  return true;
+}
+
+function scrollToActive(): void {
+  nextTick(() => {
+    if (!performScroll()) {
+      requestAnimationFrame(() => {
+        if (!performScroll()) {
+          setTimeout(performScroll, 50);
+        }
+      });
+    }
+  });
+}
+
+watch(() => props.visible, (val) => {
+  if (val) {
+    scrollToActive();
+  }
+});
+
+watch(currentRootId, () => {
+  if (props.visible) {
+    scrollToActive();
+  }
+});
+
+onMounted(() => {
+  scrollToActive();
+});
+
+defineExpose({
+  scrollToActive,
+});
 </script>
 
 <template>
@@ -134,7 +188,7 @@ function handleRowKeydown(event: KeyboardEvent, project: Project): void {
       </template>
     </el-input>
 
-    <div v-if="rows.length > 0" class="project-switcher-list" role="listbox">
+    <div v-if="rows.length > 0" ref="listRef" class="project-switcher-list" role="listbox">
       <div
         v-for="project in rows"
         :key="project.id"
@@ -193,6 +247,7 @@ function handleRowKeydown(event: KeyboardEvent, project: Project): void {
   flex-shrink: 0;
 }
 .project-switcher-list {
+  position: relative;
   display: flex;
   flex-direction: column;
   max-height: min(360px, 48vh);

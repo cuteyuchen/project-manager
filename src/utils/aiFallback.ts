@@ -77,10 +77,9 @@ function extractStatusCode(message: string): number | null {
 /**
  * 这个错误换个槽位重试有意义吗。
  *
- * 可回退：网络错误、超时、429 限流、5xx 服务端错误、返回空内容。
- * 不可回退：明确的客户端配置错误（400 / 401 / 403），换模型也是同一把 key，
- * 白等一轮。注意 404 视为可回退——它通常是「这个模型不存在」，
- * 换下一个模型正是要做的事。
+ * 可回退：网络错误、超时、429 限流、5xx 服务端错误、返回空内容、
+ * 以及 404，或者 400 状态码下由模型/provider引致的错误（如 model_not_found, unknown provider 等）。
+ * 不可回退：纯粹的客户端格式错误（纯 400 Bad Request）或鉴权失败（401 / 403）。
  */
 export function isRetriableAiError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
@@ -90,7 +89,23 @@ export function isRetriableAiError(error: unknown): boolean {
     if (status === 429) return true;
     if (status >= 500) return true;
     if (status === 404) return true;
-    // 400 / 401 / 403 等：配置或权限问题
+    if (status === 400) {
+      // 常见模型级别错误：OpenAI / NewAPI / OneAPI / Azure 报 400，但实际原因是模型不存在、provider 未知或上下文超长
+      const lower = message.toLowerCase();
+      if (
+        lower.includes('model_not_found') ||
+        lower.includes('unknown provider') ||
+        lower.includes('model') ||
+        lower.includes('not exist') ||
+        lower.includes('not found') ||
+        lower.includes('context_length') ||
+        lower.includes('unsupported')
+      ) {
+        return true;
+      }
+      return false;
+    }
+    // 401 / 403 等：配置或权限问题
     if (status >= 400) return false;
   }
 
@@ -169,13 +184,32 @@ export async function requestAiTextWithFallback(
       const message = error instanceof Error ? error.message : String(error);
       failures.push(`${attempt.label}: ${message}`);
 
-      if (!isRetriableAiError(error)) break;
-      // 同一把 key 已被判定不可用时，后面的模型不必再试
-      if (isChannelFatal(error) && sharesApiKeyWithRest(attempts, index)) break;
+      if (!isRetriableAiError(error)) {
+        if (!hasDifferentChannelRemaining(attempts, index)) {
+          break;
+        }
+      }
+      // 同一把 key 已被判定不可用时（401/403），后面共用该 key 的模型不必再试，但不同 key 的渠道应继续试
+      if (isChannelFatal(error) && sharesApiKeyWithRest(attempts, index)) {
+        const nextDifferentIndex = attempts.findIndex((a, i) => i > index && (a.apiKey !== attempt.apiKey || a.baseUrl !== attempt.baseUrl));
+        if (nextDifferentIndex > index) {
+          index = nextDifferentIndex - 1;
+          continue;
+        }
+        break;
+      }
     }
   }
 
   throw new Error(failures.join('\n'));
+}
+
+/** 检查后续尝试中是否还包含不同 key 或不同地址的独立渠道 */
+function hasDifferentChannelRemaining(attempts: AiAttempt[], index: number): boolean {
+  const current = attempts[index];
+  return attempts.slice(index + 1).some(next =>
+    next.apiKey !== current.apiKey || next.baseUrl !== current.baseUrl
+  );
 }
 
 /** 后续尝试是否和当前这次共用同一把 key（单渠道多模型就是这种情况） */

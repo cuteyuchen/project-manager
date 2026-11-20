@@ -1015,6 +1015,90 @@ function removeAiChannelSlot(index: number) {
   channels.splice(index, 1);
 }
 
+/***********************AI 槽位拖拽排序*********************/
+
+const draggedModelIndex = ref<number | null>(null);
+const dragOverModelIndex = ref<number | null>(null);
+
+function onModelDragStart(index: number, e: DragEvent) {
+  draggedModelIndex.value = index;
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(index));
+  }
+}
+
+function onModelDragOver(index: number, e: DragEvent) {
+  if (draggedModelIndex.value === null || draggedModelIndex.value === index) return;
+  e.preventDefault();
+  dragOverModelIndex.value = index;
+}
+
+function onModelDragLeave(index: number) {
+  if (dragOverModelIndex.value === index) {
+    dragOverModelIndex.value = null;
+  }
+}
+
+function onModelDrop(targetIndex: number, e: DragEvent) {
+  e.preventDefault();
+  if (draggedModelIndex.value !== null && draggedModelIndex.value !== targetIndex) {
+    const models = draft.value.gitAiSingleChannel?.models;
+    if (models) {
+      const [moved] = models.splice(draggedModelIndex.value, 1);
+      models.splice(targetIndex, 0, moved);
+    }
+  }
+  draggedModelIndex.value = null;
+  dragOverModelIndex.value = null;
+}
+
+function onModelDragEnd() {
+  draggedModelIndex.value = null;
+  dragOverModelIndex.value = null;
+}
+
+const draggedChannelIndex = ref<number | null>(null);
+const dragOverChannelIndex = ref<number | null>(null);
+
+function onChannelDragStart(index: number, e: DragEvent) {
+  draggedChannelIndex.value = index;
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(index));
+  }
+}
+
+function onChannelDragOver(index: number, e: DragEvent) {
+  if (draggedChannelIndex.value === null || draggedChannelIndex.value === index) return;
+  e.preventDefault();
+  dragOverChannelIndex.value = index;
+}
+
+function onChannelDragLeave(index: number) {
+  if (dragOverChannelIndex.value === index) {
+    dragOverChannelIndex.value = null;
+  }
+}
+
+function onChannelDrop(targetIndex: number, e: DragEvent) {
+  e.preventDefault();
+  if (draggedChannelIndex.value !== null && draggedChannelIndex.value !== targetIndex) {
+    const channels = draft.value.gitAiChannels;
+    if (channels) {
+      const [moved] = channels.splice(draggedChannelIndex.value, 1);
+      channels.splice(targetIndex, 0, moved);
+    }
+  }
+  draggedChannelIndex.value = null;
+  dragOverChannelIndex.value = null;
+}
+
+function onChannelDragEnd() {
+  draggedChannelIndex.value = null;
+  dragOverChannelIndex.value = null;
+}
+
 /**
  * 逐个测试当前模式下的所有槽位。
  *
@@ -1529,7 +1613,28 @@ function describeAiTestError(error: any): string {
             <el-input v-model="draft.gitAiSingleChannel.service.apiKey" type="password" show-password :placeholder="t('settings.gitAiApiKeyPlaceholder')" />
             <div class="ai-slot-list">
               <div class="settings-row-desc">{{ t('settings.gitAiModelsHint', { max: MAX_AI_FALLBACK_SLOTS }) }}</div>
-              <div v-for="(_, index) in draft.gitAiSingleChannel.models" :key="index" class="ai-slot-row">
+              <div
+                v-for="(_, index) in draft.gitAiSingleChannel.models"
+                :key="index"
+                class="ai-slot-row"
+                :class="{
+                  'is-dragging': draggedModelIndex === index,
+                  'is-drag-over': dragOverModelIndex === index,
+                }"
+                @dragover.prevent="onModelDragOver(index, $event)"
+                @dragleave="onModelDragLeave(index)"
+                @drop="onModelDrop(index, $event)"
+              >
+                <div
+                  v-if="draft.gitAiSingleChannel.models.length > 1"
+                  class="drag-handle"
+                  draggable="true"
+                  :title="t('settings.dragToReorder')"
+                  @dragstart="onModelDragStart(index, $event)"
+                  @dragend="onModelDragEnd"
+                >
+                  <div class="i-mdi-drag-vertical text-base text-slate-400" />
+                </div>
                 <span class="ai-slot-index">{{ index + 1 }}</span>
                 <el-input
                   v-model="draft.gitAiSingleChannel.models[index]"
@@ -1559,8 +1664,29 @@ function describeAiTestError(error: any): string {
           <template v-else-if="draft.gitAiChannels">
             <div class="ai-slot-list">
               <div class="settings-row-desc">{{ t('settings.gitAiChannelsHint', { max: MAX_AI_FALLBACK_SLOTS }) }}</div>
-              <div v-for="(channel, index) in draft.gitAiChannels" :key="channel.id" class="ai-channel-card">
+              <div
+                v-for="(channel, index) in draft.gitAiChannels"
+                :key="channel.id"
+                class="ai-channel-card"
+                :class="{
+                  'is-dragging': draggedChannelIndex === index,
+                  'is-drag-over': dragOverChannelIndex === index,
+                }"
+                @dragover.prevent="onChannelDragOver(index, $event)"
+                @dragleave="onChannelDragLeave(index)"
+                @drop="onChannelDrop(index, $event)"
+              >
                 <div class="ai-channel-head">
+                  <div
+                    v-if="draft.gitAiChannels.length > 1"
+                    class="drag-handle"
+                    draggable="true"
+                    :title="t('settings.dragToReorder')"
+                    @dragstart="onChannelDragStart(index, $event)"
+                    @dragend="onChannelDragEnd"
+                  >
+                    <div class="i-mdi-drag-vertical text-base text-slate-400" />
+                  </div>
                   <span class="ai-slot-index">{{ index + 1 }}</span>
                   <el-switch v-model="channel.enabled" :title="t('settings.gitAiChannelEnabled')" />
                   <div class="flex-1" />
@@ -2020,6 +2146,19 @@ function describeAiTestError(error: any): string {
   display: flex;
   align-items: center;
   gap: 8px;
+  transition: background-color var(--app-duration-fast) var(--app-ease), opacity var(--app-duration-fast) var(--app-ease);
+}
+
+.ai-slot-row.is-dragging,
+.ai-channel-card.is-dragging {
+  opacity: 0.4;
+}
+
+.ai-slot-row.is-drag-over {
+  border-radius: var(--app-radius-sm);
+  outline: 2px dashed var(--app-primary);
+  outline-offset: 2px;
+  background: color-mix(in srgb, var(--app-primary) 6%, transparent);
 }
 
 /* 槽位序号：顺序就是回退顺序，需要一眼看清 */
@@ -2046,6 +2185,14 @@ function describeAiTestError(error: any): string {
   border: 1px solid var(--app-border);
   border-radius: var(--app-radius-md);
   background: var(--app-surface-soft);
+  transition: background-color var(--app-duration-fast) var(--app-ease), border-color var(--app-duration-fast) var(--app-ease), opacity var(--app-duration-fast) var(--app-ease);
+}
+
+.ai-channel-card.is-drag-over {
+  border-color: var(--app-primary);
+  outline: 2px dashed var(--app-primary);
+  outline-offset: 2px;
+  background: color-mix(in srgb, var(--app-primary) 6%, transparent);
 }
 
 .ai-channel-head {

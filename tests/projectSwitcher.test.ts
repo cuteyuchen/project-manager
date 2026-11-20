@@ -54,6 +54,11 @@ assert(/current\.parentId/.test(switcher), '当前项目是子项目时应回溯
 assert(!switcher.includes('dashboard.noGit'), '非 Git 项目不应显示 No Git');
 assert(/project-switcher-git-dirty/.test(switcher), '切换器应支持缓存中的 Git dirty 简要状态');
 assert(/emit\('select', project\)/.test(switcher), '切换器选择项目应 emit 项目对象');
+assert(/scrollToActive/.test(switcher), '切换器应支持自动定位当前激活项目');
+assert(/visible\?: boolean/.test(switcher), '切换器应支持 visible 响应式属性以在展示时触发定位');
+assert(/defineExpose\(\{\s*scrollToActive,?\s*\}\)/.test(switcher), '切换器应暴露 scrollToActive 方法');
+assert(/switcherPopoverRef\?\.scrollToActive\(\)/.test(workspace), '工作区面包屑下拉展开时应触发自动定位');
+assert(/dialogSwitcherRef\?\.scrollToActive\(\)/.test(dialog), '管理弹窗切换器展开时应触发自动定位');
 
 /***********************子级项目切换器（弹窗右侧）*********************/
 assert(/collectSubProjectRows/.test(subSwitcher), '子级切换器应复用子项目平铺工具');

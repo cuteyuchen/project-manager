@@ -147,9 +147,12 @@ assert(runner.indexOf('stderr_reader.join') < runner.indexOf('"project-exit"'));
 /***********************Console 与 README*********************/
 assert(consoleView.includes('currentSession'));
 assert(consoleView.includes('handleRerun'));
+assert(consoleView.includes('handleRestart'));
+assert(consoleView.includes("t('dashboard.restart')"));
 assert(consoleView.includes('clearSessionOutput'));
 assert(consoleView.includes("currentSession.status === 'stopping'"));
 assert(consoleView.includes('closeRunningTabHint'));
+assert(store.includes('restartProject'));
 assert(readme.includes('Run Session'));
 assert(readme.includes('Project Manager Managed Node Runtime'));
 assert(readme.includes('NVM'));

@@ -31,6 +31,7 @@ const selectedProjectId = ref<string | null>(null);
 const scanTarget = ref<Project | null>(null);
 const showScanModal = ref(false);
 const switcherVisible = ref(false);
+const switcherPopoverRef = ref<InstanceType<typeof ProjectSwitcherPopover> | null>(null);
 
 const rootProject = computed(() => projectStore.projects.find(project => project.id === props.rootId) || null);
 const currentNode = rootProject;
@@ -187,12 +188,15 @@ useAppShortcuts([
             :width="360"
             :disabled="!rootProject"
             popper-class="project-switcher-popper"
+            @show="switcherPopoverRef?.scrollToActive()"
           >
             <ProjectSwitcherPopover
+              ref="switcherPopoverRef"
               :projects="projectStore.projects"
               :current-project-id="selectedProject?.id"
               :git-overview-by-id="gitOverviewById"
               :running-count-by-project-id="runningCountByProjectId"
+              :visible="switcherVisible"
               @select="selectSwitcherProject"
             />
             <template #reference>
