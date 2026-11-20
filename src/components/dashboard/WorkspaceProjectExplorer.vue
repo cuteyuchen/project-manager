@@ -44,6 +44,22 @@ const workspaceRootKey = computed(() => rootProject.value?.path || props.rootId)
 const showHidden = ref(false);
 const showHeavy = ref(false);
 const refreshToken = ref(0);
+const isRefreshing = ref(false);
+
+async function refreshExplorer(): Promise<void> {
+  if (isRefreshing.value) return;
+  isRefreshing.value = true;
+  try {
+    refreshToken.value += 1;
+    if (rootProject.value) {
+      void gitStore.refreshStatus(rootProject.value.id, rootProject.value.path);
+    }
+  } finally {
+    setTimeout(() => {
+      isRefreshing.value = false;
+    }, 400);
+  }
+}
 const selectedFileKey = ref<string | null>(null);
 const contextMenuRef = useTemplateRef<HTMLElement>('contextMenuRef');
 const contextMenu = ref<{ x: number; y: number; payload: ExplorerContextPayload } | null>(null);
@@ -522,6 +538,9 @@ onUnmounted(() => {
       </button>
       <button type="button" class="explorer-header-btn" :class="{ active: showHeavy }" title="显示依赖/构建目录" @click="showHeavy = !showHeavy">
         <div class="i-mdi-package-variant-closed" />
+      </button>
+      <button type="button" class="explorer-header-btn" :title="t('common.refresh') || '刷新文件列表'" @click="refreshExplorer">
+        <div class="i-mdi-refresh" :class="{ 'animate-spin': isRefreshing }" />
       </button>
     </div>
     <div v-if="!rootProject" class="app-text-body flex min-h-0 flex-1 items-center justify-center text-slate-400">项目不存在</div>

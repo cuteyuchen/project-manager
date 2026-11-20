@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onActivated, onBeforeUnmount, onDeactivated, ref, watch } from 'vue';
+import { computed, onActivated, onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import type { Project } from '../../types';
 import { api } from '../../api';
@@ -9,6 +9,7 @@ import { useSettingsStore } from '../../stores/settings';
 import { useWorkspaceEditorStore, type WorkspaceDocument } from '../../stores/workspaceEditor';
 import { joinAbsolutePath } from '../../utils/workspacePath';
 import {
+  areLineMarkersEqual,
   isEmptyLineMarkers,
   mergeLineMarkers,
   parseUnifiedDiffLineMarkers,
@@ -19,7 +20,7 @@ import LightweightEditor from './LightweightEditor.vue';
 import ImageDocumentView from './ImageDocumentView.vue';
 import WorkspaceSearchModal, { type WorkspaceSearchMode } from './WorkspaceSearchModal.vue';
 import { useI18n } from 'vue-i18n';
-import { fileKind } from '../../utils/fileTypes';
+import { fileKind, getFileIconClass } from '../../utils/fileTypes';
 
 const props = defineProps<{ project: Project }>();
 const { t } = useI18n();
@@ -49,6 +50,7 @@ function documentForKey(key: string): WorkspaceDocument | null {
 
 function selectTab(key: string): void {
   editorStore.activateDocument(props.project.id, key);
+  void checkExternalChanges();
 }
 
 async function closeTab(document: WorkspaceDocument): Promise<void> {
@@ -95,6 +97,7 @@ async function saveDocument(document: WorkspaceDocument, force = false): Promise
   saveBusy.value = true;
   try {
     await editorStore.saveDocument(props.project, document.relativePath, force);
+    queueGitLineMarkers(0);
     queueGitRefresh();
     ElMessage.success(`已保存 ${document.name}`);
     return true;
@@ -197,11 +200,34 @@ function documentErrorLabel(document: WorkspaceDocument): string {
 
 /** KeepAlive 缓存的 Editor 在 deactivate 时不会 unmount，必须按激活状态绑定 focus。 */
 let focusBound = false;
+let unlistenTauriFocus: (() => void) | null = null;
+let externalCheckTimer: ReturnType<typeof setInterval> | null = null;
 
-function bindFocusListener(): void {
+function startAutoCheck(): void {
+  stopAutoCheck();
+  externalCheckTimer = setInterval(() => {
+    if (typeof document !== 'undefined' && document.hidden) return;
+    void checkExternalChanges();
+  }, 2500);
+}
+
+function stopAutoCheck(): void {
+  if (externalCheckTimer) {
+    clearInterval(externalCheckTimer);
+    externalCheckTimer = null;
+  }
+}
+
+async function bindFocusListener(): Promise<void> {
   if (focusBound) return;
   window.addEventListener('focus', handleWindowFocus);
   document.addEventListener('visibilitychange', handleWindowFocus);
+  try {
+    unlistenTauriFocus = await api.onWindowFocus(handleWindowFocus);
+  } catch (e) {
+    console.warn('Failed to listen to window focus', e);
+  }
+  startAutoCheck();
   focusBound = true;
 }
 
@@ -209,11 +235,22 @@ function unbindFocusListener(): void {
   if (!focusBound) return;
   window.removeEventListener('focus', handleWindowFocus);
   document.removeEventListener('visibilitychange', handleWindowFocus);
+  if (unlistenTauriFocus) {
+    unlistenTauriFocus();
+    unlistenTauriFocus = null;
+  }
+  stopAutoCheck();
   focusBound = false;
 }
 
+onMounted(() => {
+  void bindFocusListener();
+  void checkExternalChanges();
+});
+
 onActivated(() => {
-  bindFocusListener();
+  void bindFocusListener();
+  void checkExternalChanges();
   window.addEventListener('keydown', handleEditorKeydown, true);
   queueGitLineMarkers(120);
 });
@@ -235,14 +272,28 @@ onBeforeUnmount(() => {
 const gitLineMarkers = ref<EditorLineMarkers | null>(null);
 let gitMarkersTimer: ReturnType<typeof setTimeout> | null = null;
 let gitMarkersToken = 0;
+let lastActiveDocumentKey = '';
 
 async function refreshGitLineMarkers(): Promise<void> {
   const document = activeDocument.value;
-  gitLineMarkers.value = null;
-  if (!document || document.kind !== 'text' || document.loading || document.error || document.largeFile) return;
+  const currentKey = document ? `${props.project.id}:${document.relativePath}` : '';
+
+  // 仅在切换到不同文件时才重置之前的标记；在当前文件保存/刷新时平滑保留，避免画面闪烁
+  if (currentKey !== lastActiveDocumentKey) {
+    lastActiveDocumentKey = currentKey;
+    gitLineMarkers.value = null;
+  }
+
+  if (!document || document.kind !== 'text' || document.loading || document.error || document.largeFile) {
+    if (gitLineMarkers.value !== null) gitLineMarkers.value = null;
+    return;
+  }
 
   const isRepo = await gitStore.checkGitRepo(props.project.id, props.project.path);
-  if (!isRepo) return;
+  if (!isRepo) {
+    if (gitLineMarkers.value !== null) gitLineMarkers.value = null;
+    return;
+  }
 
   const token = ++gitMarkersToken;
   try {
@@ -258,9 +309,14 @@ async function refreshGitLineMarkers(): Promise<void> {
       parseUnifiedDiffLineMarkers(unstaged),
       parseUnifiedDiffLineMarkers(staged),
     ));
-    gitLineMarkers.value = isEmptyLineMarkers(display) ? null : display;
+    const nextMarkers = isEmptyLineMarkers(display) ? null : display;
+    if (!areLineMarkersEqual(gitLineMarkers.value, nextMarkers)) {
+      gitLineMarkers.value = nextMarkers;
+    }
   } catch {
-    if (token === gitMarkersToken) gitLineMarkers.value = null;
+    if (token === gitMarkersToken && gitLineMarkers.value !== null) {
+      gitLineMarkers.value = null;
+    }
   }
 }
 
@@ -273,7 +329,7 @@ function queueGitLineMarkers(delay = 350): void {
 }
 
 watch(
-  () => [props.project.id, activeDocument.value?.relativePath, activeDocument.value?.loading, activeDocument.value?.dirty],
+  () => [props.project.id, activeDocument.value?.relativePath, activeDocument.value?.loading],
   () => queueGitLineMarkers(80),
   { immediate: true },
 );
@@ -308,6 +364,18 @@ async function openSearchResult(relativePath: string, line?: number): Promise<vo
   }
 }
 
+async function handleJumpToFile(target: { relativePath: string; line?: number }): Promise<void> {
+  await openSearchResult(target.relativePath, target.line);
+}
+
+async function handleOpenUrl(url: string): Promise<void> {
+  try {
+    await api.openUrl(url);
+  } catch (error) {
+    ElMessage.error(String(error));
+  }
+}
+
 function handleEditorKeydown(event: KeyboardEvent): void {
   const mod = event.ctrlKey || event.metaKey;
   if (!mod) return;
@@ -330,7 +398,7 @@ function handleEditorKeydown(event: KeyboardEvent): void {
 </script>
 
 <template>
-  <div class="workspace-editor flex h-full min-h-0 flex-col">
+  <div class="workspace-editor flex h-full min-h-0 flex-col" @pointerenter="handleWindowFocus">
     <div class="workspace-editor-toolbar flex shrink-0 items-center gap-1 border-b px-2 py-1">
       <div class="workspace-editor-tabs flex min-w-0 flex-1 items-center overflow-x-auto">
         <button
@@ -341,6 +409,7 @@ function handleEditorKeydown(event: KeyboardEvent): void {
           :class="{ active: session.activePath === key }"
           @click="selectTab(key)"
         >
+          <div :class="getFileIconClass(documentForKey(key)?.name || key, false)" class="text-xs shrink-0" />
           <span class="truncate">{{ documentForKey(key)?.name }}</span>
           <span v-if="documentForKey(key)?.dirty" class="workspace-editor-dirty" title="未保存">●</span>
           <span class="workspace-editor-close" title="关闭" @click.stop="documentForKey(key) && closeTab(documentForKey(key)!)">×</span>
@@ -407,8 +476,12 @@ function handleEditorKeydown(event: KeyboardEvent): void {
         :dark="isDark"
         :line-markers="gitLineMarkers"
         :initial-line="revealLine"
+        :project-path="props.project.path"
+        :current-path="activeDocument.relativePath"
         @update:model-value="editorStore.updateContent(props.project.id, activeDocument.relativePath, $event)"
         @save="saveCurrent"
+        @jump-to-file="handleJumpToFile"
+        @open-url="handleOpenUrl"
       />
     </template>
     <WorkspaceSearchModal

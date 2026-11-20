@@ -78,6 +78,10 @@ function handleChildDragStart(event: MouseEvent, project: Project): void {
   onChildDragMouseDown(event, project.id);
 }
 
+function handleTitleClick(): void {
+  emit('open-management', props.project);
+}
+
 function handleRowOpen(): void {
   if (hasChildren.value) {
     emit('toggle-expand', props.project);
@@ -103,6 +107,7 @@ function toggleExpanded(): void {
       selectable
       :selected="selectedIds?.has(project.id)"
       @open="handleRowOpen"
+      @title-click="handleTitleClick"
       @open-management="emit('open-management', $event)"
       @open-workspace="emit('open-workspace', $event)"
       @open-git="emit('open-git', $event)"

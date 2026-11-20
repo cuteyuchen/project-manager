@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {
+  areLineMarkersEqual,
   isEmptyLineMarkers,
   mergeLineMarkers,
   parseUnifiedDiffLineMarkers,
@@ -53,6 +54,12 @@ assert.equal(display.deleted.size, 0);
 
 const empty = parseUnifiedDiffLineMarkers('');
 assert.equal(isEmptyLineMarkers(empty), true);
+
+// areLineMarkersEqual tests
+assert.equal(areLineMarkersEqual(null, null), true);
+assert.equal(areLineMarkersEqual(empty, null), false);
+assert.equal(areLineMarkersEqual(markers, toDisplayLineMarkers(markers)), true);
+assert.equal(areLineMarkersEqual(markers, deleted), false);
 
 const merged = mergeLineMarkers(
   parseUnifiedDiffLineMarkers('@@ -1,1 +1,1 @@\n-a\n+b\n'),

@@ -182,6 +182,7 @@ export const useWorkspaceEditorStore = defineStore('workspaceEditor', () => {
     const existing = session.documents[key];
     if (existing) {
       activate(session, key);
+      void checkDocumentExternalChange(project, existing);
       return existing;
     }
     ensureCapacity(session, key);
@@ -218,6 +219,7 @@ export const useWorkspaceEditorStore = defineStore('workspaceEditor', () => {
     const existing = session.documents[key];
     if (existing) {
       activate(session, key);
+      void checkDocumentExternalChange(project, existing);
       return existing;
     }
     ensureCapacity(session, key);
@@ -357,6 +359,34 @@ export const useWorkspaceEditorStore = defineStore('workspaceEditor', () => {
     return document;
   }
 
+  async function checkDocumentExternalChange(project: Project, document: WorkspaceDocument): Promise<'unchanged' | 'reloaded' | 'conflict'> {
+    if (document.largeFile || document.loading) return 'unchanged';
+    if (document.kind !== 'text' && document.kind !== 'image') return 'unchanged';
+    try {
+      const stat = await api.workspaceStat(project.path, document.relativePath);
+      const nextVersion = stat.diskVersion;
+      if (nextVersion === document.diskVersion) return 'unchanged';
+      if (document.kind === 'text' && document.dirty) {
+        document.externalConflict = true;
+        document.externalVersion = nextVersion;
+        return 'conflict';
+      }
+      if (!stat.exists) {
+        document.missing = true;
+        document.readOnly = true;
+        document.error = 'file_missing';
+        document.diskVersion = nextVersion;
+        return 'reloaded';
+      }
+      if (document.kind === 'image') await reloadImageDocument(project, document.relativePath);
+      else await reloadDocument(project, document.relativePath);
+      return 'reloaded';
+    } catch (error) {
+      document.error = String(error);
+      return 'unchanged';
+    }
+  }
+
   async function checkExternalChanges(project: Project): Promise<{
     reloaded: WorkspaceDocument[];
     conflicts: WorkspaceDocument[];
@@ -365,32 +395,9 @@ export const useWorkspaceEditorStore = defineStore('workspaceEditor', () => {
     const reloaded: WorkspaceDocument[] = [];
     const conflicts: WorkspaceDocument[] = [];
     for (const document of Object.values(session.documents)) {
-      if (document.largeFile || document.loading) continue;
-      if (document.kind !== 'text' && document.kind !== 'image') continue;
-      try {
-        const stat = await api.workspaceStat(project.path, document.relativePath);
-        const nextVersion = stat.diskVersion;
-        if (nextVersion === document.diskVersion) continue;
-        if (document.kind === 'text' && document.dirty) {
-          document.externalConflict = true;
-          document.externalVersion = nextVersion;
-          conflicts.push(document);
-          continue;
-        }
-        if (!stat.exists) {
-          document.missing = true;
-          document.readOnly = true;
-          document.error = 'file_missing';
-          document.diskVersion = nextVersion;
-          reloaded.push(document);
-          continue;
-        }
-        if (document.kind === 'image') await reloadImageDocument(project, document.relativePath);
-        else await reloadDocument(project, document.relativePath);
-        reloaded.push(document);
-      } catch (error) {
-        document.error = String(error);
-      }
+      const outcome = await checkDocumentExternalChange(project, document);
+      if (outcome === 'reloaded') reloaded.push(document);
+      else if (outcome === 'conflict') conflicts.push(document);
     }
     return { reloaded, conflicts };
   }
@@ -502,6 +509,7 @@ export const useWorkspaceEditorStore = defineStore('workspaceEditor', () => {
     saveAll,
     reloadDocument,
     reloadImageDocument,
+    checkDocumentExternalChange,
     checkExternalChanges,
     setExternalConflictHandled,
     closeDocument,

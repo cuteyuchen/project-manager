@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount, nextTick, useTemplateRef } from 'vue';
+import { ref, computed, watch, onMounted, onActivated, onDeactivated, onBeforeUnmount, nextTick, useTemplateRef } from 'vue';
 import type { Project, ProjectFileEntry } from '../types';
 import { useProjectStore } from '../stores/project';
 import { api } from '../api';
@@ -7,6 +7,7 @@ import { useI18n } from 'vue-i18n';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { pinyin } from 'pinyin-pro';
 import { useOverlayZIndex } from '../composables/useOverlayZIndex';
+import { getFileIconClass } from '../utils/fileTypes';
 
 const { t, locale } = useI18n();
 const props = defineProps<{ project: Project }>();
@@ -294,8 +295,29 @@ function openSearchResult(result: IndexEntry) {
 }
 // ---- End deep search index ----
 
+onMounted(() => {
+    projectStore.setActiveFileManagerProject(props.project.id);
+});
+
+onActivated(() => {
+    projectStore.setActiveFileManagerProject(props.project.id);
+});
+
+onDeactivated(() => {
+    if (projectStore.activeFileManagerProjectId === props.project.id) {
+        projectStore.setActiveFileManagerProject(null);
+    }
+});
+
+watch(() => props.project.id, (newId) => {
+    projectStore.setActiveFileManagerProject(newId);
+});
+
 onBeforeUnmount(() => {
     resetSearchIndex();
+    if (projectStore.activeFileManagerProjectId === props.project.id) {
+        projectStore.setActiveFileManagerProject(null);
+    }
 });
 
 async function loadDirContents(path: string) {
@@ -556,21 +578,7 @@ function removeEntry(file: ProjectFileEntry) {
 }
 
 function getFileIcon(entry: { name: string; isDirectory: boolean }) {
-    if (entry.isDirectory) return 'i-mdi-folder text-amber-500';
-    const ext = getFileExt(entry.name);
-    switch (ext) {
-        case 'ts': case 'tsx': return 'i-mdi-language-typescript text-blue-500';
-        case 'js': case 'jsx': return 'i-mdi-language-javascript text-yellow-500';
-        case 'vue': return 'i-mdi-vuejs text-green-500';
-        case 'json': case 'geojson': return 'i-mdi-code-json text-yellow-600';
-        case 'md': return 'i-mdi-language-markdown text-slate-500';
-        case 'html': return 'i-mdi-language-html5 text-orange-500';
-        case 'css': case 'scss': case 'less': return 'i-mdi-language-css3 text-blue-400';
-        case 'png': case 'jpg': case 'jpeg': case 'gif': case 'svg': case 'webp': return 'i-mdi-file-image text-pink-500';
-        case 'pdf': return 'i-mdi-file-pdf-box text-red-500';
-        case 'zip': case 'rar': case '7z': case 'tar': case 'gz': return 'i-mdi-folder-zip text-purple-500';
-        default: return 'i-mdi-file-outline text-slate-400';
-    }
+    return getFileIconClass(entry.name, entry.isDirectory, { folderStyle: 'solid' });
 }
 </script>
 

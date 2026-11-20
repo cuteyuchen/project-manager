@@ -844,6 +844,7 @@ export default {
   },
   fileManager: {
     title: 'Project Files',
+    dropToBind: 'Drop files to bind to project "{name}"',
     addFile: 'Add File',
     addFolder: 'Add Folder',
     addMixed: 'Add Files/Folders',
@@ -1200,5 +1201,7 @@ export default {
     replaceAllConfirm: 'Replace {count} matches across {files} files?',
     replaceAllDone: 'Replaced {count} matches in {files} files',
     matchCount: '{matches} matches · {files} files',
+    jumpToFileHint: 'Ctrl + click to open file',
+    openUrlHint: 'Ctrl + click to open in browser',
   }
 }

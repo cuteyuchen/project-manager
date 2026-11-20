@@ -38,6 +38,7 @@ const props = defineProps<{
 const emit = defineEmits<{
     (event: 'edit', project: Project): void;
     (event: 'open', project: Project): void;
+    (event: 'title-click', project: Project): void;
     (event: 'toggle-select', projectId: string): void;
     (event: 'open-management', project: Project): void;
     (event: 'open-workspace', project: Project): void;
@@ -165,6 +166,10 @@ function handleClick() {
     emit('open', props.project);
 }
 
+function handleTitleClick() {
+    emit('title-click', props.project);
+}
+
 function handleToggleSelect() {
     emit('toggle-select', props.project.id);
 }
@@ -255,7 +260,11 @@ function handleDelete() {
             <!-- ─── 主体：名称 / 路径 / 标签 ─────────────── -->
             <div class="project-row-main">
                 <div class="project-row-title-line">
-                    <h3 class="project-row-title" :class="isActive ? 'text-blue-700 dark:text-blue-400' : 'text-slate-700 dark:text-slate-200'">
+                    <h3
+                        class="project-row-title"
+                        :class="isActive ? 'text-blue-700 dark:text-blue-400' : 'text-slate-700 dark:text-slate-200'"
+                        @click.stop="handleTitleClick"
+                    >
                         {{ displayName || project.name }}
                     </h3>
                     <span v-if="moduleKindLabel" class="project-kind-chip shrink-0">{{ moduleKindLabel }}</span>
@@ -567,6 +576,13 @@ function handleDelete() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--app-duration-fast) var(--app-ease);
+}
+
+.project-row-title:hover {
+  color: var(--app-primary) !important;
+  text-decoration: underline;
 }
 
 .project-row-path {

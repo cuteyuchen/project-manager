@@ -844,6 +844,7 @@ export default {
   },
   fileManager: {
     title: '项目文件',
+    dropToBind: '释放以关联文件到项目 "{name}"',
     addFile: '添加文件',
     addFolder: '添加文件夹',
     addMixed: '添加文件/文件夹',
@@ -1202,5 +1203,7 @@ export default {
     replaceAllConfirm: '将在 {files} 个文件中替换 {count} 处匹配，确定继续？',
     replaceAllDone: '已在 {files} 个文件中替换 {count} 处',
     matchCount: '{matches} 处匹配 · {files} 个文件',
+    jumpToFileHint: '按住 Ctrl 点击打开文件',
+    openUrlHint: '按住 Ctrl 点击在浏览器中打开',
   }
 }

@@ -35,13 +35,23 @@ const { t } = useI18n();
 const gitStore = useGitStore();
 
 const chips = computed(() => collectSubProjectRows(props.projects, props.rootId));
+const rootProject = computed(() => props.projects.find(p => p.id === props.rootId) || null);
 const switcherRef = useTemplateRef<HTMLElement>('switcherRef');
+
+const allProjects = computed<Project[]>(() => {
+  const result: Project[] = [];
+  if (rootProject.value) result.push(rootProject.value);
+  for (const chip of chips.value) {
+    result.push(chip.project);
+  }
+  return result;
+});
 
 /** 当前分支来自 git store 的 summary 缓存（与文件树同一份数据源） */
 const branchById = computed<Record<string, string>>(() => {
   const result: Record<string, string> = {};
-  for (const chip of chips.value) {
-    const projectId = chip.project.id;
+  for (const project of allProjects.value) {
+    const projectId = project.id;
     if (gitStore.isGitRepo[projectId] !== true) continue;
     const branch = gitStore.getSummary(projectId)?.branch;
     if (branch) result[projectId] = branch;
@@ -55,10 +65,10 @@ const branchById = computed<Record<string, string>>(() => {
  * 和文件树节点挂载时的做法一致。
  */
 watch(
-  () => chips.value.map(chip => `${chip.project.id}:${chip.project.path}`).join('|'),
+  () => allProjects.value.map(project => `${project.id}:${project.path}`).join('|'),
   () => {
-    for (const chip of chips.value) {
-      void gitStore.ensureSummaryAndStatus(chip.project.id, chip.project.path);
+    for (const project of allProjects.value) {
+      void gitStore.ensureSummaryAndStatus(project.id, project.path);
     }
   },
   { immediate: true },
@@ -84,7 +94,31 @@ function depthClass(depth: number): string {
 </script>
 
 <template>
-  <div v-if="chips.length > 0" ref="switcherRef" class="sub-project-switcher" role="tablist">
+  <div v-if="chips.length > 0 && rootProject" ref="switcherRef" class="sub-project-switcher" role="tablist">
+    <!-- 父级/根级项目胶囊 -->
+    <button
+      type="button"
+      role="tab"
+      class="sub-project-chip is-depth-1"
+      :class="{ 'is-active': rootProject.id === currentProjectId }"
+      :title="rootProject.path || rootProject.name"
+      :aria-selected="rootProject.id === currentProjectId"
+      @click.stop="emit('select', rootProject)"
+    >
+      <span v-if="rootProject.id === currentProjectId" class="i-mdi-check sub-project-chip-check" aria-hidden="true" />
+      <span
+        v-if="isRunning(rootProject.id)"
+        class="sub-project-chip-running"
+        :title="t('dashboard.running')"
+      />
+      <span class="i-mdi-folder-home-outline text-xs shrink-0 opacity-80" aria-hidden="true" />
+      <span class="sub-project-chip-name">{{ rootProject.name }}</span>
+      <span v-if="branchById[rootProject.id]" class="sub-project-chip-branch" :title="branchById[rootProject.id]">
+        <span class="i-mdi-source-branch" aria-hidden="true" />
+        <span class="sub-project-chip-branch-name">{{ branchById[rootProject.id] }}</span>
+      </span>
+    </button>
+    <!-- 子级项目胶囊 -->
     <button
       v-for="chip in chips"
       :key="chip.project.id"
@@ -223,7 +257,10 @@ function depthClass(depth: number): string {
   box-shadow: 0 0 6px rgba(255, 255, 255, 0.85);
 }
 
-/* 层级配色：二级=蓝，三级=紫（更深层级沿用紫色），深浅主题都保留对比度 */
+/* 层级配色：一级=主项目色，二级=蓝，三级=紫（更深层级沿用紫色），深浅主题都保留对比度 */
+.sub-project-chip.is-depth-1 {
+  --chip-accent: var(--app-primary);
+}
 .sub-project-chip.is-depth-2 {
   --chip-accent: var(--app-primary);
 }

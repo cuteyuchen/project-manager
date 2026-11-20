@@ -349,8 +349,47 @@ export const useProjectStore = defineStore('project', () => {
   function updateProject(project: Project) {
     const index = projects.value.findIndex((p) => p.id === project.id);
     if (index !== -1) {
-      projects.value[index] = project;
+      const existing = projects.value[index];
+      projects.value[index] = {
+        ...existing,
+        ...project,
+        projectFiles: project.projectFiles !== undefined ? project.projectFiles : existing.projectFiles,
+        memo: project.memo !== undefined ? project.memo : existing.memo,
+      };
     }
+  }
+
+  const activeFileManagerProjectId = ref<string | null>(null);
+
+  function setActiveFileManagerProject(id: string | null) {
+    activeFileManagerProjectId.value = id;
+  }
+
+  async function addProjectFiles(projectId: string, paths: string[]): Promise<number> {
+    const project = projects.value.find(p => p.id === projectId);
+    if (!project) return 0;
+    if (!project.projectFiles) project.projectFiles = [];
+
+    let added = 0;
+    for (const path of paths) {
+      if (project.projectFiles.some(f => f.path === path)) continue;
+      const name = path.split(/[/\\]/).pop() || path;
+      let isDirectory = false;
+      try {
+        await api.readDir(path);
+        isDirectory = true;
+      } catch {
+        isDirectory = false;
+      }
+      project.projectFiles.push({
+        id: crypto.randomUUID(),
+        name,
+        path,
+        isDirectory,
+      });
+      added++;
+    }
+    return added;
   }
 
   function removeProject(id: string) {
@@ -1184,6 +1223,9 @@ export const useProjectStore = defineStore('project', () => {
     requestedRevealToken,
     requestExplorerReveal,
     consumeExplorerReveal,
+    activeFileManagerProjectId,
+    setActiveFileManagerProject,
+    addProjectFiles,
     addProject,
     updateProject,
     removeProject,

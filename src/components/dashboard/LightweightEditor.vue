@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { EditorState, Compartment, StateEffect, StateField, RangeSet, type Extension } from '@codemirror/state';
 import {
   Decoration,
@@ -17,7 +18,13 @@ import { bracketMatching, foldGutter, foldKeymap, indentOnInput } from '@codemir
 import { search, searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { editorLanguageExtension, type EditorLanguage } from '../../utils/editorLanguage';
 import { editorHighlightExtension } from '../../utils/editorHighlight';
-import type { EditorLineMarkers } from '../../utils/editorGitMarkers';
+import { areLineMarkersEqual, type EditorLineMarkers } from '../../utils/editorGitMarkers';
+import { createFileLinksExtension } from '../../utils/editorFileLinks';
+import {
+  createEditorAutocompleteExtension,
+  completionKeymap,
+  closeBracketsKeymap,
+} from '../../utils/editorAutocomplete';
 
 class GitGutterMarker extends GutterMarker {
   constructor(className: string) {
@@ -35,17 +42,27 @@ const props = withDefaults(defineProps<{
   lineMarkers?: EditorLineMarkers | null;
   /** 打开后滚动并选中到该行（1-based） */
   initialLine?: number;
+  /** 当前项目根路径，用于解析引用依赖 */
+  projectPath?: string;
+  /** 当前文件相对路径，用于解析相对引用 */
+  currentPath?: string;
 }>(), {
   readOnly: false,
   dark: true,
   lineMarkers: null,
   initialLine: undefined,
+  projectPath: '',
+  currentPath: '',
 });
 
 const emit = defineEmits<{
   'update:modelValue': [value: string];
   save: [];
+  jumpToFile: [target: { relativePath: string; line?: number }];
+  openUrl: [url: string];
 }>();
+
+const { t } = useI18n();
 
 const editorHost = ref<HTMLElement | null>(null);
 let view: EditorView | null = null;
@@ -183,6 +200,8 @@ function createView(): void {
         ...historyKeymap,
         ...foldKeymap,
         ...searchKeymap,
+        ...completionKeymap,
+        ...closeBracketsKeymap,
         indentWithTab,
       ]),
       readOnlyCompartment.of([
@@ -192,6 +211,19 @@ function createView(): void {
       languageCompartment.of(editorLanguageExtension(props.language)),
       themeCompartment.of(themeExtension(props.dark)),
       highlightCompartment.of(highlightExtension(props.dark)),
+      createEditorAutocompleteExtension({
+        getLanguage: () => props.language,
+        getProjectPath: () => props.projectPath || '',
+        getCurrentPath: () => props.currentPath || '',
+      }),
+      createFileLinksExtension({
+        getProjectPath: () => props.projectPath || '',
+        getCurrentPath: () => props.currentPath || '',
+        onJumpToFile: target => emit('jumpToFile', target),
+        onOpenUrl: url => emit('openUrl', url),
+        hintText: t('editor.jumpToFileHint'),
+        urlHintText: t('editor.openUrlHint'),
+      }),
       EditorView.updateListener.of(update => {
         if (update.docChanged) emit('update:modelValue', update.state.doc.toString());
       }),
@@ -205,7 +237,13 @@ function createView(): void {
 
 watch(() => props.modelValue, value => {
   if (!view || value === view.state.doc.toString()) return;
-  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } });
+  const currentSel = view.state.selection.main;
+  const newAnchor = Math.min(currentSel.anchor, value.length);
+  const newHead = Math.min(currentSel.head, value.length);
+  view.dispatch({
+    changes: { from: 0, to: view.state.doc.length, insert: value },
+    selection: { anchor: newAnchor, head: newHead },
+  });
 });
 
 watch(() => props.language, language => {
@@ -245,7 +283,8 @@ watch(() => props.initialLine, line => {
   if (line) revealLine(line);
 });
 
-watch(() => props.lineMarkers, markers => {
+watch(() => props.lineMarkers, (markers, oldMarkers) => {
+  if (areLineMarkersEqual(markers, oldMarkers)) return;
   view?.dispatch({ effects: setGitLineMarkers.of(markers || null) });
 });
 
@@ -324,4 +363,135 @@ defineExpose({
   bottom: auto;
   transform: translateY(-50%);
 }
+
+/* Ctrl+鼠标悬浮可点击链接高亮 */
+.lightweight-editor :deep(.cm-file-link-active) {
+  text-decoration: underline !important;
+  text-decoration-color: var(--app-primary) !important;
+  text-underline-offset: 3px !important;
+  color: var(--app-primary) !important;
+  cursor: pointer !important;
+}
+
+/* 链接悬浮提示框 (WebStorm 风格) */
+:deep(.cm-tooltip.cm-tooltip-hover) {
+  border: none !important;
+  background: transparent !important;
+}
+
+:deep(.cm-file-link-tooltip) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  background: var(--app-surface-raised, #1e293b);
+  color: var(--app-text, #f1f5f9);
+  border: 1px solid var(--app-border, #334155);
+  border-radius: 6px;
+  font-size: var(--app-font-meta);
+  line-height: 1.4;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
+  user-select: none;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+:deep(.cm-file-link-tooltip:hover) {
+  background: var(--app-surface-soft, #334155);
+  border-color: var(--app-primary);
+}
+
+:deep(.cm-file-link-target) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: var(--app-primary);
+  font-weight: 500;
+}
+
+:deep(.cm-file-link-hint) {
+  color: var(--app-text-muted);
+  font-size: var(--app-font-meta);
+}
+
+/* 自动补全浮层样式 (CodeMirror Autocomplete) */
+:deep(.cm-tooltip-autocomplete) {
+  background: var(--app-surface-raised, #1e293b) !important;
+  border: 1px solid var(--app-border, #334155) !important;
+  border-radius: 6px !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28) !important;
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+  font-size: var(--app-font-meta) !important;
+  max-height: 280px;
+}
+
+:deep(.cm-tooltip-autocomplete > ul) {
+  max-height: 240px;
+  padding: 4px 0;
+  font-family: inherit;
+}
+
+:deep(.cm-tooltip-autocomplete > ul > li) {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  line-height: 1.5;
+  color: var(--app-text);
+  border-radius: 4px;
+  margin: 1px 4px;
+  cursor: pointer;
+}
+
+:deep(.cm-tooltip-autocomplete > ul > li[aria-selected]) {
+  background: var(--app-primary) !important;
+  color: #ffffff !important;
+}
+
+:deep(.cm-completionLabel) {
+  font-weight: 500;
+}
+
+:deep(.cm-completionDetail) {
+  margin-left: auto;
+  padding-left: 12px;
+  font-size: var(--app-font-caption);
+  color: var(--app-text-muted);
+  font-style: normal;
+}
+
+:deep(.cm-tooltip-autocomplete > ul > li[aria-selected] .cm-completionDetail) {
+  color: rgba(255, 255, 255, 0.85) !important;
+}
+
+:deep(.cm-completionMatchedText) {
+  color: var(--app-primary, #3b82f6);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+:deep(.cm-tooltip-autocomplete > ul > li[aria-selected] .cm-completionMatchedText) {
+  color: #ffffff !important;
+  text-decoration: underline;
+}
+
+:deep(.cm-completionIcon) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-right: 4px;
+  opacity: 0.85;
+  font-size: var(--app-font-caption);
+}
+
+:deep(.cm-completionIcon-keyword::after) { content: 'k'; color: #f59e0b; font-weight: bold; }
+:deep(.cm-completionIcon-variable::after) { content: 'v'; color: #38bdf8; font-weight: bold; }
+:deep(.cm-completionIcon-function::after) { content: 'f'; color: #a855f7; font-weight: bold; }
+:deep(.cm-completionIcon-class::after) { content: 'c'; color: #ec4899; font-weight: bold; }
+:deep(.cm-completionIcon-type::after) { content: 't'; color: #06b6d4; font-weight: bold; }
+:deep(.cm-completionIcon-property::after) { content: 'p'; color: #10b981; font-weight: bold; }
+:deep(.cm-completionIcon-snippet::after) { content: '⇥'; color: #6366f1; font-weight: bold; }
+:deep(.cm-completionIcon-file::after) { content: '📄'; font-size: var(--app-font-caption); }
+:deep(.cm-completionIcon-folder::after) { content: '📁'; font-size: var(--app-font-caption); }
 </style>

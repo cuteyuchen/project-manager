@@ -58,6 +58,11 @@ const target = import.meta.env.VITE_TARGET;
 const isPlugin = target === 'utools' || target === 'ztools';
 
 const { t } = useI18n();
+const projectStore = useProjectStore();
+const activeFileManagerTargetProject = computed(() => {
+  if (!projectStore.activeFileManagerProjectId) return null;
+  return projectStore.projects.find(p => p.id === projectStore.activeFileManagerProjectId) || null;
+});
 type AppView = 'dashboard' | 'settings' | 'nodes' | 'ports' | 'commitCalendar';
 const currentView = ref<AppView>('dashboard');
 const loaded = ref(false);
@@ -807,12 +812,25 @@ onMounted(async () => {
 
       const files = e.dataTransfer?.files;
       if (files && files.length > 0) {
+        const paths: string[] = [];
         for (let i = 0; i < files.length; i++) {
            const file = files[i] as any;
            // In Electron/uTools, File object has a 'path' property
            if (file.path) {
-             await handleImportProject(file.path);
+             paths.push(file.path);
            }
+        }
+        if (paths.length > 0) {
+          if (projectStore.activeFileManagerProjectId) {
+            const added = await projectStore.addProjectFiles(projectStore.activeFileManagerProjectId, paths);
+            if (added > 0) {
+              ElMessage.success(t('fileManager.addSuccess', { count: added }));
+            }
+          } else {
+            for (const path of paths) {
+              await handleImportProject(path);
+            }
+          }
         }
       }
     });
@@ -842,12 +860,19 @@ onMounted(async () => {
         isDragging.value = false;
       });
 
-      unlistenDragDrop = await listen<{ paths: string[] }>('tauri://drag-drop', (event) => {
+      unlistenDragDrop = await listen<{ paths: string[] }>('tauri://drag-drop', async (event) => {
         isDragging.value = false;
         if (event.payload.paths && event.payload.paths.length > 0) {
-           for (const path of event.payload.paths) {
-             handleImportProject(path);
-           }
+          if (projectStore.activeFileManagerProjectId) {
+            const added = await projectStore.addProjectFiles(projectStore.activeFileManagerProjectId, event.payload.paths);
+            if (added > 0) {
+              ElMessage.success(t('fileManager.addSuccess', { count: added }));
+            }
+          } else {
+            for (const path of event.payload.paths) {
+              handleImportProject(path);
+            }
+          }
         }
       });
 
@@ -1014,7 +1039,6 @@ async function handleCopyErrorDetails(): Promise<void> {
 }
 
 // Watch stores and save
-const projectStore = useProjectStore();
 const settingsStore = useSettingsStore();
 const appBackgroundStyle = computed(() => ({
   backgroundImage: settingsStore.backgroundImageDataUrl
@@ -1134,9 +1158,11 @@ watch(
         <div v-if="isDragging" class="app-drag-overlay">
           <div class="text-center">
              <div class="text-6xl mb-4 text-blue-500 dark:text-blue-300 flex justify-center">
-               <div class="i-mdi-folder-upload" />
+               <div :class="activeFileManagerTargetProject ? 'i-mdi-paperclip' : 'i-mdi-folder-upload'" />
              </div>
-             <h2 class="text-2xl font-bold">{{ t('dashboard.dropToImport') || 'Drop folder to import' }}</h2>
+             <h2 class="text-2xl font-bold">
+               {{ activeFileManagerTargetProject ? t('fileManager.dropToBind', { name: activeFileManagerTargetProject.name }) : (t('dashboard.dropToImport') || 'Drop folder to import') }}
+             </h2>
           </div>
         </div>
       </main>

@@ -16,6 +16,22 @@ export function isEmptyLineMarkers(markers: EditorLineMarkers): boolean {
   return markers.added.size === 0 && markers.deleted.size === 0 && markers.modified.size === 0;
 }
 
+/** 比较两组行标记是否完全一致，避免无意义的视图刷新 */
+export function areLineMarkersEqual(
+  a: EditorLineMarkers | null | undefined,
+  b: EditorLineMarkers | null | undefined,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return !a && !b;
+  if (a.added.size !== b.added.size || a.deleted.size !== b.deleted.size || a.modified.size !== b.modified.size) {
+    return false;
+  }
+  for (const n of a.added) if (!b.added.has(n)) return false;
+  for (const n of a.deleted) if (!b.deleted.has(n)) return false;
+  for (const n of a.modified) if (!b.modified.has(n)) return false;
+  return true;
+}
+
 /**
  * 展示层规范化：added/modified 为 1-based 行号；
  * deleted 存「删除块前一行」行号（0 表示文件开头，画在首行顶边）。

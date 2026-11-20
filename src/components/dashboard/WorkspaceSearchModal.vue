@@ -20,6 +20,7 @@ import {
 import LightweightEditor from './LightweightEditor.vue';
 import { escapeHtml } from '../../utils/escapeHtml';
 import { useOverlayZIndex } from '../../composables/useOverlayZIndex';
+import { getFileIconClass } from '../../utils/fileTypes';
 
 export type WorkspaceSearchMode = 'files' | 'content';
 
@@ -427,7 +428,7 @@ function onWindowKeydown(event: KeyboardEvent): void {
                 @mouseenter="selectRow(index)"
                 @click="openRow(index)"
               >
-                <div class="i-mdi-file-document-outline ws-search-row-icon" />
+                <div :class="getFileIconClass(entry.name, false)" class="ws-search-row-icon" />
                 <div class="ws-search-row-main">
                   <div class="ws-search-row-name">{{ entry.name }}</div>
                   <div class="ws-search-row-path">{{ entry.relativePath }}</div>
@@ -478,6 +479,10 @@ function onWindowKeydown(event: KeyboardEvent): void {
                 :dark="isDark"
                 read-only
                 :initial-line="previewLine"
+                :project-path="props.project.path"
+                :current-path="previewPath"
+                @jump-to-file="emit('openFile', $event.relativePath, $event.line)"
+                @open-url="api.openUrl($event)"
               />
               <div v-else-if="!previewLoading" class="ws-search-empty">{{ t('editor.searchNoResults') }}</div>
             </div>

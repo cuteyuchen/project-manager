@@ -4,7 +4,7 @@ import { ElMessage } from 'element-plus';
 import type { GitFileStatus, Project } from '../../types';
 import { api } from '../../api';
 import { useProjectStore } from '../../stores/project';
-import { fileExtension, isImageFile, isTextFile } from '../../utils/fileTypes';
+import { getFileIconClass } from '../../utils/fileTypes';
 import { joinAbsolutePath, joinWorkspacePath, pathsEqual } from '../../utils/workspacePath';
 import { explorerStateVersion, isExplorerExpanded, setExplorerExpanded } from '../../utils/workspaceExplorerState';
 import ProjectExplorerNode from './ProjectExplorerNode.vue';
@@ -69,21 +69,7 @@ const status = computed(() => {
 });
 
 function iconClass(): string {
-  if (props.entry.isDirectory) return 'i-mdi-folder-outline text-amber-500';
-  if (isImageFile(props.entry.name)) return 'i-mdi-file-image-outline text-pink-500';
-  if (/^\.env(?:\..*)?$/i.test(props.entry.name)) return 'i-mdi-key-variant text-amber-500';
-  switch (fileExtension(props.entry.name)) {
-    case 'vue': return 'i-mdi-vuejs text-green-500';
-    case 'ts':
-    case 'tsx': return 'i-mdi-language-typescript text-blue-500';
-    case 'js':
-    case 'jsx': return 'i-mdi-language-javascript text-yellow-500';
-    case 'json': return 'i-mdi-code-json text-yellow-600';
-    case 'md': return 'i-mdi-language-markdown text-slate-500';
-    case 'html': return 'i-mdi-language-html5 text-orange-500';
-    case 'css': return 'i-mdi-language-css3 text-blue-400';
-    default: return isTextFile(props.entry.name) ? 'i-mdi-file-document-outline text-slate-400' : 'i-mdi-file-outline text-slate-400';
-  }
+  return getFileIconClass(props.entry.name, props.entry.isDirectory);
 }
 
 async function loadChildren(): Promise<void> {

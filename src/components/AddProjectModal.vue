@@ -731,11 +731,16 @@ function buildProjectPayload(): Project {
     project.pinned = props.editProject.pinned;
     project.pinOrder = props.editProject.pinOrder;
     project.sortOrder = props.editProject.sortOrder;
-    // 保留嵌套关系与收藏等编辑表单未覆盖的字段
+    // 保留嵌套关系、收藏、关联文件、备忘录等编辑表单未覆盖的字段
     project.parentId = props.editProject.parentId;
     project.favorite = props.editProject.favorite;
     project.moduleKind = props.editProject.moduleKind;
     project.subScannedAt = props.editProject.subScannedAt;
+    project.projectFiles = props.editProject.projectFiles;
+    project.memo = props.editProject.memo;
+    project.codeModules = props.editProject.codeModules;
+    project.frontendEnvGroups = props.editProject.frontendEnvGroups;
+    project.frontendEnvScannedAt = props.editProject.frontendEnvScannedAt;
   }
 
   return ensureJavaCommands(
