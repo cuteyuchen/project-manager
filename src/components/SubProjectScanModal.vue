@@ -16,6 +16,7 @@ import { useI18n } from 'vue-i18n';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import ScanCandidateTree from './ScanCandidateTree.vue';
 import { MAX_PROJECT_DEPTH, normalizeProjectPath } from '../utils/projectTree';
+import { isFilesystemDescendant, joinAbsolutePath } from '../utils/workspacePath';
 import {
   buildDefaultSelection,
   collectDeselectedExistingPaths,
@@ -77,14 +78,31 @@ const scopedProjects = computed(() => {
   return projectStore.projects.filter((p) => ids.has(p.id));
 });
 
+const persistedParent = computed(() => projectStore.projects.find((p) => p.id === props.parentProject.id));
+
+function resolveChildPath(path: string): string {
+  const oldRoot = persistedParent.value?.path;
+  const newRoot = props.parentProject.path;
+  if (!oldRoot || !newRoot || normalizeProjectPath(oldRoot) === normalizeProjectPath(newRoot)) {
+    return path;
+  }
+  if (isFilesystemDescendant(oldRoot, path)) {
+    const cleanOld = oldRoot.replace(/\\/g, '/').replace(/\/+$/, '');
+    const cleanChild = path.replace(/\\/g, '/').replace(/\/+$/, '');
+    const rel = cleanChild.slice(cleanOld.length + 1);
+    return joinAbsolutePath(newRoot, rel);
+  }
+  return path;
+}
+
 /** 当前父项目下已存在的归一化路径 */
 const existingPaths = computed(
-  () => new Set(scopedProjects.value.map((p) => normalizeProjectPath(p.path))),
+  () => new Set(scopedProjects.value.map((p) => normalizeProjectPath(resolveChildPath(p.path)))),
 );
 
 /** 归一化路径 → 项目 id，用于把取消勾选的候选节点对应回真实项目 */
 const pathToProjectId = computed(
-  () => new Map(scopedProjects.value.map((p) => [normalizeProjectPath(p.path), p.id])),
+  () => new Map(scopedProjects.value.map((p) => [normalizeProjectPath(resolveChildPath(p.path)), p.id])),
 );
 
 /**
@@ -96,7 +114,7 @@ const pathToProjectId = computed(
 function buildExistingSubtree(parentId: string): ImportNode[] {
   return projectStore.getChildren(parentId).map((child) => ({
     name: child.name,
-    path: child.path,
+    path: resolveChildPath(child.path),
     kind: child.moduleKind ?? 'unknown',
     hasGit: !!child.gitConfigured,
     hasPackageJson: child.type === 'node',
@@ -146,6 +164,15 @@ watch(visible, (v) => {
   }
   runScan();
 }, { immediate: true });
+
+watch(
+  () => props.parentProject.path,
+  (newPath, oldPath) => {
+    if (visible.value && newPath && newPath !== oldPath) {
+      runScan();
+    }
+  },
+);
 
 /** 候选树中的全部路径 */
 const allPaths = computed(() => collectForestPaths(nodes.value));

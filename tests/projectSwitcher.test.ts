@@ -93,7 +93,7 @@ assert.deepEqual(collectSubProjectRows(projects, 'other'), [], '没有子项目�
 
 /***********************Tab 保持与 capability*********************/
 assert(/gitCapabilityKnown/.test(panel), '切换 Tab 前应区分 Git capability 未确认与非 Git');
-assert(/preferredTab = firstActivation \? props\.initialTab : activeTab\.value/.test(panel), '切换项目时应优先保留当前 Tab');
+assert(/preferredTab = projectChanged[\s\S]*rememberedTab/.test(panel), '切换项目时应优先恢复目标项目上次选中的 Tab');
 assert(/forceGitCheck: pathChanged/.test(panel), '项目路径变化时应强制重新确认 Git capability');
 assert(/void activate\(requestedTab\)/.test(panel), 'requestedRightTab 应经过统一 capability fallback');
 assert(/v-if="hasGitRepo"[\s\S]*t\('git\.title'\)/.test(panel), 'Git Tab 只能在 Git capability 可用时渲染');

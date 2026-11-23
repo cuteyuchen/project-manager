@@ -1020,6 +1020,15 @@ function removeAiChannelSlot(index: number) {
 const draggedModelIndex = ref<number | null>(null);
 const dragOverModelIndex = ref<number | null>(null);
 
+function moveAiModelSlot(fromIndex: number, toIndex: number) {
+  const single = draft.value.gitAiSingleChannel;
+  if (!single?.models || fromIndex < 0 || fromIndex >= single.models.length || toIndex < 0 || toIndex >= single.models.length) return;
+  const nextModels = [...single.models];
+  const [moved] = nextModels.splice(fromIndex, 1);
+  nextModels.splice(toIndex, 0, moved);
+  single.models = nextModels;
+}
+
 function onModelDragStart(index: number, e: DragEvent) {
   draggedModelIndex.value = index;
   if (e.dataTransfer) {
@@ -1031,10 +1040,20 @@ function onModelDragStart(index: number, e: DragEvent) {
 function onModelDragOver(index: number, e: DragEvent) {
   if (draggedModelIndex.value === null || draggedModelIndex.value === index) return;
   e.preventDefault();
+  if (e.dataTransfer) {
+    e.dataTransfer.dropEffect = 'move';
+  }
   dragOverModelIndex.value = index;
 }
 
-function onModelDragLeave(index: number) {
+function onModelDragLeave(index: number, e?: DragEvent) {
+  if (e) {
+    const currentTarget = e.currentTarget as HTMLElement | null;
+    const relatedTarget = e.relatedTarget as Node | null;
+    if (currentTarget && relatedTarget && currentTarget.contains(relatedTarget)) {
+      return;
+    }
+  }
   if (dragOverModelIndex.value === index) {
     dragOverModelIndex.value = null;
   }
@@ -1042,12 +1061,9 @@ function onModelDragLeave(index: number) {
 
 function onModelDrop(targetIndex: number, e: DragEvent) {
   e.preventDefault();
-  if (draggedModelIndex.value !== null && draggedModelIndex.value !== targetIndex) {
-    const models = draft.value.gitAiSingleChannel?.models;
-    if (models) {
-      const [moved] = models.splice(draggedModelIndex.value, 1);
-      models.splice(targetIndex, 0, moved);
-    }
+  const fromIndex = draggedModelIndex.value;
+  if (fromIndex !== null && fromIndex !== targetIndex) {
+    moveAiModelSlot(fromIndex, targetIndex);
   }
   draggedModelIndex.value = null;
   dragOverModelIndex.value = null;
@@ -1061,6 +1077,15 @@ function onModelDragEnd() {
 const draggedChannelIndex = ref<number | null>(null);
 const dragOverChannelIndex = ref<number | null>(null);
 
+function moveAiChannelSlot(fromIndex: number, toIndex: number) {
+  const channels = draft.value.gitAiChannels;
+  if (!channels || fromIndex < 0 || fromIndex >= channels.length || toIndex < 0 || toIndex >= channels.length) return;
+  const nextChannels = [...channels];
+  const [moved] = nextChannels.splice(fromIndex, 1);
+  nextChannels.splice(toIndex, 0, moved);
+  draft.value.gitAiChannels = nextChannels;
+}
+
 function onChannelDragStart(index: number, e: DragEvent) {
   draggedChannelIndex.value = index;
   if (e.dataTransfer) {
@@ -1072,10 +1097,20 @@ function onChannelDragStart(index: number, e: DragEvent) {
 function onChannelDragOver(index: number, e: DragEvent) {
   if (draggedChannelIndex.value === null || draggedChannelIndex.value === index) return;
   e.preventDefault();
+  if (e.dataTransfer) {
+    e.dataTransfer.dropEffect = 'move';
+  }
   dragOverChannelIndex.value = index;
 }
 
-function onChannelDragLeave(index: number) {
+function onChannelDragLeave(index: number, e?: DragEvent) {
+  if (e) {
+    const currentTarget = e.currentTarget as HTMLElement | null;
+    const relatedTarget = e.relatedTarget as Node | null;
+    if (currentTarget && relatedTarget && currentTarget.contains(relatedTarget)) {
+      return;
+    }
+  }
   if (dragOverChannelIndex.value === index) {
     dragOverChannelIndex.value = null;
   }
@@ -1083,12 +1118,9 @@ function onChannelDragLeave(index: number) {
 
 function onChannelDrop(targetIndex: number, e: DragEvent) {
   e.preventDefault();
-  if (draggedChannelIndex.value !== null && draggedChannelIndex.value !== targetIndex) {
-    const channels = draft.value.gitAiChannels;
-    if (channels) {
-      const [moved] = channels.splice(draggedChannelIndex.value, 1);
-      channels.splice(targetIndex, 0, moved);
-    }
+  const fromIndex = draggedChannelIndex.value;
+  if (fromIndex !== null && fromIndex !== targetIndex) {
+    moveAiChannelSlot(fromIndex, targetIndex);
   }
   draggedChannelIndex.value = null;
   dragOverChannelIndex.value = null;
@@ -1611,7 +1643,7 @@ function describeAiTestError(error: any): string {
             </el-select>
             <el-input v-model="draft.gitAiSingleChannel.service.baseUrl" :placeholder="t('settings.gitAiBaseUrlPlaceholder')" clearable />
             <el-input v-model="draft.gitAiSingleChannel.service.apiKey" type="password" show-password :placeholder="t('settings.gitAiApiKeyPlaceholder')" />
-            <div class="ai-slot-list">
+            <div class="ai-slot-list" :class="{ 'is-dragging-models': draggedModelIndex !== null }">
               <div class="settings-row-desc">{{ t('settings.gitAiModelsHint', { max: MAX_AI_FALLBACK_SLOTS }) }}</div>
               <div
                 v-for="(_, index) in draft.gitAiSingleChannel.models"
@@ -1622,7 +1654,7 @@ function describeAiTestError(error: any): string {
                   'is-drag-over': dragOverModelIndex === index,
                 }"
                 @dragover.prevent="onModelDragOver(index, $event)"
-                @dragleave="onModelDragLeave(index)"
+                @dragleave="onModelDragLeave(index, $event)"
                 @drop="onModelDrop(index, $event)"
               >
                 <div
@@ -1662,7 +1694,7 @@ function describeAiTestError(error: any): string {
 
           <!-- 模式 B：最多 3 套各自独立的渠道 -->
           <template v-else-if="draft.gitAiChannels">
-            <div class="ai-slot-list">
+            <div class="ai-slot-list" :class="{ 'is-dragging-channels': draggedChannelIndex !== null }">
               <div class="settings-row-desc">{{ t('settings.gitAiChannelsHint', { max: MAX_AI_FALLBACK_SLOTS }) }}</div>
               <div
                 v-for="(channel, index) in draft.gitAiChannels"
@@ -1673,7 +1705,7 @@ function describeAiTestError(error: any): string {
                   'is-drag-over': dragOverChannelIndex === index,
                 }"
                 @dragover.prevent="onChannelDragOver(index, $event)"
-                @dragleave="onChannelDragLeave(index)"
+                @dragleave="onChannelDragLeave(index, $event)"
                 @drop="onChannelDrop(index, $event)"
               >
                 <div class="ai-channel-head">
@@ -2140,6 +2172,39 @@ function describeAiTestError(error: any): string {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-drag: element;
+  padding: 2px 4px;
+  border-radius: var(--app-radius-xs);
+  transition: background-color var(--app-duration-fast) var(--app-ease);
+}
+
+.drag-handle:hover {
+  background: var(--app-fill-hover);
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}
+
+.drag-handle * {
+  pointer-events: none;
+}
+
+.ai-slot-list.is-dragging-models .ai-slot-row .el-input,
+.ai-slot-list.is-dragging-models .ai-slot-row .el-button,
+.ai-slot-list.is-dragging-channels .ai-channel-card .ai-channel-head .el-switch,
+.ai-slot-list.is-dragging-channels .ai-channel-card .ai-channel-head .el-button,
+.ai-slot-list.is-dragging-channels .ai-channel-card .el-select,
+.ai-slot-list.is-dragging-channels .ai-channel-card .el-input {
+  pointer-events: none;
 }
 
 .ai-slot-row {

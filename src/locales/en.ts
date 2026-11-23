@@ -267,6 +267,8 @@ export default {
     applySubProjectChanges: 'Add {added} / Remove {removed}',
     removeSubProjectsConfirm: 'This removes {count} sub projects; together with their descendants, {total} projects will be deleted. This cannot be undone. Continue?',
     manageSubProjects: 'Manage Sub Projects',
+    expandAll: 'Expand All',
+    collapseAll: 'Collapse All',
     pinnedProjects: 'Pinned Projects',
     recentProjects: 'Recent',
     noSearchResults: 'No results',

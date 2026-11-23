@@ -150,3 +150,40 @@ export function resolveExpandedProjectIds(state: ProjectTreeExpansionInput): Set
   }
   return result;
 }
+
+/** 批量展开指定项目列表 */
+export function expandAllProjects(
+  state: ProjectTreeExpansionInput,
+  projectIds: Iterable<string>,
+): ProjectTreeExpansionResult {
+  const expanded = new Set(state.expandedIds);
+  const collapsed = new Set(state.collapsedIds);
+  for (const id of projectIds) {
+    expanded.add(id);
+    collapsed.delete(id);
+  }
+  return { expandedIds: expanded, collapsedIds: collapsed };
+}
+
+/** 批量折叠指定项目列表 */
+export function collapseAllProjects(
+  state: ProjectTreeExpansionInput,
+  projectIds: Iterable<string>,
+): ProjectTreeExpansionResult {
+  const expanded = new Set(state.expandedIds);
+  const collapsed = new Set(state.collapsedIds);
+  for (const id of projectIds) {
+    expanded.delete(id);
+    collapsed.add(id);
+  }
+  return { expandedIds: expanded, collapsedIds: collapsed };
+}
+
+/** 判定指定项目列表是否已全部展开 */
+export function isAllProjectsExpanded(
+  state: ProjectTreeExpansionInput,
+  projectIds: readonly string[],
+): boolean {
+  if (projectIds.length === 0) return false;
+  return projectIds.every((id) => isProjectTreeExpanded(state, id));
+}

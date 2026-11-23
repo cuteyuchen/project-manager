@@ -150,10 +150,10 @@ function depthClass(depth: number): string {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
-  max-height: 56px;
-  padding: 1px 0;
+  max-height: 68px;
+  padding: 2px 0;
   overflow-y: auto;
   scrollbar-width: thin;
 }
@@ -161,10 +161,11 @@ function depthClass(depth: number): string {
   --chip-accent: var(--app-primary);
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  max-width: 240px;
-  height: 24px;
-  padding: 0 9px;
+  gap: 6px;
+  max-width: none;
+  min-height: 28px;
+  height: 28px;
+  padding: 0 10px;
   border: 1px solid color-mix(in srgb, var(--chip-accent) 24%, transparent);
   border-radius: 999px;
   background: color-mix(in srgb, var(--chip-accent) 5%, transparent);
@@ -174,6 +175,8 @@ function depthClass(depth: number): string {
   font-weight: 600;
   line-height: 1;
   cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
   transition:
     background-color var(--app-duration-fast) var(--app-ease),
     border-color var(--app-duration-fast) var(--app-ease),
@@ -207,9 +210,6 @@ function depthClass(depth: number): string {
   outline-offset: 1px;
 }
 .sub-project-chip-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 /* 运行中：绿色小圆点，和下拉/文件树保持同一套视觉 */
@@ -226,14 +226,15 @@ function depthClass(depth: number): string {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   min-width: 0;
-  padding-left: 5px;
+  padding-left: 6px;
   border-left: 1px solid color-mix(in srgb, var(--chip-accent) 24%, transparent);
   color: color-mix(in srgb, var(--app-text-muted) 88%, var(--chip-accent));
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: var(--app-font-caption);
   font-weight: 500;
+  white-space: nowrap;
 }
 .sub-project-chip-branch .i-mdi-source-branch {
   flex: 0 0 auto;
@@ -241,10 +242,6 @@ function depthClass(depth: number): string {
   opacity: 0.85;
 }
 .sub-project-chip-branch-name {
-  min-width: 0;
-  max-width: 96px;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 /* 选中态是实心底色，分支和运行圆点一起反色，否则读不清 */

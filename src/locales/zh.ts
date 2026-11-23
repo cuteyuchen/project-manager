@@ -266,6 +266,8 @@ export default {
     applySubProjectChanges: '添加 {added} 个 / 移除 {removed} 个',
     removeSubProjectsConfirm: '将移除 {count} 个子项目，连同其下级共 {total} 个项目会一并删除。此操作不可撤销，是否继续？',
     manageSubProjects: '管理子项目',
+    expandAll: '全部展开',
+    collapseAll: '全部折叠',
     pinnedProjects: '置顶项目',
     recentProjects: '最近使用',
     noSearchResults: '无匹配结果',

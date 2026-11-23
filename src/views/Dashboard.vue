@@ -22,7 +22,7 @@ import { useWorkspaceProfiles } from '../composables/dashboard/useWorkspaceProfi
 import type { Project, ProjectHealthSnapshot, WorkspaceTab } from '../types';
 import type { ImportNode } from '../api/types';
 import { useI18n } from 'vue-i18n';
-import { compareProjectsByPinnedThenOrder } from '../utils/projectTree.ts';
+import { MAX_PROJECT_DEPTH, compareProjectsByPinnedThenOrder } from '../utils/projectTree.ts';
 import { useListDragSort } from '../composables/useListDragSort.ts';
 import { useAppShortcuts } from '../composables/useAppShortcuts.ts';
 import {
@@ -35,9 +35,12 @@ import { summarizeGitStatus, type ProjectGitOverview } from '../utils/projectGit
 import { countProjectHealth, hasEnvironmentIssue } from '../utils/projectHealth';
 import { buildProjectSearchEntry, projectSearchEntryMatches } from '../utils/projectSearch';
 import {
+    collapseAllProjects,
     collectAutoExpandedProjectIds,
     collectVisibleProjectIds,
     createProjectTreeExpansionState,
+    expandAllProjects,
+    isAllProjectsExpanded,
     resolveExpandedProjectIds,
     setProjectTreeConstraint,
     toggleProjectTreeExpansion,
@@ -121,6 +124,7 @@ function openProjectWorkspace(project: Project) {
     const rootId = projectStore.getRootProjectId(project.id);
     drilledRootId.value = rootId;
     workspaceTargetProjectId.value = project.id === rootId ? null : project.id;
+    try { useUsageStore().recordUsage(rootId); } catch {}
 }
 
 /** 从工作区返回列表 */
@@ -342,9 +346,28 @@ const isDraggable = computed(() =>
 /** 一级项目仍是排序/拖拽单位，树内子项目继续由 parentId 关联。 */
 const rootProjects = computed(() => projectStore.projects.filter(p => !p.parentId));
 
+/**
+ * 一级项目的最近使用权重（汇聚自身及后代的所有运行/使用记录）
+ * 最近使用只统计一级项目层级，展示时展示一级下面所有的子级
+ */
+const rootUsageWeights = computed(() => {
+    const rawWeights = usageStore.calculateAllWeights();
+    const result: Record<string, number> = {};
+    for (const project of rootProjects.value) {
+        let weight = rawWeights[project.id] ?? 0;
+        const descendantIds = projectStore.collectDescendantIds(project.id);
+        for (const childId of descendantIds) {
+            const childWeight = rawWeights[childId] ?? 0;
+            if (childWeight > weight) weight = childWeight;
+        }
+        result[project.id] = weight;
+    }
+    return result;
+});
+
 const sortedProjects = computed(() => {
     if (sortMode.value === 'smart') {
-        const weights = usageStore.calculateAllWeights();
+        const weights = rootUsageWeights.value;
         return [...rootProjects.value].sort((a, b) => {
             if (a.pinned && !b.pinned) return -1;
             if (!a.pinned && b.pinned) return 1;
@@ -381,8 +404,8 @@ function matchesProjectFilter(project: Project): boolean {
             if (!project.favorite) return false;
             break;
         case 'recent': {
-            const weights = usageStore.calculateAllWeights();
-            if ((weights[project.id] ?? 0) <= 0) return false;
+            const rootId = projectStore.getRootProjectId(project.id);
+            if ((rootUsageWeights.value[rootId] ?? 0) <= 0) return false;
             break;
         }
         case 'running':
@@ -422,14 +445,46 @@ const visibleProjectIds = computed(() => {
     }
     return collectVisibleProjectIds(projectStore.projects, matchingProjectIds.value);
 });
-const autoExpandedProjectIds = computed(() => treeConstraintActive.value
-    ? collectAutoExpandedProjectIds(projectStore.projects, matchingProjectIds.value)
-    : new Set<string>());
+const autoExpandedProjectIds = computed(() => {
+    if (!treeConstraintActive.value) return new Set<string>();
+    if (activeQuickFilter.value === 'recent' && !searchQuery.value.trim() && !selectedGroupId.value && selectedTags.value.length === 0) {
+        // 最近使用下展示一级下面所有子级，默认将匹配到的一级项目展开
+        return new Set(matchingProjectIds.value.filter(id => !projectStore.projects.find(p => p.id === id)?.parentId));
+    }
+    return collectAutoExpandedProjectIds(projectStore.projects, matchingProjectIds.value);
+});
 const effectiveExpandedProjectIds = computed(() => resolveExpandedProjectIds({
     expandedIds: expandedProjectIds.value,
     collapsedIds: collapsedProjectIds.value,
     autoExpandedIds: autoExpandedProjectIds.value,
 }));
+
+/** 当前可见列表中具有子项目的父项目 ID 集合 */
+const expandableProjectIds = computed(() => {
+    return projectStore.projects
+        .filter(p => visibleProjectIds.value.has(p.id) && projectStore.getProjectDepth(p.id) < MAX_PROJECT_DEPTH && projectStore.getChildren(p.id).length > 0)
+        .map(p => p.id);
+});
+
+const isAllTreeExpanded = computed(() => isAllProjectsExpanded({
+    expandedIds: expandedProjectIds.value,
+    collapsedIds: collapsedProjectIds.value,
+    autoExpandedIds: autoExpandedProjectIds.value,
+}, expandableProjectIds.value));
+
+function toggleExpandAll(): void {
+    const input = {
+        expandedIds: expandedProjectIds.value,
+        collapsedIds: collapsedProjectIds.value,
+        autoExpandedIds: autoExpandedProjectIds.value,
+    };
+    const next = isAllTreeExpanded.value
+        ? collapseAllProjects(input, expandableProjectIds.value)
+        : expandAllProjects(input, expandableProjectIds.value);
+    expandedProjectIds.value = next.expandedIds;
+    collapsedProjectIds.value = next.collapsedIds;
+    treeExpansionState.expandedIds = next.expandedIds;
+}
 
 watch(treeConstraintActive, (constrained) => {
     setProjectTreeConstraint(treeExpansionState, constrained);
@@ -798,6 +853,20 @@ useAppShortcuts([
                 </el-select>
 
                 <div class="flex-1" />
+
+                <!-- 一键展开/折叠所有列表 -->
+                <button
+                    v-if="expandableProjectIds.length > 0"
+                    type="button"
+                    class="toolbar-text-btn"
+                    :title="isAllTreeExpanded ? t('dashboard.collapseAll') : t('dashboard.expandAll')"
+                    @click="toggleExpandAll"
+                >
+                    <div :class="isAllTreeExpanded ? 'i-mdi-unfold-less-horizontal' : 'i-mdi-unfold-more-horizontal'" class="text-base" />
+                    <span>{{ isAllTreeExpanded ? t('dashboard.collapseAll') : t('dashboard.expandAll') }}</span>
+                </button>
+
+                <span v-if="expandableProjectIds.length > 0" class="w-px h-5 bg-slate-200 dark:bg-slate-700" />
 
                 <span class="app-text-meta text-slate-400 dark:text-slate-500">{{ t('dashboard.sortMode') }}</span>
                 <el-tooltip :content="sortMode === 'smart' ? t('dashboard.sortModeSmartHint') : t('dashboard.sortModeDefaultHint')" placement="top" :show-after="300">

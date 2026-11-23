@@ -84,12 +84,18 @@ function onChildToggle(path: string, checked: boolean) {
     <div
       class="flex items-center gap-2 px-3 py-2 border-b transition-colors"
       :class="[
-        isLocked(node) ? 'opacity-50' : 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/30',
+        isLocked(node) ? 'opacity-50' : 'cursor-pointer hover:bg-slate-100/70 dark:hover:bg-slate-800/50',
         !isLocked(node) && !isChecked(node) ? 'opacity-60' : '',
+        (depth || 0) > 0 ? 'bg-slate-50/70 dark:bg-slate-900/30 candidate-node-child' : 'bg-white dark:bg-slate-800/20',
       ]"
-      :style="{ paddingLeft: `${12 + (depth || 0) * 18}px` }"
+      :style="{ paddingLeft: `${14 + (depth || 0) * 28}px` }"
       @click="onToggle(node, checkState(node) !== 'checked')"
     >
+      <!-- 子级层级连接指示符 -->
+      <div
+        v-if="(depth || 0) > 0"
+        class="i-mdi-subdirectory-arrow-right text-base text-slate-400 dark:text-slate-500 shrink-0 select-none"
+      />
       <el-checkbox
         :model-value="checkState(node) === 'checked'"
         :indeterminate="checkState(node) === 'indeterminate'"
@@ -99,8 +105,22 @@ function onChildToggle(path: string, checked: boolean) {
       />
       <div class="flex-1 min-w-0">
         <div class="flex items-center gap-2">
-          <div v-if="node.children.length > 0" class="i-mdi-folder-outline text-xs text-slate-400 shrink-0" />
-          <span class="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">{{ node.name }}</span>
+          <div
+            v-if="node.children.length > 0"
+            class="i-mdi-folder-outline text-sm text-blue-500 dark:text-blue-400 shrink-0"
+          />
+          <div
+            v-else-if="(depth || 0) > 0"
+            class="i-mdi-code-braces text-xs text-slate-400 dark:text-slate-500 shrink-0"
+          />
+          <span
+            class="text-sm truncate"
+            :class="(depth || 0) === 0 || node.children.length > 0
+              ? 'font-semibold text-slate-800 dark:text-slate-100'
+              : 'font-normal text-slate-600 dark:text-slate-300'"
+          >
+            {{ node.name }}
+          </span>
           <span class="candidate-chip">{{ kindLabel(node.kind) }}</span>
           <span v-if="node.framework" class="app-text-meta text-slate-400">{{ node.framework }}</span>
           <span v-if="node.hasGit" class="candidate-chip candidate-chip-git"><div class="i-mdi-git text-xs" /> Git</span>

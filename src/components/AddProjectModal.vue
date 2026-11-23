@@ -15,7 +15,7 @@ import { useProjectStore } from '../stores/project';
 import type { PackageManagerResolveResult } from '../api/types';
 import { collectProjectTags, normalizeProjectTags } from '../utils/projectTags';
 import { countModulesInNode } from '../utils/scanCandidateTree';
-import { MAX_PROJECT_DEPTH } from '../utils/projectTree';
+import { MAX_PROJECT_DEPTH, normalizeProjectPath } from '../utils/projectTree';
 import {
   getAvailableProjectQuickCommands,
   getDefaultProjectQuickCommands,
@@ -174,7 +174,28 @@ const canManageSubLevels = computed(() => {
   return projectStore.getProjectDepth(props.editProject.id) < MAX_PROJECT_DEPTH;
 });
 
+/** 编辑态下反映当前表单最新路径与配置的父项目对象 */
+const currentEditProject = computed<Project | null>(() => {
+  if (!props.editProject) return null;
+  return {
+    ...props.editProject,
+    ...buildProjectPayload(),
+    path: form.value.path || props.editProject.path,
+    name: form.value.name || props.editProject.name,
+  };
+});
+
 function openLevelManager() {
+  if (!form.value.path) return;
+  const currentSaved = projectStore.projects.find((p) => p.id === props.editProject?.id);
+  const currentSavedPath = currentSaved?.path || props.editProject?.path;
+  if (
+    props.editProject &&
+    currentSavedPath &&
+    normalizeProjectPath(form.value.path) !== normalizeProjectPath(currentSavedPath)
+  ) {
+    projectStore.updateProject(buildProjectPayload());
+  }
   showLevelManager.value = true;
 }
 
@@ -900,7 +921,7 @@ async function cancelClone() {
         </div>
         <!-- 编辑态：随时重新扫描并调整子项目层级（含移除已有子项目） -->
         <div v-if="isEdit" class="mt-2">
-          <el-button size="small" plain @click="openLevelManager">
+          <el-button size="small" plain :disabled="!form.path" @click="openLevelManager">
             <div class="i-mdi-file-tree-outline mr-1" />
             {{ t('dashboard.manageSubProjects') }}
           </el-button>
@@ -1158,9 +1179,9 @@ async function cancelClone() {
 
   <!-- 编辑态的子项目层级管理：重新扫描并调整挂载层级 -->
   <SubProjectScanModal
-    v-if="isEdit && editProject"
+    v-if="isEdit && currentEditProject"
     v-model="showLevelManager"
-    :parent-project="editProject"
+    :parent-project="currentEditProject"
   />
 </template>
 

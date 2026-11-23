@@ -71,7 +71,9 @@ const defaultTab = computed<WorkspaceTab>(() => {
   if (hasGitRepo.value) return 'git';
   return 'files';
 });
-const activeTab = ref<WorkspaceTab>('files');
+const activeTab = ref<WorkspaceTab>(
+  props.initialTab ?? (props.project?.id ? navMemory.getLeafTab(props.project.id) : null) ?? 'files',
+);
 const isResolvingTab = ref(false);
 let preserveTabForProjectId: string | null = null;
 
@@ -97,6 +99,9 @@ async function activate(
       if (activeProject.value?.id !== project.id) return;
     }
     activeTab.value = resolveInitialTab(tab);
+    if (tab && project?.id) {
+      navMemory.rememberLeafTab(project.id, activeTab.value);
+    }
     void nextTick(checkTabOverflow);
   } finally {
     isResolvingTab.value = false;
@@ -116,10 +121,15 @@ watch(
   ([projectId, projectPath], previous) => {
   const [previousProjectId, previousProjectPath] = previous || [];
   const firstActivation = previous === undefined;
+  const projectChanged = !firstActivation && projectId !== previousProjectId;
   const pathChanged = !firstActivation
     && projectId === previousProjectId
     && projectPath !== previousProjectPath;
-  const preferredTab = firstActivation ? props.initialTab : activeTab.value;
+  // 切项目时优先恢复目标项目上次选中的 Tab；首次激活时若有 initialTab 则使用，否则恢复记住的 Tab
+  const rememberedTab = projectId ? navMemory.getLeafTab(projectId) : null;
+  const preferredTab = projectChanged
+    ? rememberedTab
+    : (firstActivation ? (props.initialTab ?? rememberedTab) : activeTab.value);
   if (!firstActivation && projectId) preserveTabForProjectId = projectId;
   void activate(preferredTab, { forceGitCheck: pathChanged }).finally(() => {
     if (preserveTabForProjectId === projectId) preserveTabForProjectId = null;
@@ -134,7 +144,12 @@ watch(
 );
 
 watch(() => props.initialTab, (tab, previous) => {
-  if (tab !== previous) void activate(tab);
+  if (tab !== previous && tab) {
+    void activate(tab);
+    if (activeProject.value?.id) {
+      navMemory.rememberLeafTab(activeProject.value.id, tab);
+    }
+  }
 });
 
 /**

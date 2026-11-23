@@ -59,7 +59,7 @@ assert(
 /***********************编辑页可再次调整层级*********************/
 
 assert(
-  /<SubProjectScanModal[\s\S]*?:parent-project="editProject"/.test(addProjectModal),
+  /<SubProjectScanModal[\s\S]*?:parent-project="(?:currentEditProject|editProject)"/.test(addProjectModal),
   '编辑项目时应能再次打开层级管理弹窗调整子项目层级',
 );
 

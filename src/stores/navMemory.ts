@@ -16,9 +16,29 @@ import type { WorkspaceNavMemory, WorkspaceTab } from '../types';
  * 用 store 而不是 composable：需要被 ProjectWorkspace 读写、被 project store
  * 的 removeProject 清理，必须是单例。
  */
+const STORAGE_KEY_LEAF_TAB = 'pm:workspace_leaf_tab';
+
+function loadStoredLeafTab(): Record<string, WorkspaceTab> {
+  try {
+    if (typeof localStorage === 'undefined') return {};
+    const raw = localStorage.getItem(STORAGE_KEY_LEAF_TAB);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') return parsed;
+  } catch {}
+  return {};
+}
+
+function saveStoredLeafTab(leafTab: Record<string, WorkspaceTab>): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(STORAGE_KEY_LEAF_TAB, JSON.stringify(leafTab));
+  } catch {}
+}
+
 export const useNavMemoryStore = defineStore('navMemory', () => {
   const memory = ref<WorkspaceNavMemory>({
-    leafTab: {},
+    leafTab: loadStoredLeafTab(),
     levelLeaf: {},
   });
 
@@ -68,6 +88,7 @@ export const useNavMemoryStore = defineStore('navMemory', () => {
    */
   function rememberLeafTab(leafId: string, tab: WorkspaceTab): void {
     memory.value.leafTab[leafId] = tab;
+    saveStoredLeafTab(memory.value.leafTab);
   }
 
   /** 记住某层级选中的叶子；null 表示选中层级自身 */
@@ -94,11 +115,13 @@ export const useNavMemoryStore = defineStore('navMemory', () => {
         delete memory.value.levelLeaf[levelId];
       }
     }
+    saveStoredLeafTab(memory.value.leafTab);
   }
 
   /** 清空全部记忆 */
   function clearAll(): void {
     memory.value = { leafTab: {}, levelLeaf: {} };
+    saveStoredLeafTab(memory.value.leafTab);
   }
 
   return {

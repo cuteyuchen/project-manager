@@ -23,6 +23,7 @@ import { normalizeProjectTags } from '../utils/projectTags';
 import { createProjectId } from '../utils/projectId';
 import { flattenImportNodeTree } from '../utils/importProjectTree';
 import { MAX_PROJECT_DEPTH, normalizeProjectPath, assignSortOrders, aggregateRunningSubtreeCount, compareProjectsByPinnedThenOrder, computeManualOrderAssignments } from '../utils/projectTree';
+import { isFilesystemDescendant, joinAbsolutePath } from '../utils/workspacePath';
 import { classifyProjectExit, createRunSessionId, formatExitSummary, isActiveRunSession, isRunSessionActive } from '../utils/runSession';
 import { MAX_SESSION_LOG_LINES, trimLogEntries } from '../utils/consoleLogs';
 import {
@@ -259,7 +260,7 @@ export const useProjectStore = defineStore('project', () => {
     activeProjectId.value = project.id;
     requestRightTab('console', project.id);
     setRunningState(commandKey, true);
-    try { useUsageStore().recordUsage(project.id); } catch {}
+    try { useUsageStore().recordUsage(getRootProjectId(project.id)); } catch {}
     return session;
   }
 
@@ -350,12 +351,48 @@ export const useProjectStore = defineStore('project', () => {
     const index = projects.value.findIndex((p) => p.id === project.id);
     if (index !== -1) {
       const existing = projects.value[index];
+      const oldPath = existing.path;
+      const newPath = project.path;
       projects.value[index] = {
         ...existing,
         ...project,
         projectFiles: project.projectFiles !== undefined ? project.projectFiles : existing.projectFiles,
         memo: project.memo !== undefined ? project.memo : existing.memo,
       };
+
+      if (oldPath && newPath && normalizeProjectPath(oldPath) !== normalizeProjectPath(newPath)) {
+        const cleanOld = oldPath.replace(/\\/g, '/').replace(/\/+$/, '');
+        // 更新自身在原目录下的 projectFiles 路径
+        if (projects.value[index].projectFiles?.length) {
+          projects.value[index].projectFiles = projects.value[index].projectFiles.map(file => {
+            if (isFilesystemDescendant(oldPath, file.path)) {
+              const cleanChild = file.path.replace(/\\/g, '/').replace(/\/+$/, '');
+              const rel = cleanChild.slice(cleanOld.length + 1);
+              return { ...file, path: joinAbsolutePath(newPath, rel) };
+            }
+            return file;
+          });
+        }
+        // 更新后代项目及后代项目在原目录下的 projectFiles 路径
+        const descendants = collectDescendantIds(project.id);
+        for (const p of projects.value) {
+          if (descendants.has(p.id) && isFilesystemDescendant(oldPath, p.path)) {
+            const cleanChild = p.path.replace(/\\/g, '/').replace(/\/+$/, '');
+            const rel = cleanChild.slice(cleanOld.length + 1);
+            p.path = joinAbsolutePath(newPath, rel);
+            if (p.projectFiles?.length) {
+              p.projectFiles = p.projectFiles.map(file => {
+                if (isFilesystemDescendant(oldPath, file.path)) {
+                  const cleanFile = file.path.replace(/\\/g, '/').replace(/\/+$/, '');
+                  const fileRel = cleanFile.slice(cleanOld.length + 1);
+                  return { ...file, path: joinAbsolutePath(newPath, fileRel) };
+                }
+                return file;
+              });
+            }
+          }
+        }
+      }
     }
   }
 
@@ -527,7 +564,6 @@ export const useProjectStore = defineStore('project', () => {
       projects.value.push(newProject);
       existingPaths.add(newProject.path);
       created.push(newProject);
-      try { useUsageStore().markAdded(newProject.id); } catch {}
       void scanFrontendEnvForProject(newProject.id).catch((error) => {
         console.error(`Failed to scan frontend env for added sub project ${newProject.name}`, error);
       });
@@ -580,7 +616,9 @@ export const useProjectStore = defineStore('project', () => {
       created.push(newProject);
       if (newProject.parentId) touchedParentIds.add(newProject.parentId);
 
-      try { useUsageStore().markAdded(newProject.id); } catch {}
+      if (!newProject.parentId) {
+        try { useUsageStore().markAdded(newProject.id); } catch {}
+      }
       void scanFrontendEnvForProject(newProject.id).catch((error) => {
         console.error(`Failed to scan frontend env for added sub project ${newProject.name}`, error);
       });
