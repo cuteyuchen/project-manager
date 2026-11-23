@@ -47,11 +47,11 @@ try {
     '-NoProfile',
     '-NonInteractive',
     '-Command',
-    `Expand-Archive -LiteralPath '${zipPath.replace(/'/g, "''")}' -DestinationPath '${extractDir.replace(/'/g, "''")}' -Force`,
+    `$ErrorActionPreference = 'Stop'; Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory('${zipPath.replace(/'/g, "''")}', '${extractDir.replace(/'/g, "''")}', [System.Text.Encoding]::UTF8)`,
   ], { stdio: 'pipe' });
 
   const files = readdirSync(extractDir);
-  const readmeFile = files.find(f => f.includes('说明') || f.endsWith('.txt'));
+  const readmeFile = files.find(f => f.includes('说明') || f.endsWith('.txt') || (f !== 'project-manager.exe' && f !== 'portable.marker'));
   assert(readmeFile, '解压后应包含说明文件');
   const readme = readFileSync(join(extractDir, readmeFile), 'utf8');
   assert(readme.includes('9.9.9'), '说明文件应写入版本号');

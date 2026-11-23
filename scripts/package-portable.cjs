@@ -111,8 +111,9 @@ function zipDirectory(sourceDir, zipPath) {
 
     if (process.platform === 'win32') {
         const command = [
+            '$ErrorActionPreference = "Stop"',
             'Add-Type -AssemblyName System.IO.Compression.FileSystem',
-            `[System.IO.Compression.ZipFile]::CreateFromDirectory(${quotePowerShell(sourceDir)}, ${quotePowerShell(zipPath)}, [System.IO.Compression.CompressionLevel]::Optimal, $false)`,
+            `[System.IO.Compression.ZipFile]::CreateFromDirectory(${quotePowerShell(sourceDir)}, ${quotePowerShell(zipPath)}, [System.IO.Compression.CompressionLevel]::Optimal, $false, [System.Text.Encoding]::UTF8)`,
         ].join('; ');
         execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], {
             stdio: 'inherit',
