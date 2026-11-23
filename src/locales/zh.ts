@@ -698,6 +698,8 @@ export default {
     gitAiAddModel: '添加模型',
     gitAiAddChannel: '添加渠道',
     dragToReorder: '拖动调整顺序',
+    moveUp: '上移',
+    moveDown: '下移',
     gitAiChannelEnabled: '启用该渠道',
     gitAiTestSummary: '{ok}/{total} 个槽位可用',
     gitAiApiType: '接口类型',

@@ -222,6 +222,7 @@ const importSummary = computed(() => {
 
 function resetDraft() {
   draft.value = normalizeDefaultTerminalId(normalizeAiSettings(deepClone(toRaw(settingsStore.settings))));
+  modelSlotKeys.value = (draft.value.gitAiSingleChannel?.models || []).map(() => `slot-${nextModelSlotId++}`);
 }
 
 function handleSave() {
@@ -982,10 +983,28 @@ function handleManualUpdateResult(event: Event) {
 
 /***********************AI 回退槽位增删*********************/
 
+let nextModelSlotId = 1;
+const modelSlotKeys = ref<string[]>(
+  (draft.value.gitAiSingleChannel?.models || []).map(() => `slot-${nextModelSlotId++}`),
+);
+
+function syncModelSlotKeys() {
+  const models = draft.value.gitAiSingleChannel?.models || [];
+  while (modelSlotKeys.value.length < models.length) {
+    modelSlotKeys.value.push(`slot-${nextModelSlotId++}`);
+  }
+  if (modelSlotKeys.value.length > models.length) {
+    modelSlotKeys.value.length = models.length;
+  }
+}
+
+watch(() => draft.value.gitAiSingleChannel?.models?.length, syncModelSlotKeys, { immediate: true });
+
 function addAiModelSlot() {
   const single = draft.value.gitAiSingleChannel;
   if (!single || single.models.length >= MAX_AI_FALLBACK_SLOTS) return;
   single.models.push('');
+  modelSlotKeys.value.push(`slot-${nextModelSlotId++}`);
 }
 
 function removeAiModelSlot(index: number) {
@@ -993,6 +1012,9 @@ function removeAiModelSlot(index: number) {
   // 至少留一个槽位，否则模式 A 会变成「一个模型都没配」
   if (!single || single.models.length <= 1) return;
   single.models.splice(index, 1);
+  if (modelSlotKeys.value.length > index) {
+    modelSlotKeys.value.splice(index, 1);
+  }
 }
 
 function addAiChannelSlot() {
@@ -1020,6 +1042,12 @@ function removeAiChannelSlot(index: number) {
 const draggedModelIndex = ref<number | null>(null);
 const dragOverModelIndex = ref<number | null>(null);
 
+const pointerDragIndex = ref<number | null>(null);
+const pointerTargetIndex = ref<number | null>(null);
+const pointerDragType = ref<'model' | 'channel' | null>(null);
+const modelListRef = ref<HTMLElement | null>(null);
+const channelListRef = ref<HTMLElement | null>(null);
+
 function moveAiModelSlot(fromIndex: number, toIndex: number) {
   const single = draft.value.gitAiSingleChannel;
   if (!single?.models || fromIndex < 0 || fromIndex >= single.models.length || toIndex < 0 || toIndex >= single.models.length) return;
@@ -1027,6 +1055,64 @@ function moveAiModelSlot(fromIndex: number, toIndex: number) {
   const [moved] = nextModels.splice(fromIndex, 1);
   nextModels.splice(toIndex, 0, moved);
   single.models = nextModels;
+
+  if (modelSlotKeys.value.length === nextModels.length) {
+    const [movedKey] = modelSlotKeys.value.splice(fromIndex, 1);
+    modelSlotKeys.value.splice(toIndex, 0, movedKey);
+  }
+}
+
+function onModelPointerDown(startIndex: number, e: MouseEvent) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+
+  pointerDragIndex.value = startIndex;
+  pointerTargetIndex.value = startIndex;
+  pointerDragType.value = 'model';
+
+  function onPointerMove(moveEvent: MouseEvent) {
+    if (pointerDragIndex.value === null) return;
+    const listEl = modelListRef.value;
+    if (!listEl) return;
+
+    const rows = Array.from(listEl.querySelectorAll('.ai-slot-row')) as HTMLElement[];
+    if (rows.length === 0) return;
+
+    const mouseY = moveEvent.clientY;
+    let closestIndex = startIndex;
+    let minDistance = Infinity;
+
+    rows.forEach((row, idx) => {
+      const rect = row.getBoundingClientRect();
+      const centerY = rect.top + rect.height / 2;
+      const dist = Math.abs(mouseY - centerY);
+      if (dist < minDistance) {
+        minDistance = dist;
+        closestIndex = idx;
+      }
+    });
+
+    pointerTargetIndex.value = closestIndex;
+  }
+
+  function onPointerUp() {
+    document.removeEventListener('mousemove', onPointerMove);
+    document.removeEventListener('mouseup', onPointerUp);
+
+    const fromIdx = pointerDragIndex.value;
+    const toIdx = pointerTargetIndex.value;
+
+    if (fromIdx !== null && toIdx !== null && fromIdx !== toIdx) {
+      moveAiModelSlot(fromIdx, toIdx);
+    }
+
+    pointerDragIndex.value = null;
+    pointerTargetIndex.value = null;
+    pointerDragType.value = null;
+  }
+
+  document.addEventListener('mousemove', onPointerMove);
+  document.addEventListener('mouseup', onPointerUp);
 }
 
 function onModelDragStart(index: number, e: DragEvent) {
@@ -1084,6 +1170,59 @@ function moveAiChannelSlot(fromIndex: number, toIndex: number) {
   const [moved] = nextChannels.splice(fromIndex, 1);
   nextChannels.splice(toIndex, 0, moved);
   draft.value.gitAiChannels = nextChannels;
+}
+
+function onChannelPointerDown(startIndex: number, e: MouseEvent) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+
+  pointerDragIndex.value = startIndex;
+  pointerTargetIndex.value = startIndex;
+  pointerDragType.value = 'channel';
+
+  function onPointerMove(moveEvent: MouseEvent) {
+    if (pointerDragIndex.value === null) return;
+    const listEl = channelListRef.value;
+    if (!listEl) return;
+
+    const cards = Array.from(listEl.querySelectorAll('.ai-channel-card')) as HTMLElement[];
+    if (cards.length === 0) return;
+
+    const mouseY = moveEvent.clientY;
+    let closestIndex = startIndex;
+    let minDistance = Infinity;
+
+    cards.forEach((card, idx) => {
+      const rect = card.getBoundingClientRect();
+      const centerY = rect.top + rect.height / 2;
+      const dist = Math.abs(mouseY - centerY);
+      if (dist < minDistance) {
+        minDistance = dist;
+        closestIndex = idx;
+      }
+    });
+
+    pointerTargetIndex.value = closestIndex;
+  }
+
+  function onPointerUp() {
+    document.removeEventListener('mousemove', onPointerMove);
+    document.removeEventListener('mouseup', onPointerUp);
+
+    const fromIdx = pointerDragIndex.value;
+    const toIdx = pointerTargetIndex.value;
+
+    if (fromIdx !== null && toIdx !== null && fromIdx !== toIdx) {
+      moveAiChannelSlot(fromIdx, toIdx);
+    }
+
+    pointerDragIndex.value = null;
+    pointerTargetIndex.value = null;
+    pointerDragType.value = null;
+  }
+
+  document.addEventListener('mousemove', onPointerMove);
+  document.addEventListener('mouseup', onPointerUp);
 }
 
 function onChannelDragStart(index: number, e: DragEvent) {
@@ -1643,15 +1782,21 @@ function describeAiTestError(error: any): string {
             </el-select>
             <el-input v-model="draft.gitAiSingleChannel.service.baseUrl" :placeholder="t('settings.gitAiBaseUrlPlaceholder')" clearable />
             <el-input v-model="draft.gitAiSingleChannel.service.apiKey" type="password" show-password :placeholder="t('settings.gitAiApiKeyPlaceholder')" />
-            <div class="ai-slot-list" :class="{ 'is-dragging-models': draggedModelIndex !== null }">
+            <div
+              ref="modelListRef"
+              class="ai-slot-list"
+              :class="{
+                'is-dragging-models': draggedModelIndex !== null || (pointerDragType === 'model' && pointerDragIndex !== null),
+              }"
+            >
               <div class="settings-row-desc">{{ t('settings.gitAiModelsHint', { max: MAX_AI_FALLBACK_SLOTS }) }}</div>
               <div
                 v-for="(_, index) in draft.gitAiSingleChannel.models"
-                :key="index"
+                :key="modelSlotKeys[index] || index"
                 class="ai-slot-row"
                 :class="{
-                  'is-dragging': draggedModelIndex === index,
-                  'is-drag-over': dragOverModelIndex === index,
+                  'is-dragging': draggedModelIndex === index || (pointerDragType === 'model' && pointerDragIndex === index),
+                  'is-drag-over': (dragOverModelIndex === index && draggedModelIndex !== index) || (pointerDragType === 'model' && pointerTargetIndex === index && pointerDragIndex !== index),
                 }"
                 @dragover.prevent="onModelDragOver(index, $event)"
                 @dragleave="onModelDragLeave(index, $event)"
@@ -1662,6 +1807,7 @@ function describeAiTestError(error: any): string {
                   class="drag-handle"
                   draggable="true"
                   :title="t('settings.dragToReorder')"
+                  @mousedown="onModelPointerDown(index, $event)"
                   @dragstart="onModelDragStart(index, $event)"
                   @dragend="onModelDragEnd"
                 >
@@ -1673,6 +1819,24 @@ function describeAiTestError(error: any): string {
                   :placeholder="t('settings.gitAiModelPlaceholder')"
                   clearable
                 />
+                <el-button
+                  v-if="draft.gitAiSingleChannel.models.length > 1"
+                  text
+                  :disabled="index === 0"
+                  :title="t('settings.moveUp')"
+                  @click="moveAiModelSlot(index, index - 1)"
+                >
+                  <div class="i-mdi-arrow-up text-base" />
+                </el-button>
+                <el-button
+                  v-if="draft.gitAiSingleChannel.models.length > 1"
+                  text
+                  :disabled="index === draft.gitAiSingleChannel.models.length - 1"
+                  :title="t('settings.moveDown')"
+                  @click="moveAiModelSlot(index, index + 1)"
+                >
+                  <div class="i-mdi-arrow-down text-base" />
+                </el-button>
                 <el-button
                   v-if="draft.gitAiSingleChannel.models.length > 1"
                   text
@@ -1694,15 +1858,21 @@ function describeAiTestError(error: any): string {
 
           <!-- 模式 B：最多 3 套各自独立的渠道 -->
           <template v-else-if="draft.gitAiChannels">
-            <div class="ai-slot-list" :class="{ 'is-dragging-channels': draggedChannelIndex !== null }">
+            <div
+              ref="channelListRef"
+              class="ai-slot-list"
+              :class="{
+                'is-dragging-channels': draggedChannelIndex !== null || (pointerDragType === 'channel' && pointerDragIndex !== null),
+              }"
+            >
               <div class="settings-row-desc">{{ t('settings.gitAiChannelsHint', { max: MAX_AI_FALLBACK_SLOTS }) }}</div>
               <div
                 v-for="(channel, index) in draft.gitAiChannels"
                 :key="channel.id"
                 class="ai-channel-card"
                 :class="{
-                  'is-dragging': draggedChannelIndex === index,
-                  'is-drag-over': dragOverChannelIndex === index,
+                  'is-dragging': draggedChannelIndex === index || (pointerDragType === 'channel' && pointerDragIndex === index),
+                  'is-drag-over': (dragOverChannelIndex === index && draggedChannelIndex !== index) || (pointerDragType === 'channel' && pointerTargetIndex === index && pointerDragIndex !== index),
                 }"
                 @dragover.prevent="onChannelDragOver(index, $event)"
                 @dragleave="onChannelDragLeave(index, $event)"
@@ -1714,6 +1884,7 @@ function describeAiTestError(error: any): string {
                     class="drag-handle"
                     draggable="true"
                     :title="t('settings.dragToReorder')"
+                    @mousedown="onChannelPointerDown(index, $event)"
                     @dragstart="onChannelDragStart(index, $event)"
                     @dragend="onChannelDragEnd"
                   >
@@ -1722,6 +1893,24 @@ function describeAiTestError(error: any): string {
                   <span class="ai-slot-index">{{ index + 1 }}</span>
                   <el-switch v-model="channel.enabled" :title="t('settings.gitAiChannelEnabled')" />
                   <div class="flex-1" />
+                  <el-button
+                    v-if="draft.gitAiChannels.length > 1"
+                    text
+                    :disabled="index === 0"
+                    :title="t('settings.moveUp')"
+                    @click="moveAiChannelSlot(index, index - 1)"
+                  >
+                    <div class="i-mdi-arrow-up text-base" />
+                  </el-button>
+                  <el-button
+                    v-if="draft.gitAiChannels.length > 1"
+                    text
+                    :disabled="index === draft.gitAiChannels.length - 1"
+                    :title="t('settings.moveDown')"
+                    @click="moveAiChannelSlot(index, index + 1)"
+                  >
+                    <div class="i-mdi-arrow-down text-base" />
+                  </el-button>
                   <el-button v-if="draft.gitAiChannels.length > 1" text @click="removeAiChannelSlot(index)">
                     <div class="i-mdi-close text-base" />
                   </el-button>
@@ -2180,6 +2369,7 @@ function describeAiTestError(error: any): string {
   justify-content: center;
   cursor: grab;
   user-select: none;
+  touch-action: none;
   -webkit-user-drag: element;
   padding: 2px 4px;
   border-radius: var(--app-radius-xs);

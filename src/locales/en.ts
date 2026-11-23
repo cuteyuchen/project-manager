@@ -699,6 +699,8 @@ export default {
     gitAiAddModel: 'Add Model',
     gitAiAddChannel: 'Add Channel',
     dragToReorder: 'Drag to reorder',
+    moveUp: 'Move up',
+    moveDown: 'Move down',
     gitAiChannelEnabled: 'Enable this channel',
     gitAiTestSummary: '{ok} of {total} slots working',
     gitAiApiType: 'API Type',
