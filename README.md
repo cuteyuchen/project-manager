@@ -60,6 +60,14 @@
 
 ![Git 管理](docs/images/git-panel.png)
 
+提交历史支持图谱视图与搜索筛选，右键可复制、建分支、cherry-pick、revert、reset；提交日历按月展示提交分布，点击可查看提交详情。
+
+![Git 提交历史](docs/images/git-history.png)
+
+![提交日历](docs/images/commit-calendar.png)
+
+![提交详情](docs/images/commit-detail.png)
+
 ### 3. 项目备忘录与文件管理
 
 - 每个项目都可以维护 Markdown 备忘录
@@ -74,6 +82,8 @@
 - Git 变更列表双击文件可跳转到应用内编辑器
 - Ctrl/Cmd+P 快速打开文件；Ctrl/Cmd+Shift+F 全局查找与替换（WebStorm 风格）
 - 查找结果可在面板下方预览定位，支持全部替换；索引排除 node_modules 等依赖目录
+
+![工作区编辑器](docs/images/editor.png)
 
 ### 5. Node 版本管理
 
