@@ -119,6 +119,15 @@ function openHeaderScan(): void {
   if (project) openScan(project);
 }
 
+function handleSwitcherShow(): void {
+  const target = (Array.isArray(switcherPopoverRef.value)
+    ? switcherPopoverRef.value[0]
+    : switcherPopoverRef.value) as InstanceType<typeof ProjectSwitcherPopover> | null;
+  if (typeof target?.scrollToActive === 'function') {
+    target.scrollToActive();
+  }
+}
+
 function handleBack(): void {
   emit('back');
 }
@@ -179,16 +188,14 @@ useAppShortcuts([
         <div class="i-mdi-arrow-left text-base" />
       </button>
       <div class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto scrollbar-none">
-        <template v-for="(node, index) in breadcrumb" :key="node.id">
-          <div v-if="index > 0" class="i-mdi-chevron-right shrink-0 text-xs text-slate-400" />
+        <template v-if="breadcrumb.length > 0">
           <el-popover
-            v-if="index === 0"
             v-model:visible="switcherVisible"
             placement="bottom-start"
             :width="360"
             :disabled="!rootProject"
             popper-class="project-switcher-popper"
-            @show="switcherPopoverRef?.scrollToActive()"
+            @show="handleSwitcherShow"
           >
             <ProjectSwitcherPopover
               ref="switcherPopoverRef"
@@ -203,25 +210,27 @@ useAppShortcuts([
               <button
                 type="button"
                 class="breadcrumb-item workspace-project-switcher shrink-0"
-                :class="{ 'breadcrumb-item-active': index === breadcrumb.length - 1 }"
-                :title="node.path"
+                :class="{ 'breadcrumb-item-active': breadcrumb.length === 1 }"
+                :title="breadcrumb[0]?.path"
                 :disabled="!rootProject"
                 @click.stop
               >
-                <span class="truncate">{{ node.name }}</span>
+                <span class="truncate">{{ breadcrumb[0]?.name }}</span>
                 <span class="i-mdi-chevron-down shrink-0 text-sm" aria-hidden="true" />
               </button>
             </template>
           </el-popover>
-          <button
-            v-else
-            type="button"
-            class="breadcrumb-item shrink-0"
-            :class="{ 'breadcrumb-item-active': index === breadcrumb.length - 1 }"
-            @click="selectProject(node)"
-          >
-            {{ node.name }}
-          </button>
+          <template v-for="(node, index) in breadcrumb.slice(1)" :key="node.id">
+            <div class="i-mdi-chevron-right shrink-0 text-xs text-slate-400" />
+            <button
+              type="button"
+              class="breadcrumb-item shrink-0"
+              :class="{ 'breadcrumb-item-active': index === breadcrumb.length - 2 }"
+              @click="selectProject(node)"
+            >
+              {{ node.name }}
+            </button>
+          </template>
         </template>
       </div>
       <button

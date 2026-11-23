@@ -100,6 +100,15 @@ function editProject(): void {
   // 只打开编辑弹窗，不关闭快速管理弹窗，便于改完继续操作
   emit('edit', props.project);
 }
+
+function handleDialogSwitcherShow(): void {
+  const target = (Array.isArray(dialogSwitcherRef.value)
+    ? dialogSwitcherRef.value[0]
+    : dialogSwitcherRef.value) as InstanceType<typeof ProjectSwitcherPopover> | null;
+  if (typeof target?.scrollToActive === 'function') {
+    target.scrollToActive();
+  }
+}
 </script>
 
 <template>
@@ -123,7 +132,7 @@ function editProject(): void {
               :width="360"
               :disabled="!project"
               popper-class="project-switcher-popper"
-              @show="dialogSwitcherRef?.scrollToActive()"
+              @show="handleDialogSwitcherShow"
             >
               <ProjectSwitcherPopover
                 ref="dialogSwitcherRef"
