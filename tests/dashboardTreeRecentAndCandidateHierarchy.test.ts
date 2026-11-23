@@ -42,6 +42,16 @@ assert(
 );
 
 assert(
+  /\.toolbar-text-btn\s*\{[^}]*white-space:\s*nowrap;[^}]*flex-shrink:\s*0;/.test(dashboardSource),
+  'toolbar-text-btn 应设置 white-space: nowrap 和 flex-shrink: 0 避免工具栏文字换行',
+);
+
+assert(
+  /class="[^"]*whitespace-nowrap[^"]*shrink-0[^"]*"[^>]*>\s*\{\{\s*t\('dashboard\.sortMode'\)\s*\}\}/.test(dashboardSource),
+  '排序方式文本应具有 whitespace-nowrap 和 shrink-0，避免最小宽度下换行',
+);
+
+assert(
   dashboardSource.includes('rootUsageWeights'),
   'Dashboard.vue 应包含汇聚一级项目最近使用权重的计算',
 );

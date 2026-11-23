@@ -831,47 +831,66 @@ useAppShortcuts([
         <div class="app-section-divider px-6 py-3 border-b filter-toolbar">
           <div class="app-content-container space-y-3">
             <!-- 第一行：搜索 + 分组/标签 + 排序 -->
-            <div class="flex items-center gap-3">
+            <div class="flex items-center gap-3 min-w-0">
                 <el-input
                     v-model="searchQuery"
                     ref="projectSearchInput"
                     :placeholder="t('dashboard.searchPlaceholder')"
                     clearable
-                    style="width: 280px"
+                    class="filter-search-input"
+                    style="flex: 1 1 240px; max-width: 280px; min-width: 140px; width: 100%"
                 >
                     <template #prefix>
                         <el-icon><div class="i-mdi-magnify" /></el-icon>
                     </template>
                 </el-input>
 
-                <el-select v-model="selectedGroupId" clearable :placeholder="t('dashboard.group')" style="width: 150px">
+                <el-select
+                    v-model="selectedGroupId"
+                    clearable
+                    :placeholder="t('dashboard.group')"
+                    class="filter-group-select"
+                    style="flex: 0 1 140px; min-width: 96px; width: 140px"
+                >
                     <el-option :label="t('dashboard.filterAll')" value="" />
                     <el-option v-for="group in projectStore.projectGroups" :key="group.id" :label="group.name" :value="group.id" />
                 </el-select>
-                <el-select v-model="selectedTags" multiple clearable collapse-tags collapse-tags-tooltip :placeholder="t('dashboard.tags')" style="width: 180px">
+                <el-select
+                    v-model="selectedTags"
+                    multiple
+                    clearable
+                    collapse-tags
+                    collapse-tags-tooltip
+                    :placeholder="t('dashboard.tags')"
+                    class="filter-tags-select"
+                    style="flex: 0 1 160px; min-width: 100px; width: 160px"
+                >
                     <el-option v-for="tag in allTags" :key="tag" :label="tag" :value="tag" />
                 </el-select>
 
-                <div class="flex-1" />
+                <div class="flex-1 min-w-2" />
 
-                <!-- 一键展开/折叠所有列表 -->
-                <button
-                    v-if="expandableProjectIds.length > 0"
-                    type="button"
-                    class="toolbar-text-btn"
-                    :title="isAllTreeExpanded ? t('dashboard.collapseAll') : t('dashboard.expandAll')"
-                    @click="toggleExpandAll"
-                >
-                    <div :class="isAllTreeExpanded ? 'i-mdi-unfold-less-horizontal' : 'i-mdi-unfold-more-horizontal'" class="text-base" />
-                    <span>{{ isAllTreeExpanded ? t('dashboard.collapseAll') : t('dashboard.expandAll') }}</span>
-                </button>
+                <!-- 右侧操作区：展开/折叠 + 排序模式 -->
+                <div class="flex items-center gap-2.5 shrink-0 whitespace-nowrap">
+                    <!-- 一键展开/折叠所有列表 -->
+                    <button
+                        v-if="expandableProjectIds.length > 0"
+                        type="button"
+                        class="toolbar-text-btn shrink-0 whitespace-nowrap"
+                        :title="isAllTreeExpanded ? t('dashboard.collapseAll') : t('dashboard.expandAll')"
+                        @click="toggleExpandAll"
+                    >
+                        <div :class="isAllTreeExpanded ? 'i-mdi-unfold-less-horizontal' : 'i-mdi-unfold-more-horizontal'" class="text-base shrink-0" />
+                        <span class="whitespace-nowrap">{{ isAllTreeExpanded ? t('dashboard.collapseAll') : t('dashboard.expandAll') }}</span>
+                    </button>
 
-                <span v-if="expandableProjectIds.length > 0" class="w-px h-5 bg-slate-200 dark:bg-slate-700" />
+                    <span v-if="expandableProjectIds.length > 0" class="w-px h-5 bg-slate-200 dark:bg-slate-700 shrink-0" />
 
-                <span class="app-text-meta text-slate-400 dark:text-slate-500">{{ t('dashboard.sortMode') }}</span>
-                <el-tooltip :content="sortMode === 'smart' ? t('dashboard.sortModeSmartHint') : t('dashboard.sortModeDefaultHint')" placement="top" :show-after="300">
-                    <el-segmented v-model="settingsStore.settings.sortMode" :options="sortOptions" />
-                </el-tooltip>
+                    <span class="app-text-meta text-slate-400 dark:text-slate-500 whitespace-nowrap shrink-0">{{ t('dashboard.sortMode') }}</span>
+                    <el-tooltip :content="sortMode === 'smart' ? t('dashboard.sortModeSmartHint') : t('dashboard.sortModeDefaultHint')" placement="top" :show-after="300">
+                        <el-segmented v-model="settingsStore.settings.sortMode" :options="sortOptions" class="shrink-0" />
+                    </el-tooltip>
+                </div>
             </div>
 
             <!-- 第二行：基础快捷筛选 + 健康状态 chips + 保存视图/启动组 -->
@@ -1085,6 +1104,8 @@ useAppShortcuts([
   color: var(--app-text-secondary);
   font-size: var(--app-font-control);
   font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
   transition:
     background-color var(--app-duration-fast) var(--app-ease),
     color var(--app-duration-fast) var(--app-ease);
