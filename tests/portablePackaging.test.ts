@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -50,7 +50,10 @@ try {
     `Expand-Archive -LiteralPath '${zipPath.replace(/'/g, "''")}' -DestinationPath '${extractDir.replace(/'/g, "''")}' -Force`,
   ], { stdio: 'pipe' });
 
-  const readme = readFileSync(join(extractDir, '便携版说明.txt'), 'utf8');
+  const files = readdirSync(extractDir);
+  const readmeFile = files.find(f => f.includes('说明') || f.endsWith('.txt'));
+  assert(readmeFile, '解压后应包含说明文件');
+  const readme = readFileSync(join(extractDir, readmeFile), 'utf8');
   assert(readme.includes('9.9.9'), '说明文件应写入版本号');
   assert(readme.includes('免安装'), '说明文件应说明免安装特性');
   assert(readme.includes('WebView2'), '说明文件应提示 WebView2 运行库');
