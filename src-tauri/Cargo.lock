@@ -3049,7 +3049,7 @@ dependencies = [
 
 [[package]]
 name = "project-manager"
-version = "1.10.2"
+version = "1.10.3"
 dependencies = [
  "base64 0.22.1",
  "encoding_rs",
