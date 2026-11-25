@@ -32,6 +32,7 @@ import {
 } from '../utils/shortcut.ts';
 import { collectProjectTags, projectMatchesSelectedTags } from '../utils/projectTags';
 import { summarizeGitStatus, type ProjectGitOverview } from '../utils/projectGitOverview';
+import { notifyProjectFilesChanged } from '../utils/projectFilesChanged';
 import { countProjectHealth, hasEnvironmentIssue } from '../utils/projectHealth';
 import { buildProjectSearchEntry, projectSearchEntryMatches } from '../utils/projectSearch';
 import {
@@ -732,6 +733,8 @@ async function refreshProjects() {
     } finally {
         refreshing.value = false;
     }
+    // refreshAll 只同步同类型内的脚本；类型变化留给检测逻辑弹窗确认
+    notifyProjectFilesChanged();
     // 健康快照覆盖整棵树，扫描较慢，放到后台更新，不阻塞刷新按钮
     void refreshProjectHealth();
 }

@@ -12,6 +12,7 @@ import { useWorkspaceEditorStore } from './workspaceEditor';
 import { useRunHistoryStore } from './runHistory';
 import {
   ensureJavaCommands,
+  ensureNodeInstallCommand,
   getCustomCommandDisplayNameByLocale,
   getProjectCommandRunId,
   type ProjectCommandType,
@@ -339,11 +340,45 @@ export const useProjectStore = defineStore('project', () => {
     finishRunSession(payload.sessionId, payload);
   });
 
+  /**
+   * 「安装依赖」命令名。
+   *
+   * store 拿不到 vue-i18n 实例，按持久化的 locale 取与界面一致的名称；
+   * 渲染时仍以 builtinId 翻译为准，这里只作为数据兜底。
+   */
+  /**
+   * 「安装依赖」命令名。
+   *
+   * 数据里的 name 只是兜底：渲染时仍会按 builtinId 翻译成当前语言。
+   * 这里直接读持久化的 locale，避免为了一条文案初始化整个 settings store。
+   */
+  function resolveInstallCommandName(): string {
+    try {
+      const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('settings') : null;
+      const locale = raw ? (JSON.parse(raw) as { locale?: string }).locale : undefined;
+      return locale === 'en' ? 'Install Dependencies' : '安装依赖';
+    } catch {
+      return '安装依赖';
+    }
+  }
+
+  /**
+   * 给 node 项目补齐「安装依赖」命令。
+   *
+   * 只在确实带 package.json（表现为已推断出包管理器）时补：
+   * 扫描导入会把纯静态目录也归为 node，不能给它们塞一条 npm install。
+   */
+  function withNodeInstallCommand(project: Project): Project {
+    if (project.type !== 'node' || !project.packageManager) return project;
+    return ensureNodeInstallCommand(project, resolveInstallCommandName());
+  }
+
   function addProject(project: Project) {
-    projects.value.unshift(project);
-    try { useUsageStore().markAdded(project.id); } catch {}
-    void scanFrontendEnvForProject(project.id).catch((error) => {
-      console.error(`Failed to scan frontend env for added project ${project.name}`, error);
+    const next = withNodeInstallCommand(project);
+    projects.value.unshift(next);
+    try { useUsageStore().markAdded(next.id); } catch {}
+    void scanFrontendEnvForProject(next.id).catch((error) => {
+      console.error(`Failed to scan frontend env for added project ${next.name}`, error);
     });
   }
 
@@ -611,16 +646,18 @@ export const useProjectStore = defineStore('project', () => {
       // 同批次内部可能出现的重复路径。
       if (existingByPath.has(key)) continue;
 
-      projects.value.push(newProject);
-      existingByPath.set(key, newProject.id);
-      created.push(newProject);
-      if (newProject.parentId) touchedParentIds.add(newProject.parentId);
+      // 扫描导入的前端/Node 模块同样要有「安装依赖」，否则命令菜单缺一项
+      const normalized = withNodeInstallCommand(newProject);
+      projects.value.push(normalized);
+      existingByPath.set(key, normalized.id);
+      created.push(normalized);
+      if (normalized.parentId) touchedParentIds.add(normalized.parentId);
 
-      if (!newProject.parentId) {
-        try { useUsageStore().markAdded(newProject.id); } catch {}
+      if (!normalized.parentId) {
+        try { useUsageStore().markAdded(normalized.id); } catch {}
       }
-      void scanFrontendEnvForProject(newProject.id).catch((error) => {
-        console.error(`Failed to scan frontend env for added sub project ${newProject.name}`, error);
+      void scanFrontendEnvForProject(normalized.id).catch((error) => {
+        console.error(`Failed to scan frontend env for added sub project ${normalized.name}`, error);
       });
     }
 
@@ -1009,9 +1046,7 @@ export const useProjectStore = defineStore('project', () => {
    * 只扫描 Java 项目，失败静默交给手动刷新。
    */
   async function refreshJavaBuildInfo(): Promise<void> {
-    const installCommandName = useSettingsStore().settings.locale === 'en'
-      ? 'Install Dependencies'
-      : '安装依赖';
+    const installCommandName = resolveInstallCommandName();
     const targets = projects.value.filter(project => project.type === 'java' && project.buildTool);
 
     await Promise.all(targets.map(async (project) => {
@@ -1040,9 +1075,7 @@ export const useProjectStore = defineStore('project', () => {
   }
 
   async function refreshAll() {
-    const installCommandName = useSettingsStore().settings.locale === 'en'
-      ? 'Install Dependencies'
-      : '安装依赖';
+    const installCommandName = resolveInstallCommandName();
     const updates = await Promise.all(
       projects.value.map(async (p) => {
         try {
@@ -1069,7 +1102,15 @@ export const useProjectStore = defineStore('project', () => {
         };
 
         if (info && p.type === 'node') {
-          return { ...nextProject, scripts: info.scripts || [] };
+          const refreshed: Project = {
+            ...nextProject,
+            scripts: info.scripts || [],
+            // 扫描不到 lockfile 时保留用户手选的包管理器
+            packageManager: info.packageManager ?? p.packageManager ?? 'npm',
+          };
+          // 后期才补上 package.json 的项目也能拿到「安装依赖」，
+          // 并按新的包管理器校正已有命令（npm install → pnpm install）
+          return ensureNodeInstallCommand(refreshed, installCommandName);
         }
 
         // Java：刷新构建工具与 wrapper 状态。

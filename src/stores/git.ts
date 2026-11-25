@@ -30,6 +30,7 @@ import type {
   GitPullStrategy,
 } from '../types';
 import { summarizeGitStatus } from '../utils/projectGitOverview.ts';
+import { notifyProjectFilesChanged } from '../utils/projectFilesChanged.ts';
 
 const REPO_CHECK_MAX_AGE = 60_000;
 const SUMMARY_STATUS_MAX_AGE = 15_000;
@@ -715,6 +716,8 @@ export const useGitStore = defineStore('git', () => {
     return withOperationLoading(projectId, 'pull', async (operationId) => {
       const result = await api.gitPull(path, remote, branch, operationId, strategy);
       await refreshRepositoryState(projectId, path, { includeHistory: true, includeBranches: true });
+      // 拉取可能带来 package.json / pom.xml：立即触发项目类型检测
+      notifyProjectFilesChanged(path);
       return result;
     }, { cancellable: true });
   }
@@ -756,6 +759,8 @@ export const useGitStore = defineStore('git', () => {
       const result = await api.gitSwitchBranch(path, branch);
       clearDiff(projectId);
       await refreshRepositoryState(projectId, path, { includeHistory: true, includeBranches: true });
+      // 分支切换会整体替换工作区文件
+      notifyProjectFilesChanged(path);
       return result;
     });
   }
@@ -790,6 +795,7 @@ export const useGitStore = defineStore('git', () => {
       const result = await api.gitMerge(path, branch);
       clearDiff(projectId);
       await refreshRepositoryState(projectId, path, { includeHistory: true, includeBranches: true });
+      notifyProjectFilesChanged(path);
       return result;
     });
   }
@@ -799,6 +805,7 @@ export const useGitStore = defineStore('git', () => {
       const result = await api.gitMergeContinue(path);
       clearDiff(projectId);
       await refreshRepositoryState(projectId, path, { includeHistory: true, includeBranches: true });
+      notifyProjectFilesChanged(path);
       return result;
     });
   }
@@ -808,6 +815,7 @@ export const useGitStore = defineStore('git', () => {
       const result = await api.gitMergeAbort(path);
       clearDiff(projectId);
       await refreshRepositoryState(projectId, path, { includeHistory: true, includeBranches: true });
+      notifyProjectFilesChanged(path);
       return result;
     });
   }
@@ -817,6 +825,7 @@ export const useGitStore = defineStore('git', () => {
       const result = await api.gitRebase(path, branch);
       clearDiff(projectId);
       await refreshRepositoryState(projectId, path, { includeHistory: true, includeBranches: true });
+      notifyProjectFilesChanged(path);
       return result;
     });
   }
@@ -831,6 +840,7 @@ export const useGitStore = defineStore('git', () => {
       const result = await api.gitReset(path, mode, target);
       clearDiff(projectId);
       await refreshRepositoryState(projectId, path, { includeHistory: true, includeBranches: true });
+      notifyProjectFilesChanged(path);
       return result;
     });
   }
@@ -840,6 +850,7 @@ export const useGitStore = defineStore('git', () => {
       const result = await api.gitCherryPick(path, hash);
       clearDiff(projectId);
       await refreshRepositoryState(projectId, path, { includeHistory: true, includeBranches: true });
+      notifyProjectFilesChanged(path);
       return result;
     });
   }
@@ -849,6 +860,7 @@ export const useGitStore = defineStore('git', () => {
       const result = await api.gitRevertCommit(path, hash);
       clearDiff(projectId);
       await refreshRepositoryState(projectId, path, { includeHistory: true, includeBranches: true });
+      notifyProjectFilesChanged(path);
       return result;
     });
   }

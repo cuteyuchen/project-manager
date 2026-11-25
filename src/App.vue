@@ -49,6 +49,7 @@ import {
   normalizeShortcut,
 } from './utils/shortcut';
 import { useAppShortcuts } from './composables/useAppShortcuts.ts';
+import { useProjectTypeWatch } from './composables/useProjectTypeWatch.ts';
 import { formatErrorDetails, getLatestCapturedError } from './utils/errorDetails';
 import { createLifecycleGuard, flushBeforeLifecycle } from './utils/lifecycle';
 import { buildPortableDownloadUrl } from './utils/updateChannel';
@@ -59,6 +60,8 @@ const isPlugin = target === 'utools' || target === 'ztools';
 
 const { t } = useI18n();
 const projectStore = useProjectStore();
+// 项目目录被外部改动（clone / pull / 切分支）后，提示把新的清单信息同步到项目配置
+const { start: startProjectTypeWatch } = useProjectTypeWatch();
 const activeFileManagerTargetProject = computed(() => {
   if (!projectStore.activeFileManagerProjectId) return null;
   return projectStore.projects.find(p => p.id === projectStore.activeFileManagerProjectId) || null;
@@ -750,6 +753,8 @@ onMounted(async () => {
   await nodeStore.loadRuntimes();
   loaded.value = true;
   scheduleStarPrompt();
+  // 等数据与首屏稳定后再开始轮询目录变化
+  startProjectTypeWatch();
   // 后台补齐 Java 构建信息（老数据没有 spring-boot 模块信息），不阻塞首屏
   void projectStore.refreshJavaBuildInfo();
   if (nativeExitRequestedBeforeLoad) {

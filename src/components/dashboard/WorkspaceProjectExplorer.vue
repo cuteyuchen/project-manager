@@ -21,6 +21,7 @@ import {
 } from '../../utils/workspaceExplorerLayout';
 import { joinAbsolutePath, joinWorkspacePath, normalizeWorkspaceRelativePath, parentWorkspacePath } from '../../utils/workspacePath';
 import { cleanupRemovedExplorerProjects, setExplorerExpanded } from '../../utils/workspaceExplorerState';
+import { notifyProjectFilesChanged } from '../../utils/projectFilesChanged';
 import ProjectExplorerNode, { type ExplorerContextPayload, type ExplorerProjectAction } from './ProjectExplorerNode.vue';
 
 const props = defineProps<{
@@ -53,6 +54,9 @@ async function refreshExplorer(): Promise<void> {
     refreshToken.value += 1;
     if (rootProject.value) {
       void gitStore.refreshStatus(rootProject.value.id, rootProject.value.path);
+      // 用户主动刷新文件列表时一并重新识别项目类型：
+      // 在外部 clone / pull 完代码后，点这里就能立刻收到更新提示，不必等轮询
+      notifyProjectFilesChanged(rootProject.value.path);
     }
   } finally {
     setTimeout(() => {
